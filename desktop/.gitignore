@@ -1,0 +1,13 @@
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+resources/
+engine/node_modules/
+
+# electron-builder cache
+.cache/
+
+# logs
+*.log

@@ -1,0 +1,68 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Bun (lockfile install for the web UI)
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install web UI dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Install desktop dependencies (electron + electron-builder)
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          # npm's install-script policy can block electron's postinstall — ensure the binary lands
+          if (!(Test-Path "node_modules/electron/dist/electron.exe")) { node node_modules/electron/install.js }
+
+      - name: Prepare embedded engine
+        working-directory: desktop
+        run: node scripts/prepare-engine.mjs
+
+      - name: Build web UI into standalone renderer
+        working-directory: desktop
+        env:
+          DATABASE_URL: file:./db/build-placeholder.db
+        run: node scripts/prepare-renderer.mjs
+
+      - name: Build Windows executables (installer + portable)
+        working-directory: desktop
+        run: npx electron-builder --win --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OTAMA-windows-exe
+          path: |
+            desktop/dist/OTAMA-Setup-*.exe
+            desktop/dist/OTAMA-*-portable.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach to GitHub release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/OTAMA-Setup-*.exe
+            desktop/dist/OTAMA-*-portable.exe

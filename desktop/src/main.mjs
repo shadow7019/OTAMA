@@ -1,0 +1,400 @@
+/**
+ * OTAMA — Electron main process (Windows desktop shell).
+ *
+ * Architecture (mirrors the production web deployment, embedded locally):
+ *
+ *   ┌──────────────────────────── Electron ────────────────────────────┐
+ *   │  BrowserWindow ── loads ──► Next.js standalone server (child)    │
+ *   │        │                         127.0.0.1:<free port>           │
+ *   │        │ preload injects window.otama { isDesktop, enginePort }  │
+ *   │        ▼                                                         │
+ *   │  OTAMA torrent engine (child, ELECTRON_RUN_AS_NODE)              │
+ *   │        127.0.0.1:3003  — REST + range streaming + socket.io      │
+ *   └──────────────────────────────────────────────────────────────────┘
+ *
+ * The renderer bundle is the exact same Next.js app used on the web; the only
+ * difference is that `window.otama.isDesktop` switches the engine base URL
+ * from the gateway (XTransformPort) to a direct 127.0.0.1 connection.
+ *
+ * Users do NOT need Node.js installed: both child services run through
+ * Electron's own binary with ELECTRON_RUN_AS_NODE=1.
+ */
+import { app, BrowserWindow, Menu, dialog, shell } from 'electron'
+import { spawn } from 'node:child_process'
+import { createServer, get } from 'node:http'
+import net from 'node:net'
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const DESKTOP_ROOT = path.resolve(__dirname, '..') // .../desktop
+
+const ENGINE_PORT = 3003
+const DEV_URL = process.env.OTAMA_DEV_URL || '' // e.g. http://localhost:3000 while developing the web UI
+const APP_VERSION = readOwnVersion()
+
+let mainWindow = null
+let engineChild = null
+let rendererChild = null
+let quitting = false
+let engineRestarts = 0
+let rendererUrl = ''
+
+/* ------------------------------ small utils ------------------------------ */
+
+function readOwnVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(DESKTOP_ROOT, 'package.json'), 'utf8'))
+    return pkg.version || '1.0.0'
+  } catch {
+    return '1.0.0'
+  }
+}
+
+function log(...args) {
+  console.log(`[otama] ${new Date().toISOString()}`, ...args)
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/** GET a URL and resolve with { ok, status, body }. */
+function httpGet(url, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (result) => {
+      if (!settled) {
+        settled = true
+        resolve(result)
+      }
+    }
+    try {
+      const req = get(url, { timeout: timeoutMs }, (res) => {
+        let body = ''
+        res.on('data', (c) => (body += c))
+        res.on('end', () => done({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode, body }))
+      })
+      req.on('error', () => done({ ok: false, status: 0, body: '' }))
+      req.on('timeout', () => {
+        req.destroy()
+        done({ ok: false, status: 0, body: '' })
+      })
+    } catch {
+      done({ ok: false, status: 0, body: '' })
+    }
+  })
+}
+
+/** Poll a URL until it answers ok, or timeout. */
+async function waitUntilReady(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const res = await httpGet(url, 2500)
+    if (res.ok) return true
+    await sleep(500)
+  }
+  return false
+}
+
+/** Ask the OS for a free TCP port. */
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.unref()
+    srv.on('error', reject)
+    srv.listen({ port: 0, host: '127.0.0.1' }, () => {
+      const { port } = srv.address()
+      srv.close(() => resolve(port))
+    })
+  })
+}
+
+/** Run a plain-node script through Electron's bundled Node runtime. */
+function spawnAsNode(scriptPath, opts = {}) {
+  return spawn(process.execPath, [scriptPath], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      NODE_ENV: 'production',
+      ...(opts.env || {}),
+    },
+    cwd: opts.cwd || path.dirname(scriptPath),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+}
+
+function pipeChildLogs(child, tag) {
+  child.stdout.on('data', (d) => process.stdout.write(`[${tag}] ${d}`))
+  child.stderr.on('data', (d) => process.stderr.write(`[${tag}] ${d}`))
+}
+
+/* ------------------------------ engine ------------------------------ */
+
+function engineDir() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'engine') : path.join(DESKTOP_ROOT, 'engine')
+}
+
+async function probeEngine(port) {
+  const res = await httpGet(`http://127.0.0.1:${port}/health`, 2000)
+  if (!res.ok) return false
+  try {
+    return JSON.parse(res.body).ok === true
+  } catch {
+    return false
+  }
+}
+
+async function ensureEngine() {
+  // 1) Another OTAMA instance (or the dev mini-service) may already run one.
+  if (await probeEngine(ENGINE_PORT)) {
+    log(`engine already healthy on :${ENGINE_PORT} — reusing`)
+    return { port: ENGINE_PORT, reused: true }
+  }
+
+  // 2) Spawn our embedded engine.
+  const script = path.join(engineDir(), 'engine.mjs')
+  if (!fs.existsSync(script)) {
+    throw new Error(`Engine script missing: ${script} (run "npm run prepare:engine" first)`)
+  }
+  const downloadDir = path.join(app.getPath('userData'), 'downloads')
+  fs.mkdirSync(downloadDir, { recursive: true })
+
+  const start = () => {
+    engineChild = spawnAsNode(script, {
+      env: {
+        OTAMA_ENGINE_PORT: String(ENGINE_PORT),
+        OTAMA_HOST: '127.0.0.1',
+        OTAMA_DOWNLOAD_DIR: downloadDir,
+      },
+    })
+    pipeChildLogs(engineChild, 'otama-engine')
+    engineChild.on('exit', (code) => {
+      engineChild = null
+      if (quitting) return
+      log(`engine exited (code=${code})`)
+      if (engineRestarts < 5) {
+        engineRestarts += 1
+        log(`restarting engine (attempt ${engineRestarts}/5) in 2s…`)
+        setTimeout(() => {
+          if (!quitting) start()
+        }, 2000)
+      }
+    })
+  }
+
+  start()
+  const healthy = await waitUntilReady(`http://127.0.0.1:${ENGINE_PORT}/health`, 30_000)
+  if (!healthy) throw new Error(`Embedded engine failed to start on :${ENGINE_PORT}`)
+  log(`engine started on :${ENGINE_PORT}`)
+  return { port: ENGINE_PORT, reused: false }
+}
+
+/* ------------------------------ renderer (Next.js standalone) ------------------------------ */
+
+function rendererDir() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'renderer') : path.join(DESKTOP_ROOT, 'resources', 'renderer')
+}
+
+async function startRendererServer() {
+  const dir = rendererDir()
+  const serverJs = path.join(dir, 'server.js')
+  if (!fs.existsSync(serverJs)) {
+    throw new Error(`Renderer server missing: ${serverJs} (run "npm run prepare:renderer" first)`)
+  }
+
+  const port = await findFreePort()
+  // Writable SQLite database inside the user profile (Prisma DATABASE_URL).
+  const dbPath = path.join(app.getPath('userData'), 'otama.db').replace(/\\/g, '/')
+
+  rendererChild = spawnAsNode(serverJs, {
+    cwd: dir,
+    env: {
+      PORT: String(port),
+      HOSTNAME: '127.0.0.1',
+      DATABASE_URL: `file:${dbPath}`,
+      OTAMA_DESKTOP: '1',
+    },
+  })
+  pipeChildLogs(rendererChild, 'otama-web')
+
+  rendererChild.on('exit', (code) => {
+    rendererChild = null
+    if (!quitting && mainWindow) {
+      dialog.showErrorBox(
+        'OTAMA — server stopped',
+        `The embedded web server exited unexpectedly (code ${code}).\nPlease restart the app.`,
+      )
+      app.quit()
+    }
+  })
+
+  const url = `http://127.0.0.1:${port}`
+  const ready = await waitUntilReady(url, 60_000)
+  if (!ready) throw new Error('Embedded web server did not become ready in time')
+  log(`renderer ready at ${url}`)
+  return url
+}
+
+/* ------------------------------ window ------------------------------ */
+
+const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<style>
+  html,body{height:100%;margin:0;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;user-select:none}
+  .mark{width:84px;height:84px;border-radius:22px;background:linear-gradient(135deg,#f59e0b,#d97706);
+    display:flex;align-items:center;justify-content:center;box-shadow:0 12px 40px rgba(245,158,11,.25)}
+  .tri{width:0;height:0;border-left:26px solid #09090b;border-top:16px solid transparent;border-bottom:16px solid transparent;margin-left:6px}
+  h1{font-size:26px;letter-spacing:.35em;margin:0;font-weight:700;text-indent:.35em}
+  p{color:#a1a1aa;font-size:13px;margin:0}
+  .spin{width:18px;height:18px;border:2px solid #3f3f46;border-top-color:#f59e0b;border-radius:50%;animation:s .8s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style></head><body>
+  <div class="mark"><div class="tri"></div></div>
+  <h1>OTAMA</h1><p>starting torrent engine…</p><div class="spin"></div>
+</body></html>`
+
+function buildMenu() {
+  const template = [
+    {
+      label: 'OTAMA',
+      submenu: [
+        { label: `OTAMA v${APP_VERSION}`, enabled: false },
+        { type: 'separator' },
+        { role: 'minimize' },
+        { role: 'quit', label: 'Quit OTAMA' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { type: 'separator' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1360,
+    height: 860,
+    minWidth: 960,
+    minHeight: 600,
+    show: false,
+    backgroundColor: '#09090b',
+    autoHideMenuBar: true,
+    title: 'OTAMA',
+    icon: path.join(DESKTOP_ROOT, 'build', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  })
+
+  // Splash while services boot.
+  mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(SPLASH_HTML)}`)
+
+  mainWindow.once('ready-to-show', () => mainWindow?.show())
+
+  // Any navigation outside our own origin (posters are <img>, links are external) → system browser.
+  const allowed = (url) => url.startsWith(rendererUrl) || url.startsWith('devtools://') || url.startsWith('data:')
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!allowed(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!allowed(url)) {
+      event.preventDefault()
+      void shell.openExternal(url)
+    }
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+}
+
+/* ------------------------------ lifecycle ------------------------------ */
+
+function killChildren() {
+  for (const child of [engineChild, rendererChild]) {
+    if (child && !child.killed) {
+      try {
+        child.kill()
+      } catch {
+        /* noop */
+      }
+    }
+  }
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  app.whenReady().then(async () => {
+    log(`OTAMA desktop v${APP_VERSION} — platform=${process.platform} packaged=${app.isPackaged} dev=${!!DEV_URL}`)
+    buildMenu()
+
+    try {
+      const engine = await ensureEngine()
+      // The preload script reads these; must be set BEFORE the window exists.
+      process.env.OTAMA_ENGINE_PORT = String(engine.port)
+      process.env.OTAMA_VERSION = APP_VERSION
+
+      if (DEV_URL) {
+        rendererUrl = DEV_URL.replace(/\/$/, '')
+        log(`dev mode — loading ${rendererUrl} (engine :${engine.port})`)
+        createWindow()
+        await mainWindow.loadURL(rendererUrl)
+      } else {
+        rendererUrl = await startRendererServer()
+        createWindow()
+        await mainWindow.loadURL(rendererUrl)
+        log('window loaded — OTAMA is ready')
+      }
+    } catch (err) {
+      log('startup failed:', err)
+      dialog.showErrorBox('OTAMA failed to start', String(err?.message || err))
+      app.quit()
+    }
+  })
+
+  app.on('before-quit', () => {
+    quitting = true
+    killChildren()
+  })
+
+  app.on('window-all-closed', () => {
+    // Windows convention: quit when the window is closed.
+    app.quit()
+  })
+
+  app.on('quit', () => {
+    quitting = true
+    killChildren()
+  })
+
+  process.on('exit', killChildren)
+}

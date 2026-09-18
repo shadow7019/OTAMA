@@ -1,0 +1,12 @@
+{
+  "name": "otama-engine-embedded",
+  "version": "1.0.0",
+  "description": "OTAMA torrent streaming engine bundled inside the Windows desktop app",
+  "type": "module",
+  "private": true,
+  "main": "engine.mjs",
+  "dependencies": {
+    "socket.io": "^4.8.1",
+    "torrent-stream": "^1.2.1"
+  }
+}

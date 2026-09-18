@@ -106,3 +106,57 @@ Work Log:
 
 Stage Summary:
 - OTAMA complete: reverse-engineered popcorn-desktop architecture (torrent-stream engine + provider layer + media UI) rebuilt as a web app with original branding, upstream bug fixes, browser-verified E2E.
+
+---
+Task ID: 12
+Agent: main (orchestrator)
+Task: Windows desktop app (.exe) — Electron packaging of OTAMA
+
+Work Log:
+- New deliverable per user request: "develop a .exe file for windows and make it a windows based app".
+- Chose Electron + embedded-services architecture (zero rewrites of the verified web app):
+  BrowserWindow loads the Next.js standalone server (child process, random 127.0.0.1 port);
+  torrent engine ships embedded and runs as a second child process on 127.0.0.1:3003.
+  Both children run via ELECTRON_RUN_AS_NODE=1 → end users need no Node.js installed.
+- desktop/package.json: electron 33 + electron-builder 25 (+png-to-ico 3.0.2); "build" config
+  produces OTAMA-Setup-<v>.exe (NSIS: install dir choice, desktop+start-menu shortcuts) and
+  OTAMA-<v>-portable.exe; extraResources bundle renderer/ + engine/.
+- desktop/src/main.mjs: single-instance lock, splash screen, engine health-probe + reuse
+  (multi-instance safe), engine restart with backoff (5 tries), renderer wait-for-ready,
+  dynamic engine port via preload env, writable SQLite path in userData (DATABASE_URL),
+  external links → system browser, contextIsolation+sandbox, graceful child shutdown.
+- desktop/src/preload.cjs: contextBridge exposes window.otama { isDesktop, enginePort, version }.
+- desktop/engine/engine.mjs: plain-JS port of the mini-service engine (same REST surface,
+  range streaming, socket.io /socket.io, CORS *, idle reaper, LRU cap); binds 127.0.0.1 only.
+- desktop/scripts/: prepare-engine.mjs (npm install engine deps), prepare-renderer.mjs
+  (cross-platform next build + standalone assembly → resources/renderer), make-ico.mjs
+  (sharp multi-size → png-to-ico).
+- Brand icon: AI-generated 1024px master → tile crop + transparent rounded corners (sharp) →
+  build/icon.png + build/icon.ico (16–256px) + icon-512.png.
+- Frontend desktop-mode support: src/lib/engine.ts adds isDesktop()/desktopEnginePort();
+  engineUrl() switches gateway (XTransformPort) ↔ direct 127.0.0.1:<port>; use-engine-state.ts
+  connects socket.io accordingly. Web mode untouched (regression-verified).
+- CI: .github/workflows/windows-build.yml (windows-latest) — bun install, prisma generate,
+  engine+renderer prep, electron-builder --win, artifact upload + release attach on v* tags.
+  Includes npm install-scripts fallback for the electron postinstall.
+- Root README.md (architecture, upstream bug-fix list, web + desktop build guides, data
+  locations, legal disclaimer) and root .gitignore added; desktop/ gitignored node_modules/dist.
+- ESLint scope extended to ignore desktop/**, mini-services/**, .cache/**.
+- VERIFICATION:
+  * node --check on all 6 desktop JS files ✓
+  * embedded engine standalone: node engine.mjs on :3999 → /health + /torrents OK ✓
+  * FULL Electron smoke test under Xvfb (headless): window boots, reuses healthy :3003 engine,
+    preload bridge present (window.otama.isDesktop=true, enginePort=3003, v1.0.0), page loads,
+    CDP Runtime.evaluate PASS; direct engine fetch from renderer (CORS) OK; window screenshot
+    captured showing full OTAMA UI + green engine badge inside the desktop shell ✓
+  * Web regression via gateway: home renders, TPB detail overlay lists live torrents,
+    /health?XTransformPort=3003 OK, lucide-wifi (socket connected) present, 0 page errors ✓
+  * bun run lint → 0 errors; dev.log clean; engine mini-service untouched and healthy ✓
+
+Stage Summary:
+- OTAMA is now a Windows desktop application: electron-builder config + CI produce
+  OTAMA-Setup-1.0.0.exe and OTAMA-1.0.0-portable.exe with the web UI, torrent engine,
+  Prisma/SQLite persistence and downloads embedded; no Node.js required on user machines.
+- The actual .exe binaries are built by running `npm run dist:win` in desktop/ on Windows or
+  via the included GitHub Actions workflow (sandbox has no Windows toolchain/wine, which is
+  the industry-standard path for cross-platform Electron releases).

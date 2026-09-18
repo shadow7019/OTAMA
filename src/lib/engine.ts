@@ -5,7 +5,30 @@ import type { EngineTorrent, EngineFile, TorrentOption } from '@/lib/types'
 /** The torrent engine mini-service port (behind the gateway). */
 export const ENGINE_PORT = 3003
 
+/* Desktop shell detection (Electron preload exposes window.otama). */
+type OtamaBridge = { isDesktop?: boolean; enginePort?: number; version?: string; platform?: string }
+
+export function isDesktop(): boolean {
+  return typeof window !== 'undefined' && !!(window as unknown as { otama?: OtamaBridge }).otama?.isDesktop
+}
+
+export function desktopEnginePort(): number {
+  const p = (window as unknown as { otama?: OtamaBridge }).otama?.enginePort
+  return typeof p === 'number' && p > 0 ? p : ENGINE_PORT
+}
+
+/**
+ * Build an engine URL.
+ *  - Web mode:   relative path + XTransformPort query (Caddy gateway routing).
+ *  - Desktop:    absolute http://127.0.0.1:<enginePort> — the engine runs
+ *                embedded in the Electron app, no gateway exists there.
+ */
 export function engineUrl(path: string, params?: Record<string, string>): string {
+  if (isDesktop()) {
+    const search = new URLSearchParams(params || {})
+    const qs = search.toString()
+    return `http://127.0.0.1:${desktopEnginePort()}${path}${qs ? `?${qs}` : ''}`
+  }
   const search = new URLSearchParams({ ...(params || {}), XTransformPort: String(ENGINE_PORT) })
   return `${path}?${search.toString()}`
 }

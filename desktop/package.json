@@ -1,0 +1,91 @@
+{
+  "name": "otama-desktop",
+  "productName": "OTAMA",
+  "version": "1.0.0",
+  "description": "OTAMA — torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
+  "main": "src/main.mjs",
+  "author": "OTAMA Project",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "prepare:engine": "node scripts/prepare-engine.mjs",
+    "prepare:renderer": "node scripts/prepare-renderer.mjs",
+    "prepare:all": "npm run prepare:engine && npm run prepare:renderer",
+    "make:icon": "node scripts/make-ico.mjs",
+    "dev": "electron .",
+    "start": "electron .",
+    "dist:dir": "electron-builder --win --dir",
+    "dist:win": "npm run prepare:all && electron-builder --win",
+    "dist:win:portable": "npm run prepare:all && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.2"
+  },
+  "build": {
+    "appId": "app.otama.desktop",
+    "productName": "OTAMA",
+    "copyright": "OTAMA Project",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/renderer",
+        "to": "renderer",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "engine",
+        "to": "engine",
+        "filter": [
+          "**/*",
+          "!bun.lock*",
+          "!package-lock.json",
+          "!**/*.md",
+          "!**/{test,__tests__,tests}/**",
+          "!**/.github/**"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "OTAMA-${version}-${arch}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OTAMA",
+      "uninstallDisplayName": "OTAMA ${version}",
+      "artifactName": "OTAMA-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "OTAMA-${version}-portable.${ext}"
+    }
+  }
+}
