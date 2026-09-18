@@ -1,0 +1,12 @@
+{
+  "name": "otama-engine",
+  "version": "1.0.0",
+  "description": "OTAMA torrent streaming engine (torrent-stream based, peerflix lineage like popcorn-desktop)",
+  "scripts": {
+    "dev": "bun --hot src/index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1",
+    "torrent-stream": "^1.2.1"
+  }
+}

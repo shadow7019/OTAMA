@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A saved item (movie / series / anime / raw torrent)
+model Favorite {
+  id        String   @id @default(cuid())
+  kind      String // 'movie' | 'tv' | 'anime' | 'tpb'
+  refId     String // imdb id, tvmaze id, or info hash
+  title     String
+  year      Int?
+  poster    String?
+  rating    Float?
+  metaJson  String? // JSON blob with provider-specific payload (torrent options etc.)
+  createdAt DateTime @default(now())
+
+  @@unique([kind, refId])
+  @@index([createdAt])
+}
+
+// Resume-playback history
+model WatchHistory {
+  id        String   @id @default(cuid())
+  refId     String // imdb id / tvmaze id / info hash
+  title     String
+  poster    String?
+  kind      String   @default("movie")
+  infoHash  String
+  fileIndex Int      @default(0)
+  position  Float    @default(0) // seconds
+  duration  Float?
+  metaJson  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([refId])
+  @@index([updatedAt])
+}
+
+// Simple key/value app settings
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
