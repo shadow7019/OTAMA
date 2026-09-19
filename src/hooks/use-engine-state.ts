@@ -23,7 +23,7 @@ export function useEngineState() {
     }
     // Never use the port in the URL on the web, always XTransformPort (gateway routing).
     const socket: Socket = isDesktop()
-      ? io(`http://127.0.0.1:${desktopEnginePort()}`, { ...opts, path: '/socket.io' })
+      ? io(`http://${window.location.hostname || '127.0.0.1'}:${desktopEnginePort()}`, { ...opts, path: '/socket.io' })
       : io('/?XTransformPort=3003', opts)
 
     socket.on('connect', () => setConnected(true))

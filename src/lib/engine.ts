@@ -20,14 +20,18 @@ export function desktopEnginePort(): number {
 /**
  * Build an engine URL.
  *  - Web mode:   relative path + XTransformPort query (Caddy gateway routing).
- *  - Desktop:    absolute http://127.0.0.1:<enginePort> — the engine runs
- *                embedded in the Electron app, no gateway exists there.
+ *  - Desktop:    absolute http://<window host>:<enginePort> — the engine runs
+ *                embedded in the Electron app, no gateway exists there. The
+ *                window host is 127.0.0.1 on the desktop itself, but becomes
+ *                the desktop's LAN IP when a phone loads the app in LAN mode,
+ *                so REST + streaming reach the right machine from any device.
  */
 export function engineUrl(path: string, params?: Record<string, string>): string {
   if (isDesktop()) {
     const search = new URLSearchParams(params || {})
     const qs = search.toString()
-    return `http://127.0.0.1:${desktopEnginePort()}${path}${qs ? `?${qs}` : ''}`
+    const host = window.location.hostname || '127.0.0.1'
+    return `http://${host}:${desktopEnginePort()}${path}${qs ? `?${qs}` : ''}`
   }
   const search = new URLSearchParams({ ...(params || {}), XTransformPort: String(ENGINE_PORT) })
   return `${path}?${search.toString()}`

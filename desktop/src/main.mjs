@@ -40,6 +40,7 @@ let rendererChild = null
 let quitting = false
 let engineRestarts = 0
 let rendererUrl = ''
+let lanMode = false
 
 /* ------------------------------ small utils ------------------------------ */
 
@@ -166,7 +167,7 @@ async function ensureEngine() {
     engineChild = spawnAsNode(script, {
       env: {
         OTAMA_ENGINE_PORT: String(ENGINE_PORT),
-        OTAMA_HOST: '127.0.0.1',
+        OTAMA_HOST: lanMode ? '0.0.0.0' : '127.0.0.1',
         OTAMA_DOWNLOAD_DIR: downloadDir,
       },
     })
@@ -196,6 +197,35 @@ async function ensureEngine() {
 
 function rendererDir() {
   return app.isPackaged ? path.join(process.resourcesPath, 'renderer') : path.join(DESKTOP_ROOT, 'resources', 'renderer')
+}
+
+/**
+ * LAN mode — lets the OTAMA Android app (or any phone browser) connect to
+ * this desktop instance over Wi-Fi. When enabled, BOTH the renderer server
+ * and the torrent engine bind to 0.0.0.0 instead of loopback. The engine is
+ * torrent-stream REST + streaming with permissive CORS by design; only opt in
+ * on trusted networks.
+ */
+function lanFlagPath() {
+  return path.join(app.getPath('userData'), 'lan-mode')
+}
+
+function detectLanMode() {
+  lanMode = process.env.OTAMA_LAN === '1' || fs.existsSync(lanFlagPath())
+}
+
+function toggleLanMode() {
+  try {
+    if (lanMode) {
+      fs.rmSync(lanFlagPath(), { force: true })
+    } else {
+      fs.writeFileSync(lanFlagPath(), new Date().toISOString())
+    }
+  } catch (err) {
+    log('lan toggle failed:', err)
+  }
+  app.relaunch()
+  app.exit(0)
 }
 
 /**
@@ -267,7 +297,7 @@ async function startRendererServer() {
     cwd: dir,
     env: {
       PORT: String(port),
-      HOSTNAME: '127.0.0.1',
+      HOSTNAME: lanMode ? '0.0.0.0' : '127.0.0.1',
       DATABASE_URL: `file:${dbPath}`,
       OTAMA_DESKTOP: '1',
     },
@@ -316,6 +346,13 @@ function buildMenu() {
       label: 'OTAMA',
       submenu: [
         { label: `OTAMA v${APP_VERSION}`, enabled: false },
+        { type: 'separator' },
+        {
+          label: lanMode
+            ? 'LAN access: ON — click to turn off (restarts)'
+            : 'LAN access: OFF — click to allow phones (restarts)',
+          click: toggleLanMode,
+        },
         { type: 'separator' },
         { role: 'minimize' },
         { role: 'quit', label: 'Quit OTAMA' },
@@ -408,7 +445,8 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
-    log(`OTAMA desktop v${APP_VERSION} — platform=${process.platform} packaged=${app.isPackaged} dev=${!!DEV_URL}`)
+    detectLanMode()
+    log(`OTAMA desktop v${APP_VERSION} — platform=${process.platform} packaged=${app.isPackaged} dev=${!!DEV_URL} lan=${lanMode}`)
     buildMenu()
 
     try {

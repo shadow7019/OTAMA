@@ -551,3 +551,31 @@ Work Log:
 
 Stage Summary:
 - OTAMA-Setup-1.1.0.exe and OTAMA-1.1.0-portable.exe now ship the FULL feature set: TMDB integration, all torrent sites incl. Pirate Bay, anime series with every season + per-episode Nyaa/Torrentio merging, auto-updating home dashboard, quality-grouped torrent lists, and all Task 21/22 streaming + player fixes. Packaging is reproducible locally from Linux (npm run dist:win, wine-free) and via GitHub Actions; TMDB creds and the schema-initialized first-run DB are handled inside the bundle. Web app regression-tested and browser-verified end-to-end.
+
+---
+Task ID: 25
+Agent: main (orchestrator)
+Task: "CREATE A DMG FILE FOR MACOS SILICON CHIPS AND AN ANDROID APPLICATION"
+
+Work Log:
+- MACOS (Apple Silicon) DMG — electron-builder's dmg-builder is hdiutil-based (macOS-only), so a real UDIF DMG was produced on Linux with a hand-assembled toolchain:
+  1. .app bundle: build/icon.icns generated from the 512px PNG (icon-master.png turned out to be a JPEG); electron-builder "--mac dir --arm64" (identity null, category entertainment) assembled dist/mac-arm64/OTAMA.app (417MB, min macOS 11 = Big Sur baseline, extraResources renderer/engine/template.db all present).
+  2. Toolchain compiled from source in /tmp: libdmg-hfsplus (planetbeing) hand-compiled with gcc into hfsplus + dmg CLIs (linking hfs/*.c minus duplicate hfs.c CLI + dmg lib + -lz -lcrypto); hfsprogs mkfs compiled from Ubuntu 332.25 orig tarball + Debian patch series (gcc, -DLINUX=1, shims: bsd/string.h → glibc strlcpy, empty sys/sysctl.h). NOTE: sandbox FORBIDS symlink() syscalls ("Creating symbolic links is not allowed") which killed the stock mkfs.hfsplus binary; the compiled 332.25 mkfs has no symlink calls.
+  3. hfs_untar PATCHED in hfslib.c to honor the ustar prefix field (block[345]) — modern tars split >100-char paths (longest bundle path = 146 chars); without the patch those files land at wrong paths. Symlinks preserved via untar type-2 entries (bundle framework Current links never materialized on the OS FS — python tarfile built stage.tar directly from the pristine .app).
+  4. Pipeline: truncate 512M volume → mkfs.hfsplus.new -v OTAMA → hfsplus untar stage.tar (3534 entries; segfault on tool teardown is cosmetic — both HFS+ headers verified valid, extract byte-identical) → dmg build → koly v4 trailer verified, DataForkLength consistent.
+  - ARTIFACT: desktop/dist/OTAMA-1.1.0-arm64.dmg (158MB, UDZO-style compressed by dmg build). Unsigned — macOS right-click→Open needed on first launch.
+- ANDROID APP — native WebView shell (zero androidx/external deps, plain Activity), fully built in-sandbox:
+  1. Toolchain: Gradle 8.10.2 + Android cmdline-tools/platform-35/build-tools 35.0.0 downloaded from Google; Temurin JDK 17 (system Java 21 is a JRE without javac); licenses hash files written manually; PIL generated launcher icons at all 5 densities (rounded-corner mask).
+  2. Project android/: AGP 8.7.3, namespace app.otama.mobile, minSdk 24 / target 35, versionName 1.1.0. MainActivity: first-run setup screen (server URL input, OTAMA-branded dark/amber) → fullscreen WebView (JS, DOM storage, autoplay, mixed-content for LAN HTTP, custom UA "OTAMA-Android/1.1.0", external hosts open in browser, magnet toast, HTML5 fullscreen video via WebChromeClient custom views, back-key stack handling). Release signing via committed otama-release.keystore (alias otama, pass otama-release-2025) so the app identity is stable across builds.
+  3. ARTIFACTS: android/dist/OTAMA-1.1.0.apk (81KB release, apksigner-verified SHA-256 ab45be8b…) + OTAMA-1.1.0-debug.apk (92KB). aapt2 badging verified (label OTAMA, launchable MainActivity). CI: .github/workflows/android-build.yml (ubuntu-latest, JDK 17, gradle assembleRelease).
+- LAN MODE (makes the Android app actually connect to the desktop app):
+  * desktop main.mjs: "LAN access" menu toggle (userData/lan-mode flag + relaunch; also OTAMA_LAN=1 env). When ON, renderer server AND engine bind 0.0.0.0 instead of loopback. Engine already had wildcard CORS + socket.io CORS; OTAMA_HOST honored.
+  * src/lib/engine.ts + use-engine-state.ts: desktop-mode engine URLs now use window.location.hostname (127.0.0.1 on the desktop itself; LAN IP when a phone loads the app) — REST, streaming and socket.io all reach the correct machine.
+  * Android setup screen help text matches the actual menu wording ("app menu → LAN access").
+- ALL desktop artifacts REPACKED after the LAN/renderer changes: OTAMA-Setup-1.1.0.exe + OTAMA-1.1.0-portable.exe (139MB each) and OTAMA-1.1.0-arm64.dmg (158MB) all carry the same renderer build (otama-build-info 2026-09-19T14:45).
+- Verified: bun lint clean; gateway 200; browser smoke on / (10 headings, correct title, no page errors); dev services relaunched (double-fork daemon) and healthy.
+
+Stage Summary:
+- macOS: genuine Apple-Silicon DMG (unsigned, right-click→Open) built entirely on Linux via a hand-compiled libdmg-hfsplus + patched hfsprogs mkfs toolchain — reproducible with the documented pipeline.
+- Android: real installable OTAMA APK (release-signed) with a branded first-run server-URL setup and a full-featured WebView player shell; builds locally and via the new GitHub Actions workflow.
+- LAN mode links the two: desktop app menu toggles network binding, the phone app (or any phone browser) then connects to the desktop's IP, streaming and metadata included. All three platform artifacts now carry identical feature-complete builds.

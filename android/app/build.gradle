@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.otama.mobile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "app.otama.mobile"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "1.1.0"
+    }
+
+    signingConfigs {
+        release {
+            // Local + CI signing. Keystore is committed intentionally so the
+            // app keeps its identity across builds; password is not secret.
+            storeFile rootProject.file('otama-release.keystore')
+            storePassword 'otama-release-2025'
+            keyAlias 'otama'
+            keyPassword 'otama-release-2025'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Zero external dependencies on purpose: a plain android.app.Activity + WebView
+// keeps the build fully offline-capable (only AGP itself comes from Maven).
+dependencies {
+}

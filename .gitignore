@@ -26,3 +26,9 @@ db/*.db-journal
 
 # desktop packaging build output (OTAMA_PACK_BUILD)
 .next-pack/
+
+# android build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

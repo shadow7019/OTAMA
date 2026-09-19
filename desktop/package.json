@@ -71,15 +71,23 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         },
         {
           "target": "portable",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "artifactName": "OTAMA-${version}-${arch}.${ext}",
+      "identity": null,
+      "category": "public.app-category.entertainment",
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["arm64"]
         }
       ]
     },

@@ -1,0 +1,4 @@
+// OTAMA for Android — native WebView shell for a running OTAMA server.
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}
