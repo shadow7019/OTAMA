@@ -64,10 +64,16 @@ export function AboutDialog() {
           <span className="rounded-full border border-white/10 px-2 py-0.5">socket.io live stats</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">Prisma / SQLite</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">Cinemeta · TVMaze · TPB · Nyaa</span>
+          <span className="rounded-full border border-white/10 px-2 py-0.5">TMDB (optional, bring your key)</span>
           <span className={`rounded-full border px-2 py-0.5 ${connected ? 'border-emerald-500/40 text-emerald-400' : 'border-red-500/40 text-red-400'}`}>
             engine {connected ? 'online' : 'offline'}
           </span>
         </div>
+
+        <p className="text-[11px] leading-relaxed text-zinc-600">
+          This product uses the TMDB API but is not endorsed or certified by TMDB. Metadata by The Movie
+          Database (themoviedb.org) when a key is connected.
+        </p>
       </DialogContent>
     </Dialog>
   )

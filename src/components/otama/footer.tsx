@@ -20,11 +20,14 @@ export function Footer() {
             <span aria-hidden>·</span>
             <span>torrent-stream engine</span>
             <span aria-hidden>·</span>
-            <span>Cinemeta / TVMaze / TPB / Nyaa</span>
+            <span>Cinemeta / TVMaze / TPB / Nyaa / TMDB</span>
             <span aria-hidden>·</span>
             <span>socket.io live stats</span>
           </div>
         </div>
+        <p className="mt-3 text-[11px] text-zinc-600">
+          This product uses the TMDB API but is not endorsed or certified by TMDB.
+        </p>
       </div>
     </footer>
   )

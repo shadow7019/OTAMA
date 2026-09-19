@@ -160,3 +160,40 @@ Stage Summary:
 - The actual .exe binaries are built by running `npm run dist:win` in desktop/ on Windows or
   via the included GitHub Actions workflow (sandbox has no Windows toolchain/wine, which is
   the industry-standard path for cross-platform Electron releases).
+
+---
+Task ID: 13
+Agent: main (orchestrator)
+Task: TMDB integration (optional richer movie database, user-supplied API key)
+
+Work Log:
+- New src/lib/server/tmdb.ts: official TMDB v3/v4 client. Key resolution order:
+  DB Setting 'tmdb_api_key' (in-app dialog) -> env TMDB_API_KEY (v3) / TMDB_ACCESS_TOKEN (v4)
+  -> disabled. 15s-cached key reads, key-tagged TTL caches (lists 10min, external_ids 24h,
+  find/details 6h), TmdbDisabledError -> automatic keyless fallback everywhere.
+- Catalogs: trending (week) / popular / top_rated / newest (discover, date+vote floors) for
+  movies & TV, genre filtering via official TMDB genre-id maps (UI names incl. Sci-Fi mapped),
+  pagination. IMDB enrichment via /external_ids per list item (20 parallel, cached) so the
+  existing imdb-keyed detail + torrent lookup pipelines stay unchanged.
+- Search: /search/multi merged into /api/search (dedupe by imdb id + title, TMDB first).
+- Detail: /find?external_source=imdb_id + /movie|tv/:id upgrades backdrop, summary, runtime,
+  genres on both meta routes (failure-safe).
+- New /api/tmdb route: GET status (configured/mode/source/valid via live /configuration probe),
+  POST validate-then-store key, DELETE remove. Key never leaves the server except to TMDB.
+- UI: new tmdb-dialog.tsx Settings dialog (status badge, key input, connect/remove, help link,
+  TMDB attribution) wired to a new gear button in NavBar; CatalogView now has a source selector
+  (TMDB / Cinemeta / TVmaze) + TMDB sorts (Trending/Popular/Top rated/Newest), auto-selects TMDB
+  when a valid key exists; About dialog + Footer gained the mandatory TMDB attribution.
+- types.ts: MetaItem.provider + 'tmdb', tmdbId field. .env TMDB_API_KEY placeholder documented;
+  desktop app inherits env passthrough + in-app dialog (key stored in its own SQLite).
+- README: TMDB section (how to get/connect a key, env alternative, attribution).
+- VERIFICATION (no key configured yet): /api/tmdb -> {configured:false}; /api/catalog source=tmdb
+  -> silent Cinemeta fallback; /api/search q=dune OK; POST fake key -> live round-trip to
+  api.themoviedb.org -> correct 400 rejection; lint 0 errors; browser: gear dialog opens with
+  "Not connected" badge, Movies view shows Genre/Sort/Source (TMDB|Cinemeta) controls, grid
+  renders, 0 page errors.
+
+Stage Summary:
+- TMDB fully integrated behind a bring-your-own-key design with graceful keyless fallback.
+- PENDING: real API key from the user -> then verify trending/popular/top-rated/genre catalogs,
+  merged search and enhanced detail art live, and (optionally) bake it into .env / desktop build.

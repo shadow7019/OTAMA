@@ -3,7 +3,7 @@
 export type MetaKind = 'movie' | 'tv' | 'anime'
 
 export interface MetaItem {
-  refId: string // imdb id (cinemeta) or `tvmaze:123`
+  refId: string // imdb id (cinemeta) or `tvmaze:123` / `tmdb:550`
   kind: MetaKind
   title: string
   year?: number
@@ -15,7 +15,8 @@ export interface MetaItem {
   runtime?: number
   imdbId?: string
   tvmazeId?: number
-  provider: 'cinemeta' | 'tvmaze'
+  tmdbId?: number
+  provider: 'cinemeta' | 'tvmaze' | 'tmdb'
 }
 
 export interface TorrentOption {

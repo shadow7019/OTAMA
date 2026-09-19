@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Search, Download, Info, Menu, X, Wifi, WifiOff } from 'lucide-react'
+import { Search, Download, Info, Menu, X, Wifi, WifiOff, Settings2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { OtamaLogo } from '@/components/otama/logo'
+import { TmdbDialog } from '@/components/otama/tmdb-dialog'
 import { useAppStore, type View } from '@/store/app-store'
 import { useEngineState } from '@/hooks/use-engine-state'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -28,6 +29,7 @@ export function NavBar() {
   const { torrents, connected } = useEngineState()
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [tmdbOpen, setTmdbOpen] = useState(false)
   const debounced = useDebounce(input, 450)
 
   useEffect(() => {
@@ -95,11 +97,16 @@ export function NavBar() {
               </span>
             ) : null}
           </Button>
+          <Button variant="ghost" size="icon" onClick={() => setTmdbOpen(true)} aria-label="TMDB settings">
+            <Settings2 className="h-5 w-5" />
+          </Button>
           <Button variant="ghost" size="icon" onClick={() => setAboutOpen(true)} aria-label="About OTAMA">
             <Info className="h-5 w-5" />
           </Button>
         </div>
       </div>
+
+      <TmdbDialog open={tmdbOpen} onOpenChange={setTmdbOpen} />
 
       {menuOpen ? (
         <nav className="border-t border-white/5 px-4 py-3 md:hidden space-y-1" aria-label="Mobile">

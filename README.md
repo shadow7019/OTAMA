@@ -29,7 +29,8 @@ Electron-era codebase.
 │ Cinemeta (Stremio) metadata  │                    │ REST add/list/destroy           │
 │ TVMaze shows/episodes        │                    │ HTTP range streaming 206        │
 │ EZTV / Apibay (TPB) / Nyaa   │                    │ socket.io live progress :3003   │
-│ Prisma favorites + history   │                    │ idle reaper + LRU cap           │
+│ TMDB (optional, user key)    │                    │ idle reaper + LRU cap           │
+│ Prisma favorites + history   │                    │                                 │
 └──────────────────────────────┘                    └─────────────────────────────────┘
 ```
 
@@ -37,6 +38,7 @@ Electron-era codebase.
 |---|---|
 | UI | Next.js 16 App Router, TypeScript, Tailwind 4, shadcn/ui, Zustand, socket.io-client |
 | Data | Cinemeta · TVMaze · EZTV · Apibay (The Pirate Bay API) · Nyaa RSS — keyless public APIs |
+| Optional data | **TMDB** (The Movie Database) — trending/popular/top-rated/genre catalogs, deeper search, better art. Bring your own free key (in-app ⚙ Settings dialog or `TMDB_API_KEY` env) |
 | Library state | Prisma + SQLite (favorites, continue-watching history) |
 | Streaming | `torrent-stream` engine (the exact peerflix stack popcorn-desktop used) with 206 range streaming |
 | Desktop | Electron 33 + electron-builder (NSIS installer + portable `.exe`) |
@@ -61,6 +63,24 @@ The original repo's known failure modes and how OTAMA addresses them:
    auto-selects only the chosen video (plus small subtitle files) and prioritizes streaming ranges.
 7. **UI thread blocking** — heavy work moved out of the UI process into the engine service;
    the UI only consumes REST + socket state.
+
+## TMDB integration (optional, recommended)
+
+OTAMA ships keyless (Cinemeta/TVMaze) so it works out of the box. Connect **TMDB** for:
+
+- **Trending / Popular / Top-rated / Newest** catalogs with genre filtering (movies + TV)
+- Deeper multi-search (TMDB results merged in, deduped by IMDB id)
+- Higher-quality posters & backdrops, including upgraded detail-page art
+
+**How to connect:** click the ⚙ gear icon in the nav bar → paste your TMDB *v3 API key* or *v4 Read
+Access Token* (free: themoviedb.org → Settings → API) → Connect. The key is validated against TMDB,
+stored locally in the app's SQLite (`Setting.tmdb_api_key`), and can be removed any time. OTAMA
+falls back to keyless providers automatically whenever the key is absent or rejected.
+
+**Alternative (headless/deployments):** set `TMDB_API_KEY` (v3) or `TMDB_ACCESS_TOKEN` (v4) in `.env`
+or the process environment. The desktop app inherits both mechanisms (env passes through `desktop/src/main.mjs`).
+
+> This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ## Repository layout
 
