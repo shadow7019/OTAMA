@@ -41,11 +41,19 @@ const MAX_ENGINES = 6
 const BROADCAST_INTERVAL = 1500
 /** Streaming cache is disposable — bound it so the disk never fills up. */
 const MAX_CACHE_BYTES = (parseInt(process.env.OTAMA_MAX_CACHE_MB || '', 10) || 8192) * 1024 * 1024
+/** Bytes of a video file's head pulled with priority after metadata is ready —
+ *  guarantees the first moov/ftyp box lands fast so time-to-first-frame is low. */
+const HEAD_PRIORITY_BYTES = 8 * 1024 * 1024
+/** Bytes at the start of every range request marked critical (hotswap-enabled) —
+ *  makes seeks snappy by stealing blocks from slow peers for the new position. */
+const SEEK_CRITICAL_BYTES = 4 * 1024 * 1024
 
 /**
  * Wide tracker mix (UDP + HTTP + HTTPS). In networks where UDP egress is
  * blocked, the HTTP(S) trackers and DHT still get us peers — a dead swarm is
  * the other common cause of endless buffering.
+ * First 14 are the long-proven set; the rest widen peer discovery (curated
+ * from the ngosang/trackerslist "best" list) for faster swarm joins.
  */
 const DEFAULT_TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
@@ -62,6 +70,19 @@ const DEFAULT_TRACKERS = [
   'https://tracker.tamersunion.org:443/announce',
   'http://tracker.gbitt.info:80/announce',
   'https://tracker.gbitt.info:443/announce',
+  // widened discovery set
+  'udp://explodie.org:6969/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'udp://tracker1.bt.moack.co.kr:80/announce',
+  'udp://tracker.novg.net:6969/announce',
+  'udp://bt1.archive.org:6969/announce',
+  'udp://tracker.leech.ie:1337/announce',
+  'http://tracker.bt4g.com:2095/announce',
+  'https://tracker.lilithraws.org:443/announce',
+  'https://tracker.foreverhorizon.yt:443/announce',
+  'udp://tracker.auctor.tv:6969/announce',
+  'udp://tracker.tanners.co.za:6969/announce',
+  'udp://tracker.gmi.gd:6969/announce',
 ]
 
 const MIME = {
@@ -195,6 +216,51 @@ function destroyTorrent(infoHash, wipe) {
 }
 
 /**
+ * Give the head of a video file absolute download priority + critical
+ * (hotswap-enabled) status.
+ *
+ * torrent-stream already prioritises a stream's exact requested range, but a
+ * fresh <video> typically asks `bytes=0-` — an open-ended range spanning the
+ * WHOLE file, which dilutes that priority. Selecting the first ~8 MB as a
+ * PRIORITY selection (sorted ahead of the whole-file selection) and marking
+ * it critical (enables block hotswapping) makes first-frame latency much
+ * lower, especially on slow swarms.
+ */
+function prioritiseFileHead(a, fileIndex) {
+  try {
+    if (typeof a.engine.select !== 'function' || typeof a.engine.critical !== 'function') return
+    if (a.headPriorityDone) return
+    const t = a.engine.torrent
+    const file = a.engine.files[fileIndex]
+    if (!t || !t.pieceLength || !file) return
+    const offset = file.offset || 0
+    const startPiece = Math.floor(offset / t.pieceLength)
+    const endPiece = Math.floor((offset + Math.min(HEAD_PRIORITY_BYTES, file.length)) / t.pieceLength)
+    a.engine.select(startPiece, endPiece, true)
+    for (let p = startPiece; p <= endPiece; p++) a.engine.critical(p, 1)
+    a.headPriorityDone = true
+  } catch {
+    /* prioritisation is best-effort */
+  }
+}
+
+/** Mark the first SEEK_CRITICAL_BYTES of a byte range critical (hotswap boost for seeks). */
+function markRangeCritical(a, fileIndex, rangeStart) {
+  try {
+    if (typeof a.engine.critical !== 'function') return
+    const t = a.engine.torrent
+    const file = a.engine.files[fileIndex]
+    if (!t || !t.pieceLength || !file) return
+    const absStart = (file.offset || 0) + rangeStart
+    const first = Math.floor(absStart / t.pieceLength)
+    const last = Math.floor((absStart + SEEK_CRITICAL_BYTES) / t.pieceLength)
+    for (let p = first; p <= last; p++) a.engine.critical(p, 1)
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
  * Synchronously parse the infoHash out of a magnet/hash source so the REST
  * layer can respond instantly (the metadata fetch continues in background).
  */
@@ -220,7 +286,7 @@ function startAdd(source, meta) {
   let engine
   try {
     engine = torrentStream(magnet, {
-      connections: 150,
+      connections: 250,
       uploads: 12,
       path: DOWNLOAD_ROOT,
       trackers: DEFAULT_TRACKERS,
@@ -238,6 +304,7 @@ function startAdd(source, meta) {
     ready: false,
     selectedFile: null,
     streams: 0,
+    headPriorityDone: false,
   }
   if (key) torrents.set(key, a)
   pendingAdds.add(key || magnet)
@@ -276,6 +343,9 @@ function startAdd(source, meta) {
       const best = videos.reduce((x, y) => (y.length > x.length ? y : x))
       best.select()
       a.selectedFile = engine.files.indexOf(best)
+      // Head-of-file absolute priority: first ~8 MB as a PRIORITY selection +
+      // critical pieces — first frame lands even before the browser connects.
+      prioritiseFileHead(a, a.selectedFile)
     }
   })
   engine.on('error', () => {
@@ -379,6 +449,8 @@ async function streamFile(req, res, a, infoHash, fileIndex, attachment) {
     }
     file.select()
     a.selectedFile = fileIndex
+    a.headPriorityDone = false
+    prioritiseFileHead(a, fileIndex)
   } else if (file.length < 10 * 1024 * 1024) {
     file.select()
   }
@@ -417,6 +489,10 @@ async function streamFile(req, res, a, infoHash, fileIndex, attachment) {
   // Push headers to the client immediately so <video> starts buffering the
   // moment a single piece is available instead of waiting on the first chunk.
   res.flushHeaders()
+
+  // Seek boost: mark the head of THIS range critical (hotswap-enabled) so the
+  // pieces at the new read position are stolen from slow peers immediately.
+  if (range !== 'invalid') markRangeCritical(a, fileIndex, range.start)
 
   const stream = file.createReadStream({ start: range.start, end: range.end })
   a.streams++

@@ -15,6 +15,10 @@ const PROVIDER_LABEL: Record<string, string> = {
   nyaa: 'Nyaa',
   yts: 'YTS',
   '1337x': '1337X',
+  rarbg: 'RARBG',
+  limetorrents: 'LimeTorrents',
+  torrentdownloads: 'TorrentDownloads',
+  torrentgalaxy: 'TorrentGalaxy',
   torrends: 'Torrends',
   torrentio: 'Torrentio',
   solidtorrents: 'Solid Torrents',
@@ -86,9 +90,9 @@ export function TorrentList({
 
   return (
     <ul className="space-y-2">
-      {torrents.map((t) => (
+      {torrents.map((t, idx) => (
         <li
-          key={`${t.hash}-${t.season ?? ''}-${t.episode ?? ''}`}
+          key={`${t.hash}-${t.season ?? ''}-${t.episode ?? ''}-${idx}`}
           className="group flex items-center gap-3 rounded-xl border border-white/5 bg-card p-3 transition-colors hover:border-amber-400/40"
         >
           <div className="min-w-0 flex-1">

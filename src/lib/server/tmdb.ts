@@ -276,6 +276,16 @@ export async function tmdbSearchMulti(q: string): Promise<{ movies: MetaItem[]; 
 
 /* ------------------------------ detail enhancement ------------------------------ */
 
+/** Resolve a TMDB id → IMDb id (24h cache) so TMDB-only cards open in the detail overlay. */
+export async function tmdbImdbFromTmdbId(media: 'movie' | 'tv', tmdbId: number): Promise<string | null> {
+  try {
+    const ext = await tmdbGet<{ imdb_id?: string | null }>(`/${media}/${tmdbId}/external_ids`, {}, 24 * 60 * 60_000)
+    return ext.imdb_id || null
+  } catch {
+    return null
+  }
+}
+
 export interface TmdbEnhancement {
   backdrop?: string
   summary?: string

@@ -106,7 +106,15 @@ export function DetailOverlay() {
                   <MovieDetailBody imdbId={detail.imdbId} fallback={{ title: detail.title, poster: detail.poster, year: detail.year }} />
                 ) : detail.imdbId ? (
                   <SeriesDetailBody imdbId={detail.imdbId} fallback={{ title: detail.title, poster: detail.poster, year: detail.year }} />
-                ) : null}
+                ) : (
+                  /* No IMDb id and no direct torrents — never render a blank sheet:
+                     offer a live Nyaa search for anime, or an actionable notice. */
+                  detail.kind === 'anime' ? (
+                    <AnimeDirectDetail detail={detail} />
+                  ) : (
+                    <NoImdbFallback detail={detail} />
+                  )
+                )}
               </div>
             </ScrollArea>
           </motion.div>
@@ -150,7 +158,7 @@ function MovieDetailBody({
       />
       <div className="space-y-3 p-5 md:p-8">
         <h3 className="text-base font-bold flex items-center gap-2">
-          Available torrents <span className="text-xs font-normal text-zinc-500">(Torrentio · TPB · YTS · 1337x · SolidTorrents — browser-friendly releases first)</span>
+          Available torrents <span className="text-xs font-normal text-zinc-500">(Torrentio · TPB · YTS · RARBG · LimeTorrents · 1337x · SolidTorrents · TorrentDownloads · TorrentGalaxy — browser-friendly releases first)</span>
         </h3>
         {error ? <p className="text-sm text-red-400">Failed to load details: {(error as Error).message}</p> : null}
         {isLoading ? (
@@ -315,6 +323,16 @@ function EpisodeTorrents({
 /* ------------------------------ anime direct ------------------------------ */
 
 function AnimeDirectDetail({ detail }: { detail: { title: string; poster?: string; directTorrents?: TorrentOption[] } }) {
+  // Anime items opened without IMDb ids still get LIVE torrents: query Nyaa
+  // (and RARBG/Lime as secondary) by title when directTorrents is empty.
+  const shouldFetch = !detail.directTorrents || detail.directTorrents.length === 0
+  const { data, isLoading } = useQuery({
+    queryKey: ['anime-direct', detail.title],
+    queryFn: () => fetchJson<{ items: TorrentOption[] }>(`/api/nyaa?q=${encodeURIComponent(detail.title)}`),
+    staleTime: 5 * 60_000,
+    enabled: shouldFetch,
+  })
+  const torrents = detail.directTorrents?.length ? detail.directTorrents : data?.items || []
   return (
     <div>
       <div className="relative">
@@ -328,7 +346,47 @@ function AnimeDirectDetail({ detail }: { detail: { title: string; poster?: strin
       </div>
       <div className="space-y-3 p-5 md:p-8 pt-0">
         <h3 className="text-base font-bold">Torrents</h3>
-        <TorrentList torrents={detail.directTorrents || []} meta={{ poster: detail.poster, kind: 'anime', title: detail.title }} />
+        {shouldFetch && isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+          </div>
+        ) : (
+          <TorrentList torrents={torrents} meta={{ poster: detail.poster, kind: 'anime', title: detail.title }} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------ no-imdb fallback ------------------------------ */
+
+function NoImdbFallback({ detail }: { detail: { title: string; poster?: string; year?: number; kind: string } }) {
+  const setView = useAppStore((s) => s.setView)
+  const closeDetail = useAppStore((s) => s.closeDetail)
+  return (
+    <div>
+      <div className="flex gap-5 p-5 md:p-8 pt-8">
+        <Poster src={detail.poster} alt={detail.title} className="w-28 shrink-0 rounded-xl ring-1 ring-white/10 md:w-40" />
+        <div className="min-w-0 space-y-2">
+          <h2 className="text-2xl font-black tracking-tight">{detail.title}</h2>
+          <p className="text-sm text-zinc-400 capitalize">{detail.kind} · metadata unavailable</p>
+        </div>
+      </div>
+      <div className="p-5 md:p-8 pt-0">
+        <div className="rounded-xl border border-dashed border-white/10 p-6 text-center">
+          <p className="text-sm text-zinc-300">No IMDb match for this title, so torrent sources cannot be keyed to it.</p>
+          <p className="mt-1 text-sm text-zinc-500">Try a direct torrent search — 12+ sites are indexed.</p>
+          <Button
+            className="mt-4 bg-amber-500 font-bold text-black hover:bg-amber-400 min-h-[44px] px-6"
+            onClick={() => {
+              closeDetail()
+              useAppStore.getState().setQuery(detail.title)
+              setView('search')
+            }}
+          >
+            Search torrents for “{detail.title}”
+          </Button>
+        </div>
       </div>
     </div>
   )

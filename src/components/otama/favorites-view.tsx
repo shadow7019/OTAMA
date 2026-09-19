@@ -5,6 +5,7 @@ import { Heart, Trash2, Play } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Poster } from '@/components/otama/media-card'
+import { addTorrent, bestVideoFile, guessPlayableExt } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 
 interface FavRow {
@@ -20,6 +21,7 @@ interface FavRow {
 
 export function FavoritesView() {
   const openDetail = useAppStore((s) => s.openDetail)
+  const openPlayer = useAppStore((s) => s.openPlayer)
   const [favs, setFavs] = useState<FavRow[] | null>(null)
 
   const load = () => {
@@ -42,8 +44,8 @@ export function FavoritesView() {
 
   const open = (row: FavRow) => {
     if (row.kind === 'tpb') {
-      // raw torrent favorite — resume browsing via pirate bay view is fine; simplest: open detail-less player? Keep details open.
-      toast.info('Raw torrent favorites play from the Torrents tab.')
+      // raw torrent favorite — refId stores the info hash; stream it directly
+      playRawTorrent(row)
       return
     }
     openDetail({
@@ -53,6 +55,32 @@ export function FavoritesView() {
       poster: row.poster || undefined,
       year: row.year || undefined,
     })
+  }
+
+  const playRawTorrent = async (row: FavRow) => {
+    const hash = row.refId
+    if (!/^[0-9a-f]{40}$/i.test(hash) && !hash.startsWith('magnet:')) {
+      toast.error('This favorite has no playable torrent attached — remove and re-save it.')
+      return
+    }
+    try {
+      toast.loading('Connecting to swarm…', { id: `fav-${row.id}` })
+      const t = await addTorrent({ source: hash, title: row.title, kind: 'tpb' })
+      const file = bestVideoFile(t)
+      if (!file) throw new Error('No video file in this torrent')
+      if (guessPlayableExt(file.name) !== 'ok') toast.warning(`"${file.name}" may not play in browsers.`)
+      toast.success('Streaming started', { id: `fav-${row.id}` })
+      openPlayer({
+        infoHash: t.infoHash,
+        fileIndex: file.index,
+        title: row.title,
+        poster: row.poster || null,
+        kind: 'tpb',
+        fileName: file.name,
+      })
+    } catch (err) {
+      toast.error((err as Error).message || 'Failed to stream favorite', { id: `fav-${row.id}` })
+    }
   }
 
   return (

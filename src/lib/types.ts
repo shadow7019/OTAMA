@@ -29,7 +29,7 @@ export interface TorrentOption {
   sizeBytes?: number
   seeds?: number
   leechers?: number
-  provider: 'tpb' | 'eztv' | 'nyaa' | 'yts' | '1337x' | 'torrends' | 'torrentio' | 'solidtorrents'
+  provider: 'tpb' | 'eztv' | 'nyaa' | 'yts' | '1337x' | 'rarbg' | 'limetorrents' | 'torrentdownloads' | 'torrentgalaxy' | 'torrends' | 'torrentio' | 'solidtorrents'
   /** magnet uri or raw info hash for the engine */
   source: string
   season?: number

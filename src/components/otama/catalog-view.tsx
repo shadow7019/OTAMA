@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MediaCard } from '@/components/otama/media-card'
@@ -122,9 +123,24 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
     const imdb = item.imdbId || (item.refId.startsWith('tt') ? item.refId : undefined)
     if (imdb) {
       openDetail({ kind: item.kind === 'anime' ? 'anime' : item.kind, imdbId: imdb, title: item.title, poster: item.poster, year: item.year })
-    } else {
-      // e.g. a TMDB item whose imdb lookup failed — no torrent mapping possible
+      return
     }
+    // TMDB-only item (its imdb enrichment failed at list time) — resolve now
+    const tmdbId = item.tmdbId || (item.refId.startsWith('tmdb:') ? parseInt(item.refId.slice(5), 10) : NaN)
+    if (tmdbId) {
+      fetch<{ imdbId?: string | null }>(`/api/resolve?tmdbId=${tmdbId}&type=${item.kind === 'tv' ? 'tv' : 'movie'}`)
+        .then((r) => r.json())
+        .then((r) => {
+          if (r.imdbId) {
+            openDetail({ kind: item.kind === 'anime' ? 'anime' : item.kind, imdbId: r.imdbId, title: item.title, poster: item.poster, year: item.year })
+          } else {
+            toast.info(`“${item.title}” could not be matched to IMDb — try searching for it in the Torrents tab.`)
+          }
+        })
+        .catch(() => toast.error('Could not resolve this title right now'))
+      return
+    }
+    toast.info(`“${item.title}” has no torrent mapping — try searching for it instead.`)
   }
 
   const genres = type === 'movie' ? MOVIE_GENRES : TV_GENRES

@@ -34,7 +34,7 @@ const LEETX_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ]
 
-type Source = 'tpb' | 'leetx' | 'solid' | 'torrentio'
+type Source = 'tpb' | 'leetx' | 'solid' | 'torrentio' | 'rarbg' | 'lime' | 'td' | 'tgx'
 
 const SOURCE_META: Record<Source, { heading: React.ReactNode; hint: string; label: string }> = {
   tpb: {
@@ -57,7 +57,38 @@ const SOURCE_META: Record<Source, { heading: React.ReactNode; hint: string; labe
     hint: 'Torrentio — one search across YTS, EZTV, RARBG, 1337x, Pirate Bay, Kickass, TorrentGalaxy, MagnetDL and more (keyed by IMDb).',
     label: 'Torrentio',
   },
+  rarbg: {
+    heading: (<>RARBG <span className="text-amber-400">archive</span></>),
+    hint: 'The revived RARBG index (therarbg.to) — famous for clean x264/x265 movie & TV releases. Infohash included, no extra lookups.',
+    label: 'RARBG',
+  },
+  lime: {
+    heading: (<>Lime<span className="text-amber-400">Torrents</span></>),
+    hint: 'LimeTorrents — hash-ready results across its rotating mirror domains.',
+    label: 'LimeTorrents',
+  },
+  td: {
+    heading: (<>Torrent<span className="text-amber-400">Downloads</span></>),
+    hint: 'TorrentDownloads — magnets resolved from detail pages automatically.',
+    label: 'TorrentDownloads',
+  },
+  tgx: {
+    heading: (<>Torrent<span className="text-amber-400">Galaxy</span></>),
+    hint: 'TorrentGalaxy (TGx) — best-effort via its proxy network; returns empty here when every mirror is unreachable.',
+    label: 'TorrentGalaxy',
+  },
 }
+
+const LIME_CATEGORIES = [
+  { value: 'all', label: 'All' },
+  { value: 'movies', label: 'Movies' },
+  { value: 'tv', label: 'TV Shows' },
+  { value: 'anime', label: 'Anime' },
+  { value: 'games', label: 'Games' },
+  { value: 'music', label: 'Music' },
+  { value: 'apps', label: 'Apps' },
+  { value: 'other', label: 'Other' },
+]
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
@@ -74,11 +105,12 @@ export function TpbView() {
   const [q, setQ] = useState('')
   const [tpbCat, setTpbCat] = useState('all')
   const [leetxCat, setLeetxCat] = useState('movies')
+  const [limeCat, setLimeCat] = useState('all')
   const [page, setPage] = useState(0)
   const [sitesOpen, setSitesOpen] = useState(false)
 
   // reset pagination when the query/source/category changes
-  useEffect(() => { setPage(0) }, [q, source, tpbCat, leetxCat])
+  useEffect(() => { setPage(0) }, [q, source, tpbCat, leetxCat, limeCat])
 
   const tpbQuery = useQuery({
     queryKey: ['tpb', q, tpbCat],
@@ -106,6 +138,34 @@ export function TpbView() {
     queryFn: () => fetchJson<{ item?: MetaItem; torrents: TorrentOption[]; error?: string }>(`/api/torrentio?q=${encodeURIComponent(q)}`),
     staleTime: 2 * 60_000,
     enabled: source === 'torrentio' && q.length > 0,
+  })
+
+  const rarbgQuery = useQuery({
+    queryKey: ['rarbg', q, page],
+    queryFn: () => fetchJson<{ items: TorrentOption[]; error?: string }>(`/api/rarbg?q=${encodeURIComponent(q)}&page=${page + 1}`),
+    staleTime: 2 * 60_000,
+    enabled: source === 'rarbg' && q.length > 0,
+  })
+
+  const limeQuery = useQuery({
+    queryKey: ['lime', q, limeCat, page],
+    queryFn: () => fetchJson<{ items: TorrentOption[]; error?: string }>(`/api/limetorrents?q=${encodeURIComponent(q)}&cat=${limeCat}&page=${page + 1}`),
+    staleTime: 2 * 60_000,
+    enabled: source === 'lime' && q.length > 0,
+  })
+
+  const tdQuery = useQuery({
+    queryKey: ['td', q],
+    queryFn: () => fetchJson<{ items: TorrentOption[]; error?: string }>(`/api/torrentdownloads?q=${encodeURIComponent(q)}`),
+    staleTime: 2 * 60_000,
+    enabled: source === 'td' && q.length > 0,
+  })
+
+  const tgxQuery = useQuery({
+    queryKey: ['tgx', q],
+    queryFn: () => fetchJson<{ items: TorrentOption[]; error?: string }>(`/api/torrentgalaxy?q=${encodeURIComponent(q)}`),
+    staleTime: 2 * 60_000,
+    enabled: source === 'tgx' && q.length > 0,
   })
 
   const submit = (e?: React.FormEvent) => {
@@ -138,7 +198,15 @@ export function TpbView() {
   }
 
   const isTpb = source === 'tpb'
-  const activeQuery = isTpb ? tpbQuery : source === 'leetx' ? leetxQuery : source === 'solid' ? solidQuery : torrentioQuery
+  const activeQuery =
+    isTpb ? tpbQuery
+      : source === 'leetx' ? leetxQuery
+      : source === 'solid' ? solidQuery
+      : source === 'torrentio' ? torrentioQuery
+      : source === 'rarbg' ? rarbgQuery
+      : source === 'lime' ? limeQuery
+      : source === 'td' ? tdQuery
+      : tgxQuery
   const torrentItems: TorrentOption[] =
     source === 'leetx'
       ? leetxQuery.data?.items || []
@@ -146,7 +214,15 @@ export function TpbView() {
         ? solidQuery.data?.items || []
         : source === 'torrentio'
           ? torrentioQuery.data?.torrents || []
-          : []
+          : source === 'rarbg'
+            ? rarbgQuery.data?.items || []
+            : source === 'lime'
+              ? limeQuery.data?.items || []
+              : source === 'td'
+                ? tdQuery.data?.items || []
+                : source === 'tgx'
+                  ? tgxQuery.data?.items || []
+                  : []
   const tpbItems: TpbItem[] = isTpb ? tpbQuery.data?.items || [] : []
   const items: (TpbItem | TorrentOption)[] = isTpb ? tpbItems : torrentItems
   const matchedItem = source === 'torrentio' ? torrentioQuery.data?.item : undefined
@@ -155,7 +231,8 @@ export function TpbView() {
     || null
   const loading = activeQuery.isLoading || activeQuery.isFetching
   const meta = SOURCE_META[source]
-  const canPaginate = source === 'leetx' || source === 'solid'
+  const canPaginate = source === 'leetx' || source === 'solid' || source === 'rarbg' || source === 'lime'
+  const hasCategory = source === 'tpb' || source === 'leetx' || source === 'lime'
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8">
@@ -165,7 +242,7 @@ export function TpbView() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Torrent source">
-        {(['tpb', 'leetx', 'solid', 'torrentio'] as Source[]).map((s) => {
+        {(['tpb', 'leetx', 'solid', 'torrentio', 'rarbg', 'lime', 'td', 'tgx'] as Source[]).map((s) => {
           const active = source === s
           return (
             <Button
@@ -199,13 +276,16 @@ export function TpbView() {
             aria-label={`Search ${meta.label}`}
           />
         </div>
-        {source === 'tpb' || source === 'leetx' ? (
-          <Select value={isTpb ? tpbCat : leetxCat} onValueChange={(v) => (isTpb ? setTpbCat(v) : setLeetxCat(v))}>
+        {hasCategory ? (
+          <Select
+            value={isTpb ? tpbCat : source === 'lime' ? limeCat : leetxCat}
+            onValueChange={(v) => (isTpb ? setTpbCat(v) : source === 'lime' ? setLimeCat(v) : setLeetxCat(v))}
+          >
             <SelectTrigger className="w-[160px] min-h-[44px]" aria-label="Category">
               <SelectValue placeholder="Category" />
             </SelectTrigger>
             <SelectContent>
-              {(isTpb ? TPB_CATEGORIES : LEETX_CATEGORIES).map((c) => (
+              {(isTpb ? TPB_CATEGORIES : source === 'lime' ? LIME_CATEGORIES : LEETX_CATEGORIES).map((c) => (
                 <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
               ))}
             </SelectContent>

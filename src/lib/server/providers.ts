@@ -9,6 +9,10 @@
  *  - Nyaa      (anime tracker, RSS)               -> anime torrents
  *  - YTS       (YIFY movies, JSON API)            -> movie catalog + hash-ready torrents
  *  - 1337x     (HTML scraper)                     -> general torrent search
+ *  - RARBG     (therarbg.to archive, JSON API)    -> movie/TV releases with infohash
+ *  - LimeTorrents (HTML scraper, hash in row)     -> general torrent search
+ *  - TorrentDownloads (HTML scraper)              -> general torrent search
+ *  - TorrentGalaxy (HTML scraper, best-effort)    -> general torrent search
  *  - Torrends  (site directory + live proxies)    -> mirror resolution + 700+ site links
  *
  * Every provider degrades gracefully: if one is unavailable the callers fall
@@ -17,7 +21,7 @@
 import type { MetaItem, MetaKind, TorrentOption, EpisodeInfo, TpbItem } from '@/lib/types'
 
 export const UA =
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 const CINE = 'https://v3-cinemeta.strem.io'
 const TVMAZE = 'https://api.tvmaze.com'
@@ -92,7 +96,7 @@ export async function cfGetText(url: string, timeoutMs = 12_000): Promise<string
   return fetchText(url, timeoutMs)
 }
 
-async function cfGetJson<T>(url: string, timeoutMs = 12_000): Promise<T> {
+export async function cfGetJson<T>(url: string, timeoutMs = 12_000): Promise<T> {
   const text = await cfGetText(url, timeoutMs)
   if (text.trimStart().startsWith('<')) throw new ProviderError(`Blocked by Cloudflare: ${new URL(url).host}`)
   return JSON.parse(text) as T
@@ -299,13 +303,33 @@ export function apibayToTorrentOption(item: TpbItem): TorrentOption {
   }
 }
 
-/** Find movie torrents: Torrentio (multi-site, file-exact) + TPB + YTS + 1337x + SolidTorrents. */
+/**
+ * Race a provider against a soft deadline — best-effort sources (TGx mirror
+ * walks can take a minute when every mirror is CF-blocked) must not stall the
+ * whole detail panel that is waiting on Promise.all.
+ */
+function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    p.catch(() => fallback),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ])
+}
+
+/**
+ * Find movie torrents across ALL video sources:
+ * Torrentio (multi-site, file-exact) + TPB + YTS + 1337x + SolidTorrents
+ * + RARBG archive + LimeTorrents + TorrentDownloads + TorrentGalaxy.
+ */
 export async function findMovieTorrents(imdbId?: string, title?: string, year?: number): Promise<TorrentOption[]> {
   return cached(`movtorrent:${imdbId || '-'}|${title || '-'}|${year || '-'}`, 10 * 60_000, async () => {
     const { ytsMovieTorrents } = await import('./yts')
     const { leetxSearch } = await import('./leetx')
     const { torrentioStreams } = await import('./torrentio')
     const { solidSearch } = await import('./solidtorrents')
+    const { rarbgSearch } = await import('./rarbg')
+    const { limeSearch } = await import('./limetorrents')
+    const { torrentDownloadsSearch } = await import('./torrentdownloads')
+    const { tgxSearch } = await import('./torrentgalaxy')
 
     const tpbTask = (async () => {
       let rows: TpbItem[] = []
@@ -326,23 +350,36 @@ export async function findMovieTorrents(imdbId?: string, title?: string, year?: 
         .map(apibayToTorrentOption)
     })()
 
-    const [torrentio, tpb, yts, leetx, solid] = await Promise.all([
+    const q = title ? `${title}${year ? ` ${year}` : ''}` : ''
+    const [torrentio, tpb, yts, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
       imdbId
         ? torrentioStreams('movie', imdbId).catch(() => [] as TorrentOption[])
         : Promise.resolve([] as TorrentOption[]),
       tpbTask,
       ytsMovieTorrents(imdbId, title, year).catch(() => [] as TorrentOption[]),
-      title
-        ? leetxSearch(`${title}${year ? ` ${year}` : ''}`, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[])
+      q
+        ? leetxSearch(q, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[])
         : Promise.resolve([] as TorrentOption[]),
-      title
-        ? solidSearch(`${title}${year ? ` ${year}` : ''}`, { videoOnly: true }).catch(() => [] as TorrentOption[])
+      q
+        ? solidSearch(q, { videoOnly: true }).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
+      q
+        ? rarbgSearch(q).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
+      q
+        ? limeSearch(q, { category: 'movies' }).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
+      q
+        ? torrentDownloadsSearch(q, { resolve: 8 }).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
+      q
+        ? withDeadline(tgxSearch(q, { resolve: 6 }).catch(() => [] as TorrentOption[]), 16_000, [] as TorrentOption[])
         : Promise.resolve([] as TorrentOption[]),
     ])
 
     const seen = new Set<string>()
     const merged: TorrentOption[] = []
-    for (const t of [...torrentio, ...tpb, ...yts, ...leetx, ...solid]) {
+    for (const t of [...torrentio, ...yts, ...tpb, ...rarbg, ...lime, ...leetx, ...solid, ...td, ...tgx]) {
       const key = (t.source || t.hash || '').toLowerCase()
       if (!key || seen.has(key)) continue
       seen.add(key)
@@ -445,6 +482,7 @@ export function decodeEntities(s: string): string {
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
 }
 
@@ -706,6 +744,30 @@ export async function findEpisodeTorrents(
       const opts = await solidSearch(`${title} S${pad(season)}E${pad(episode)}`, { videoOnly: true })
       const sorted = sortTorrentsPlayableFirst(opts).slice(0, 12)
       if (sorted.length) return sorted
+    } catch { /* next fallback */ }
+  }
+  // RARBG archive fallback (JSON, infohash included)
+  try {
+    const { rarbgSearch } = await import('./rarbg')
+    const opts = sortTorrentsPlayableFirst(await rarbgSearch(`${title} ${season && episode ? `S${pad(season)}E${pad(episode)}` : ''}`.trim()))
+      .filter((t) => /\bS\d{1,2}E\d{1,2}\b/i.test(t.title) || !season)
+    if (opts.length) return opts.slice(0, 12)
+  } catch { /* next fallback */ }
+  // LimeTorrents TV fallback (hash embedded in rows)
+  if (season && episode) {
+    try {
+      const { limeSearch } = await import('./limetorrents')
+      const opts = await limeSearch(`${title} S${pad(season)}E${pad(episode)}`, { category: 'tv' })
+      if (opts.length) return opts.slice(0, 12)
+    } catch { /* next fallback */ }
+  }
+  // TorrentGalaxy fallback (best-effort, mirror chain) — soft deadline so a
+  // fully-blocked mirror chain can never stall the episode panel
+  if (season && episode) {
+    try {
+      const { tgxSearch } = await import('./torrentgalaxy')
+      const opts = await withDeadline(tgxSearch(`${title} S${pad(season)}E${pad(episode)}`, { resolve: 6 }), 16_000, [] as TorrentOption[])
+      if (opts.length) return opts.slice(0, 12)
     } catch { /* give up */ }
   }
   return []

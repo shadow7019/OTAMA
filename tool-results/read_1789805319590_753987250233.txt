@@ -1,0 +1,713 @@
+     1→     1→/**
+     2→     2→ * OTAMA provider layer.
+     3→     3→ *
+     4→     4→ * Aggregates public, keyless APIs:
+     5→     5→ *  - Cinemeta  (Stremio's open metadata service)  -> movies / series posters, backdrops, descriptions
+     6→     6→ *  - TVMaze    (open TV database)                 -> series browse, seasons & episodes
+     7→     7→ *  - Apibay    (ThePirateBay official API)        -> torrent search incl. imdb-keyed lookup
+     8→     8→ *  - EZTV      (TV torrent api, best-effort)      -> episode torrents w/ automatic TPB fallback
+     9→     9→ *  - Nyaa      (anime tracker, RSS)               -> anime torrents
+    10→    10→ *  - YTS       (YIFY movies, JSON API)            -> movie catalog + hash-ready torrents
+    11→    11→ *  - 1337x     (HTML scraper)                     -> general torrent search
+    12→    12→ *  - Torrends  (site directory + live proxies)    -> mirror resolution + 700+ site links
+    13→    13→ *
+    14→    14→ * Every provider degrades gracefully: if one is unavailable the callers fall
+    15→    15→ * back to the remaining sources so the app keeps working.
+    16→    16→ */
+    17→    17→import type { MetaItem, MetaKind, TorrentOption, EpisodeInfo, TpbItem } from '@/lib/types'
+    18→    18→
+    19→    19→export const UA =
+    20→    20→  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+    21→    21→
+    22→    22→const CINE = 'https://v3-cinemeta.strem.io'
+    23→    23→const TVMAZE = 'https://api.tvmaze.com'
+    24→    24→const APIBAY = 'https://apibay.org'
+    25→    25→const EZTV = 'https://eztvx.to'
+    26→    26→const NYAA = 'https://nyaa.si'
+    27→    27→
+    28→    28→/* ------------------------------ tiny cache ------------------------------ */
+    29→    29→
+    30→    30→interface CacheEntry {
+    31→    31→  ts: number
+    32→    32→  value: unknown
+    33→    33→}
+    34→    34→const globalCache = globalThis as unknown as { __otamaCache?: Map<string, CacheEntry> }
+    35→    35→const cache: Map<string, CacheEntry> = globalCache.__otamaCache ?? new Map()
+    36→    36→globalCache.__otamaCache = cache
+    37→    37→
+    38→    38→export async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+    39→    39→  const hit = cache.get(key)
+    40→    40→  if (hit && Date.now() - hit.ts < ttlMs) return hit.value as T
+    41→    41→  const value = await fn()
+    42→    42→  cache.set(key, { ts: Date.now(), value })
+    43→    43→  return value
+    44→    44→}
+    45→    45→
+    46→    46→/* ------------------------------ fetch helpers ------------------------------ */
+    47→    47→
+    48→    48→async function fetchText(url: string, timeoutMs = 12_000): Promise<string> {
+    49→    49→  const ctrl = new AbortController()
+    50→    50→  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    51→    51→  try {
+    52→    52→    const res = await fetch(url, {
+    53→    53→      signal: ctrl.signal,
+    54→    54→      cache: 'no-store',
+    55→    55→      headers: { 'User-Agent': UA, Accept: '*/*' },
+    56→    56→    })
+    57→    57→    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+    58→    58→    return await res.text()
+    59→    59→  } finally {
+    60→    60→    clearTimeout(t)
+    61→    61→  }
+    62→    62→}
+    63→    63→
+    64→    64→async function fetchJson<T>(url: string, timeoutMs = 12_000): Promise<T> {
+    65→    65→  const text = await fetchText(url, timeoutMs)
+    66→    66→  if (text.trimStart().startsWith('<')) throw new Error(`Got HTML instead of JSON from ${url}`)
+    67→    67→  return JSON.parse(text) as T
+    68→    68→}
+    69→    69→
+    70→    70→export class ProviderError extends Error {}
+    71→    71→
+    72→    72→/**
+    73→    73→ * Some trackers (apibay = ThePirateBay API, EZTV) sit behind Cloudflare and
+    74→    74→ * fingerprint TLS: Node's fetch/https stacks get 403-challenged while curl
+    75→    75→ * passes. Use curl as the primary transport for those hosts with a fetch
+    76→    76→ * fallback for environments without curl.
+    77→    77→ */
+    78→    78→export async function cfGetText(url: string, timeoutMs = 12_000): Promise<string> {
+    79→    79→  const maxTime = Math.ceil(timeoutMs / 1000)
+    80→    80→  try {
+    81→    81→    const { execFile } = await import('node:child_process')
+    82→    82→    const out = await new Promise<string>((resolve, reject) => {
+    83→    83→      execFile(
+    84→    84→        'curl',
+    85→    85→        ['-s', '-L', '--compressed', '--max-time', String(maxTime), '-A', UA, '-H', 'Accept: */*', url],
+    86→    86→        { timeout: (maxTime + 2) * 1000, maxBuffer: 8 * 1024 * 1024 },
+    87→    87→        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+    88→    88→      )
+    89→    89→    })
+    90→    90→    if (out) return out
+    91→    91→  } catch { /* curl missing or failed -> fall back to fetch */ }
+    92→    92→  return fetchText(url, timeoutMs)
+    93→    93→}
+    94→    94→
+    95→    95→async function cfGetJson<T>(url: string, timeoutMs = 12_000): Promise<T> {
+    96→    96→  const text = await cfGetText(url, timeoutMs)
+    97→    97→  if (text.trimStart().startsWith('<')) throw new ProviderError(`Blocked by Cloudflare: ${new URL(url).host}`)
+    98→    98→  return JSON.parse(text) as T
+    99→    99→}
+   100→   100→
+   101→   101→/* ------------------------------ cinemeta ------------------------------ */
+   102→   102→
+   103→   103→interface CineMetaRaw {
+   104→   104→  imdb_id?: string
+   105→   105→  type?: string
+   106→   106→  name?: string
+   107→   107→  year?: string
+   108→   108→  poster?: string
+   109→   109→  background?: string
+   110→   110→  imdbRating?: string
+   111→   111→  genres?: string[]
+   112→   112→  description?: string
+   113→   113→  runtime?: string
+   114→   114→  released?: string
+   115→   115→  cast?: string[]
+   116→   116→  awards?: string
+   117→   117→  country?: string
+   118→   118→  videos?: { id: string; season?: number; episode?: number; name?: string; title?: string; released?: string; overview?: string; thumbnail?: string }[]
+   119→   119→}
+   120→   120→
+   121→   121→export function normalizeCine(raw: CineMetaRaw, kind: MetaKind): MetaItem {
+   122→   122→  const year = raw.year ? parseInt(String(raw.year).slice(0, 4), 10) : undefined
+   123→   123→  return {
+   124→   124→    refId: raw.imdb_id || raw.name || Math.random().toString(36).slice(2),
+   125→   125→    kind,
+   126→   126→    title: raw.name || 'Unknown',
+   127→   127→    year: year && !isNaN(year) ? year : undefined,
+   128→   128→    poster: raw.poster && raw.poster !== 'null' ? raw.poster : undefined,
+   129→   129→    backdrop: raw.background && raw.background !== 'null' ? raw.background : undefined,
+   130→   130→    rating: raw.imdbRating ? parseFloat(raw.imdbRating) : undefined,
+   131→   131→    genres: raw.genres || [],
+   132→   132→    summary: raw.description || undefined,
+   133→   133→    runtime: raw.runtime ? parseInt(raw.runtime, 10) || undefined : undefined,
+   134→   134→    imdbId: raw.imdb_id,
+   135→   135→    provider: 'cinemeta',
+   136→   136→  }
+   137→   137→}
+   138→   138→
+   139→   139→/**
+   140→   140→ * Cinemeta catalog browse/search.
+   141→   141→ * sort: 'top' | 'imdbRating' | 'year'
+   142→   142→ */
+   143→   143→export async function cineCatalog(
+   144→   144→  type: 'movie' | 'series',
+   145→   145→  opts: { genre?: string; skip?: number; search?: string; sort?: string } = {},
+   146→   146→): Promise<MetaItem[]> {
+   147→   147→  const kind: MetaKind = type === 'movie' ? 'movie' : 'tv'
+   148→   148→  const sort = opts.sort && ['top', 'imdbRating', 'year'].includes(opts.sort) ? opts.sort : 'top'
+   149→   149→  const extras: string[] = []
+   150→   150→  if (opts.search) extras.push(`search=${encodeURIComponent(opts.search)}`)
+   151→   151→  if (opts.genre) extras.push(`genre=${encodeURIComponent(opts.genre)}`)
+   152→   152→  if (opts.skip) extras.push(`skip=${opts.skip}`)
+   153→   153→  const suffix = extras.length ? `/${extras.join('&')}` : ''
+   154→   154→  const url = `${CINE}/catalog/${type}/${sort}${suffix}.json`
+   155→   155→  const data = await fetchJson<{ metas?: CineMetaRaw[] }>(url, 15_000)
+   156→   156→  return (data.metas || []).map((m) => normalizeCine(m, kind))
+   157→   157→}
+   158→   158→
+   159→   159→export async function cineMeta(type: 'movie' | 'series', imdbId: string): Promise<MetaItem & { videos?: CineMetaRaw['videos']; awards?: string; cast?: string[]; country?: string }> {
+   160→   160→  const data = await fetchJson<{ meta?: CineMetaRaw }>(`${CINE}/meta/${type}/${imdbId}.json`, 15_000)
+   161→   161→  if (!data.meta) throw new ProviderError('Cinemeta meta not found')
+   162→   162→  const kind: MetaKind = type === 'movie' ? 'movie' : 'tv'
+   163→   163→  return { ...normalizeCine(data.meta, kind), videos: data.meta.videos, awards: data.meta.awards, cast: data.meta.cast, country: data.meta.country }
+   164→   164→}
+   165→   165→
+   166→   166→/* ------------------------------ apibay (ThePirateBay) ------------------------------ */
+   167→   167→
+   168→   168→interface ApibayRow {
+   169→   169→  id?: string
+   170→   170→  name?: string
+   171→   171→  info_hash?: string
+   172→   172→  leechers?: string
+   173→   173→  seeders?: string
+   174→   174→  size?: string
+   175→   175→  num_files?: string
+   176→   176→  username?: string
+   177→   177→  added?: string
+   178→   178→  status?: string
+   179→   179→  category?: string
+   180→   180→  imdb?: string
+   181→   181→}
+   182→   182→
+   183→   183→const TPB_CATEGORIES: Record<string, string> = {
+   184→   184→  '201': 'Movies',
+   185→   185→  '202': 'Movies DVDR',
+   186→   186→  '203': 'Music videos',
+   187→   187→  '205': 'TV shows',
+   188→   188→  '207': 'HD Movies',
+   189→   189→  '208': 'HD TV shows',
+   190→   190→  '209': '3D Movies',
+   191→   191→  '299': 'Video (other)',
+   192→   192→}
+   193→   193→
+   194→   194→export function humanSize(bytes?: number | string): string {
+   195→   195→  const n = typeof bytes === 'string' ? parseInt(bytes, 10) : bytes
+   196→   196→  if (!n || isNaN(n)) return ''
+   197→   197→  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+   198→   198→  let i = 0
+   199→   199→  let v = n
+   200→   200→  while (v >= 1024 && i < units.length - 1) {
+   201→   201→    v /= 1024
+   202→   202→    i++
+   203→   203→  }
+   204→   204→  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
+   205→   205→}
+   206→   206→
+   207→   207→const QUALITY_RE = /\b(2160p|1440p|1080p|1080i|720p|576p|480p|4k|uhd|web[ .-]?dl|web[ .-]?rip|brrip|bluray|bdrip|hdrip|dvdrip|hdtv|cam|ts)\b/i
+   208→   208→
+   209→   209→export function detectQuality(name: string): string | undefined {
+   210→   210→  const m = QUALITY_RE.exec(name)
+   211→   211→  if (!m) return undefined
+   212→   212→  const q = m[1].toUpperCase()
+   213→   213→  if (q === '4K' || q === 'UHD') return '2160p'
+   214→   214→  return q.replace(/\s/g, '')
+   215→   215→}
+   216→   216→
+   217→   217→/**
+   218→   218→ * Codec detection from a release name. HEVC/x265 releases typically CANNOT be
+   219→   219→ * decoded by browsers (Chrome only plays H.265 with hardware support), which
+   220→   220→ * is the #1 cause of the "stuck on buffering" report — so OTAMA surfaces and
+   221→   221→ * deprioritises them.
+   222→   222→ */
+   223→   223→export function detectCodecFromName(name: string): 'h264' | 'hevc' | undefined {
+   224→   224→  const s = (name || '').toLowerCase()
+   225→   225→  if (/\b(x\s?265|h\.?265|hevc)\b/.test(s)) return 'hevc'
+   226→   226→  if (/\b(x\s?264|h\.?264|avc)\b/.test(s)) return 'h264'
+   227→   227→  return undefined
+   228→   228→}
+   229→   229→
+   230→   230→/**
+   231→   231→ * Browser playability of a release name — 0 plays everywhere, higher ranks
+   232→   232→ * may not play: 1 MKV/MOV (Chromium-only), 2 AVI/TS (<video> can't demux),
+   233→   233→ * 3 HEVC/x265 (browsers cannot decode without hardware support).
+   234→   234→ */
+   235→   235→export function playabilityRank(name: string, codec?: string): 0 | 1 | 2 | 3 {
+   236→   236→  const c = (codec as 'h264' | 'hevc' | undefined) || detectCodecFromName(name)
+   237→   237→  if (c === 'hevc') return 3
+   238→   238→  const ext = (name.match(/\.(mp4|m4v|mkv|mov|avi|ts|webm)\b/i) || [])[1]?.toLowerCase()
+   239→   239→  if (ext === 'avi' || ext === 'ts') return 2 // container not supported by <video>
+   240→   240→  if (ext === 'mkv' || ext === 'mov') return 1 // plays in Chromium/Chrome, not Firefox/Safari
+   241→   241→  return 0
+   242→   242→}
+   243→   243→
+   244→   244→/**
+   245→   245→ * Sort torrent options so that browser-playable releases come first, then by
+   246→   246→ * seed count. Keeps the popular x265-HEVC packs from hijacking the top slot.
+   247→   247→ */
+   248→   248→export function sortTorrentsPlayableFirst(list: TorrentOption[]): TorrentOption[] {
+   249→   249→  return [...list].sort((a, b) => {
+   250→   250→    const pa = playabilityRank(a.title, a.codec)
+   251→   251→    const pb = playabilityRank(b.title, b.codec)
+   252→   252→    if (pa !== pb) return pa - pb
+   253→   253→    return (b.seeds || 0) - (a.seeds || 0)
+   254→   254→  })
+   255→   255→}
+   256→   256→
+   257→   257→export function normalizeApibayRow(row: ApibayRow): TpbItem | null {
+   258→   258→  if (!row.info_hash || !row.name) return null
+   259→   259→  const cat = row.category || '0'
+   260→   260→  return {
+   261→   261→    id: row.id || row.info_hash,
+   262→   262→    name: row.name,
+   263→   263→    hash: row.info_hash.toLowerCase(),
+   264→   264→    size: humanSize(row.size),
+   265→   265→    sizeBytes: parseInt(row.size || '0', 10) || 0,
+   266→   266→    seeds: parseInt(row.seeders || '0', 10) || 0,
+   267→   267→    leechers: parseInt(row.leechers || '0', 10) || 0,
+   268→   268→    category: TPB_CATEGORIES[cat] || 'Other',
+   269→   269→    categoryCode: cat,
+   270→   270→    added: row.added ? new Date(parseInt(row.added, 10) * 1000).toISOString() : '',
+   271→   271→    username: row.username || 'anonymous',
+   272→   272→    status: row.status,
+   273→   273→    imdb: row.imdb || undefined,
+   274→   274→    quality: detectQuality(row.name),
+   275→   275→  }
+   276→   276→}
+   277→   277→
+   278→   278→export async function apibaySearch(q: string, cat = ''): Promise<TpbItem[]> {
+   279→   279→  const url = `${APIBAY}/q.php?q=${encodeURIComponent(q)}&cat=${cat}`
+   280→   280→  const rows = await cfGetJson<ApibayRow[]>(url, 12_000)
+   281→   281→  if (!Array.isArray(rows)) return []
+   282→   282→  return rows.map(normalizeApibayRow).filter((r): r is TpbItem => !!r)
+   283→   283→}
+   284→   284→
+   285→   285→export function apibayToTorrentOption(item: TpbItem): TorrentOption {
+   286→   286→  return {
+   287→   287→    hash: item.hash,
+   288→   288→    title: item.name,
+   289→   289→    quality: item.quality,
+   290→   290→    codec: detectCodecFromName(item.name),
+   291→   291→    size: item.size,
+   292→   292→    sizeBytes: item.sizeBytes,
+   293→   293→    seeds: item.seeds,
+   294→   294→    leechers: item.leechers,
+   295→   295→    provider: 'tpb',
+   296→   296→    source: item.hash,
+   297→   297→    date: item.added,
+   298→   298→    status: item.status,
+   299→   299→  }
+   300→   300→}
+   301→   301→
+   302→   302→/** Find movie torrents: Torrentio (multi-site, file-exact) + TPB + YTS + 1337x + SolidTorrents. */
+   303→   303→export async function findMovieTorrents(imdbId?: string, title?: string, year?: number): Promise<TorrentOption[]> {
+   304→   304→  return cached(`movtorrent:${imdbId || '-'}|${title || '-'}|${year || '-'}`, 10 * 60_000, async () => {
+   305→   305→    const { ytsMovieTorrents } = await import('./yts')
+   306→   306→    const { leetxSearch } = await import('./leetx')
+   307→   307→    const { torrentioStreams } = await import('./torrentio')
+   308→   308→    const { solidSearch } = await import('./solidtorrents')
+   309→   309→
+   310→   310→    const tpbTask = (async () => {
+   311→   311→      let rows: TpbItem[] = []
+   312→   312→      if (imdbId) {
+   313→   313→        try {
+   314→   314→          rows = await apibaySearch(imdbId)
+   315→   315→        } catch { /* fall through */ }
+   316→   316→      }
+   317→   317→      if (rows.length === 0 && title) {
+   318→   318→        const q = year ? `${title} ${year}` : title
+   319→   319→        try {
+   320→   320→          rows = await apibaySearch(q)
+   321→   321→        } catch { /* fall through */ }
+   322→   322→      }
+   323→   323→      const videoCats = new Set(['201', '202', '207', '208', '209', '299'])
+   324→   324→      return rows
+   325→   325→        .filter((r) => videoCats.has(r.categoryCode) || r.imdb)
+   326→   326→        .map(apibayToTorrentOption)
+   327→   327→    })()
+   328→   328→
+   329→   329→    const [torrentio, tpb, yts, leetx, solid] = await Promise.all([
+   330→   330→      imdbId
+   331→   331→        ? torrentioStreams('movie', imdbId).catch(() => [] as TorrentOption[])
+   332→   332→        : Promise.resolve([] as TorrentOption[]),
+   333→   333→      tpbTask,
+   334→   334→      ytsMovieTorrents(imdbId, title, year).catch(() => [] as TorrentOption[]),
+   335→   335→      title
+   336→   336→        ? leetxSearch(`${title}${year ? ` ${year}` : ''}`, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[])
+   337→   337→        : Promise.resolve([] as TorrentOption[]),
+   338→   338→      title
+   339→   339→        ? solidSearch(`${title}${year ? ` ${year}` : ''}`, { videoOnly: true }).catch(() => [] as TorrentOption[])
+   340→   340→        : Promise.resolve([] as TorrentOption[]),
+   341→   341→    ])
+   342→   342→
+   343→   343→    const seen = new Set<string>()
+   344→   344→    const merged: TorrentOption[] = []
+   345→   345→    for (const t of [...torrentio, ...tpb, ...yts, ...leetx, ...solid]) {
+   346→   346→      const key = (t.source || t.hash || '').toLowerCase()
+   347→   347→      if (!key || seen.has(key)) continue
+   348→   348→      seen.add(key)
+   349→   349→      merged.push(t)
+   350→   350→    }
+   351→   351→    // Browser-playable (H.264/x264, MP4/MKV) releases first, seeds second.
+   352→   352→    return sortTorrentsPlayableFirst(merged).slice(0, 40)
+   353→   353→  })
+   354→   354→}
+   355→   355→
+   356→   356→/* ------------------------------ poster validation ------------------------------ */
+   357→   357→
+   358→   358→const posterCheckCache = globalThis as unknown as { __otamaPosterCache?: Map<string, boolean> }
+   359→   359→const posterCache: Map<string, boolean> = posterCheckCache.__otamaPosterCache ?? new Map()
+   360→   360→posterCheckCache.__otamaPosterCache = posterCache
+   361→   361→
+   362→   362→/**
+   363→   363→ * Does a poster URL actually resolve to an image? Cinemeta's metahub serves a
+   364→   364→ * small HTML error page (content-type text/html) for titles without artwork,
+   365→   365→ * which used to render as an ugly grey "initials" placeholder card.
+   366→   366→ */
+   367→   367→export async function posterWorks(url: string): Promise<boolean> {
+   368→   368→  if (!url) return false
+   369→   369→  if (!/^https?:\/\//.test(url)) return true
+   370→   370→  const hit = posterCache.get(url)
+   371→   371→  if (hit !== undefined) return hit
+   372→   372→  let ok = true
+   373→   373→  try {
+   374→   374→    const res = await fetch(url, {
+   375→   375→      method: 'HEAD',
+   376→   376→      signal: AbortSignal.timeout(6_000),
+   377→   377→      headers: { 'User-Agent': UA },
+   378→   378→    })
+   379→   379→    const ct = (res.headers.get('content-type') || '').toLowerCase()
+   380→   380→    if (!res.ok || !ct.startsWith('image/')) ok = false
+   381→   381→  } catch {
+   382→   382→    // network hiccup — give the poster the benefit of the doubt
+   383→   383→    ok = true
+   384→   384→  }
+   385→   385→  if (posterCache.size < 5000) posterCache.set(url, ok)
+   386→   386→  return ok
+   387→   387→}
+   388→   388→
+   389→   389→/** Drop broken poster URLs from a list (poster falls back to branded card). */
+   390→   390→export async function stripBrokenPosters<T extends { poster?: string }>(items: T[]): Promise<T[]> {
+   391→   391→  return Promise.all(
+   392→   392→    items.map(async (it) => {
+   393→   393→      if (!it.poster) return it
+   394→   394→      const ok = await posterWorks(it.poster)
+   395→   395→      return ok ? it : { ...it, poster: undefined }
+   396→   396→    }),
+   397→   397→  )
+   398→   398→}
+   399→   399→
+   400→   400→/* ------------------------------ eztv (best-effort) ------------------------------ */
+   401→   401→
+   402→   402→interface EztvRow {
+   403→   403→  id?: number
+   404→   404→  hash?: string
+   405→   405→  filename?: string
+   406→   406→  title?: string
+   407→   407→  season_number?: number
+   408→   408→  episode_number?: number
+   409→   409→  size_bytes?: number | string
+   410→   410→  seeds?: number
+   411→   411→  leechers?: number
+   412→   412→  date_released_unix?: number
+   413→   413→  imdb_id?: string
+   414→   414→}
+   415→   415→
+   416→   416→async function eztvByImdb(imdbNumeric: string): Promise<TorrentOption[]> {
+   417→   417→  const url = `${EZTV}/api/get-torrents?imdb_id=${encodeURIComponent(imdbNumeric)}&limit=200`
+   418→   418→  const data = await cfGetJson<{ torrent_list?: EztvRow[] }>(url, 8_000)
+   419→   419→  return (data.torrent_list || [])
+   420→   420→    .filter((r) => r.hash && (r.filename || r.title))
+   421→   421→    .map((r) => ({
+   422→   422→      hash: r.hash!.toLowerCase(),
+   423→   423→      title: r.title || r.filename || r.hash!,
+   424→   424→      quality: detectQuality(r.title || r.filename || ''),
+   425→   425→      codec: detectCodecFromName(r.title || r.filename || ''),
+   426→   426→      size: humanSize(r.size_bytes),
+   427→   427→      sizeBytes: parseInt(String(r.size_bytes || '0'), 10) || 0,
+   428→   428→      seeds: r.seeds || 0,
+   429→   429→      leechers: r.leechers || 0,
+   430→   430→      provider: 'eztv' as const,
+   431→   431→      source: r.hash!.toLowerCase(),
+   432→   432→      season: r.season_number,
+   433→   433→      episode: r.episode_number,
+   434→   434→      date: r.date_released_unix ? new Date(r.date_released_unix * 1000).toISOString() : undefined,
+   435→   435→    }))
+   436→   436→}
+   437→   437→
+   438→   438→/* ------------------------------ nyaa ------------------------------ */
+   439→   439→
+   440→   440→export function decodeEntities(s: string): string {
+   441→   441→  return s
+   442→   442→    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
+   443→   443→    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+   444→   444→    .replace(/&quot;/g, '"')
+   445→   445→    .replace(/&apos;/g, "'")
+   446→   446→    .replace(/&lt;/g, '<')
+   447→   447→    .replace(/&gt;/g, '>')
+   448→   448→    .replace(/&amp;/g, '&')
+   449→   449→}
+   450→   450→
+   451→   451→function cdata(s: string): string {
+   452→   452→  const m = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(s)
+   453→   453→  return m ? m[1] : s
+   454→   454→}
+   455→   455→
+   456→   456→interface NyaaItem {
+   457→   457→  title: string
+   458→   458→  hash: string
+   459→   459→  seeds: number
+   460→   460→  leechers: number
+   461→   461→  size: string
+   462→   462→  date: string
+   463→   463→  page: string
+   464→   464→  info: string
+   465→   465→}
+   466→   466→
+   467→   467→export function parseNyaaRss(xml: string): NyaaItem[] {
+   468→   468→  const items: NyaaItem[] = []
+   469→   469→  const itemRe = /<item>([\s\S]*?)<\/item>/g
+   470→   470→  let m: RegExpExecArray | null
+   471→   471→  const tag = (block: string, name: string): string => {
+   472→   472→    const re = new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`, 'i')
+   473→   473→    const t = re.exec(block)
+   474→   474→    return t ? decodeEntities(cdata(t[1]).trim()) : ''
+   475→   475→  }
+   476→   476→  while ((m = itemRe.exec(xml))) {
+   477→   477→    const block = m[1]
+   478→   478→    const hash = tag(block, 'nyaa:infoHash').toLowerCase()
+   479→   479→    const title = tag(block, 'title')
+   480→   480→    if (!hash || !title) continue
+   481→   481→    items.push({
+   482→   482→      title,
+   483→   483→      hash,
+   484→   484→      seeds: parseInt(tag(block, 'nyaa:seeders'), 10) || 0,
+   485→   485→      leechers: parseInt(tag(block, 'nyaa:leechers'), 10) || 0,
+   486→   486→      size: tag(block, 'nyaa:size'),
+   487→   487→      date: tag(block, 'pubDate'),
+   488→   488→      page: tag(block, 'guid'),
+   489→   489→      info: tag(block, 'description'),
+   490→   490→    })
+   491→   491→  }
+   492→   492→  return items
+   493→   493→}
+   494→   494→
+   495→   495→export async function nyaaSearch(
+   496→   496→  q: string,
+   497→   497→  opts: { sort?: 'seeders' | 'date' } = {},
+   498→   498→): Promise<TorrentOption[]> {
+   499→   499→  const sort = opts.sort === 'date' ? 's=id&o=desc' : 's=seeders&o=desc'
+   500→   500→  const url = `${NYAA}/?page=rss&q=${encodeURIComponent(q)}&c=1_2&f=0&${sort}`
+   501→   501→  const xml = await fetchText(url, 12_000)
+   502→   502→  return parseNyaaRss(xml).map((r) => ({
+   503→   503→    hash: r.hash,
+   504→   504→    title: r.title,
+   505→   505→    quality: detectQuality(r.title),
+   506→   506→    size: r.size,
+   507→   507→    seeds: r.seeds,
+   508→   508→    leechers: r.leechers,
+   509→   509→    provider: 'nyaa' as const,
+   510→   510→    source: r.hash,
+   511→   511→    date: r.date ? new Date(r.date).toISOString() : undefined,
+   512→   512→  }))
+   513→   513→}
+   514→   514→
+   515→   515→/* ------------------------------ tvmaze ------------------------------ */
+   516→   516→
+   517→   517→interface TvMazeShow {
+   518→   518→  id: number
+   519→   519→  name: string
+   520→   520→  genres?: string[]
+   521→   521→  status?: string
+   522→   522→  runtime?: number
+   523→   523→  averageRuntime?: number
+   524→   524→  premiered?: string
+   525→   525→  rating?: { average?: number }
+   526→   526→  summary?: string
+   527→   527→  image?: { medium?: string; original?: string }
+   528→   528→  externals?: { imdb?: string }
+   529→   529→  network?: { name?: string }
+   530→   530→  webChannel?: { name?: string }
+   531→   531→}
+   532→   532→
+   533→   533→function normalizeTvMaze(show: TvMazeShow): MetaItem {
+   534→   534→  return {
+   535→   535→    refId: `tvmaze:${show.id}`,
+   536→   536→    kind: 'tv',
+   537→   537→    title: show.name,
+   538→   538→    year: show.premiered ? parseInt(show.premiered.slice(0, 4), 10) : undefined,
+   539→   539→    poster: show.image?.original || show.image?.medium || undefined,
+   540→   540→    rating: show.rating?.average || undefined,
+   541→   541→    genres: show.genres || [],
+   542→   542→    summary: show.summary ? show.summary.replace(/<[^>]+>/g, '') : undefined,
+   543→   543→    runtime: show.averageRuntime || show.runtime,
+   544→   544→    imdbId: show.externals?.imdb,
+   545→   545→    tvmazeId: show.id,
+   546→   546→    provider: 'tvmaze',
+   547→   547→  }
+   548→   548→}
+   549→   549→
+   550→   550→export async function tvmazeBrowse(page: number): Promise<MetaItem[]> {
+   551→   551→  const shows = await fetchJson<TvMazeShow[]>(`${TVMAZE}/shows?page=${page}`, 15_000)
+   552→   552→  return shows.map(normalizeTvMaze)
+   553→   553→}
+   554→   554→
+   555→   555→export async function tvmazeSearch(q: string): Promise<MetaItem[]> {
+   556→   556→  const data = await fetchJson<{ show: TvMazeShow }[]>(`${TVMAZE}/search/shows?q=${encodeURIComponent(q)}`, 12_000)
+   557→   557→  return data.map((d) => normalizeTvMaze(d.show))
+   558→   558→}
+   559→   559→
+   560→   560→export async function tvmazeLookupByImdb(imdb: string): Promise<TvMazeShow> {
+   561→   561→  return fetchJson<TvMazeShow>(`${TVMAZE}/lookup/shows?imdb=${encodeURIComponent(imdb)}`, 12_000)
+   562→   562→}
+   563→   563→
+   564→   564→interface TvMazeEpisode {
+   565→   565→  id: number
+   566→   566→  season: number
+   567→   567→  number: number | null
+   568→   568→  name: string
+   569→   569→  airdate?: string
+   570→   570→  summary?: string
+   571→   571→  image?: { medium?: string; original?: string }
+   572→   572→}
+   573→   573→
+   574→   574→export async function seriesDetail(imdbId: string): Promise<{ item: MetaItem & { cast?: string[]; awards?: string }; seasons: { season: number; episodes: EpisodeInfo[] }[] }> {
+   575→   575→  const cine = await cineMeta('series', imdbId)
+   576→   576→  let item: MetaItem & { cast?: string[]; awards?: string } = cine
+   577→   577→  const seasonsMap = new Map<number, EpisodeInfo[]>()
+   578→   578→
+   579→   579→  // Try TVMaze for reliable episode lists
+   580→   580→  try {
+   581→   581→    const show = await tvmazeLookupByImdb(imdbId)
+   582→   582→    if (show) {
+   583→   583→      const shows = await fetchJson<TvMazeShow & { _embedded?: { episodes?: TvMazeEpisode[] } }>(
+   584→   584→        `${TVMAZE}/shows/${show.id}?embed=episodes`,
+   585→   585→        15_000,
+   586→   586→      )
+   587→   587→      item = { ...normalizeTvMaze(shows), backdrop: cine.backdrop, summary: cine.summary || normalizeTvMaze(shows).summary, cast: cine.cast, awards: cine.awards }
+   588→   588→      for (const ep of shows._embedded?.episodes || []) {
+   589→   589→        if (ep.number == null) continue
+   590→   590→        const list = seasonsMap.get(ep.season) || []
+   591→   591→        list.push({
+   592→   592→          season: ep.season,
+   593→   593→          episode: ep.number,
+   594→   594→          title: ep.name,
+   595→   595→          overview: ep.summary ? ep.summary.replace(/<[^>]+>/g, '') : undefined,
+   596→   596→          airDate: ep.airdate || undefined,
+   597→   597→          thumbnail: ep.image?.medium || undefined,
+   598→   598→        })
+   599→   599→        seasonsMap.set(ep.season, list)
+   600→   600→      }
+   601→   601→    }
+   602→   602→  } catch {
+   603→   603→    // fallback: Cinemeta videos
+   604→   604→  }
+   605→   605→
+   606→   606→  if (seasonsMap.size === 0 && cine.videos?.length) {
+   607→   607→    for (const v of cine.videos) {
+   608→   608→      if (v.season == null || v.episode == null || v.season < 1) continue
+   609→   609→      const list = seasonsMap.get(v.season) || []
+   610→   610→      list.push({
+   611→   611→        season: v.season,
+   612→   612→        episode: v.episode,
+   613→   613→        title: v.name || v.title,
+   614→   614→        overview: v.overview,
+   615→   615→        airDate: v.released,
+   616→   616→        thumbnail: v.thumbnail,
+   617→   617→      })
+   618→   618→      seasonsMap.set(v.season, list)
+   619→   619→    }
+   620→   620→  }
+   621→   621→
+   622→   622→  const seasons = [...seasonsMap.entries()]
+   623→   623→    .map(([season, episodes]) => ({ season, episodes: episodes.sort((a, b) => a.episode - b.episode) }))
+   624→   624→    .sort((a, b) => a.season - b.season)
+   625→   625→
+   626→   626→  return { item, seasons }
+   627→   627→}
+   628→   628→
+   629→   629→/** Episode torrents: Torrentio (multi-site, file-exact) + EZTV + TPB + 1337x + SolidTorrents. */
+   630→   630→export async function findEpisodeTorrents(
+   631→   631→  imdbId?: string,
+   632→   632→  title?: string,
+   633→   633→  season?: number,
+   634→   634→  episode?: number,
+   635→   635→): Promise<TorrentOption[]> {
+   636→   636→  // Torrentio first — aggregates EZTV/TPB/1337x/TGX/RARBG/KAT and returns the
+   637→   637→  // exact video file index for the episode (fast + fewest dead torrents).
+   638→   638→  if (imdbId && /^tt\d+$/.test(imdbId)) {
+   639→   639→    try {
+   640→   640→      const { torrentioStreams } = await import('./torrentio')
+   641→   641→      const tor = await cached(
+   642→   642→        `torrentio:ep:${imdbId}:${season ?? ''}:${episode ?? ''}`,
+   643→   643→        5 * 60_000,
+   644→   644→        () => torrentioStreams('series', imdbId, season, episode),
+   645→   645→      )
+   646→   646→      if (season && episode) {
+   647→   647→        const exact = sortTorrentsPlayableFirst(tor.filter((t) => t.season == null || t.season === season)).slice(0, 15)
+   648→   648→        if (exact.length) return exact
+   649→   649→      } else {
+   650→   650→        const sorted = sortTorrentsPlayableFirst(tor).slice(0, 24)
+   651→   651→        if (sorted.length) return sorted
+   652→   652→      }
+   653→   653→    } catch { /* Torrentio unavailable -> EZTV */ }
+   654→   654→  }
+   655→   655→
+   656→   656→  // whole-show EZTV lookup (cached)
+   657→   657→  if (imdbId && /^\d+$/.test(imdbId.replace(/^tt/, ''))) {
+   658→   658→    try {
+   659→   659→      const list = await cached(`eztv:${imdbId}`, 10 * 60_000, () => eztvByImdb(imdbId.replace(/^tt/, '')))
+   660→   660→      const sorted = sortTorrentsPlayableFirst(list)
+   661→   661→      if (season && episode) {
+   662→   662→        const exact = sorted.filter((t) => t.season === season && t.episode === episode)
+   663→   663→        if (exact.length) return exact.slice(0, 12)
+   664→   664→      } else if (season) {
+   665→   665→        const pack = sorted.filter((t) => t.season === season && (t.episode == null || t.episode === 0))
+   666→   666→        if (pack.length) return pack.slice(0, 12)
+   667→   667→      } else {
+   668→   668→        return sorted.slice(0, 24)
+   669→   669→      }
+   670→   670→    } catch { /* EZTV unavailable -> TPB */ }
+   671→   671→  }
+   672→   672→  if (!title) return []
+   673→   673→  const pad = (n?: number, w = 2) => (n != null ? String(n).padStart(w, '0') : '')
+   674→   674→  const queries: string[] = []
+   675→   675→  if (season && episode) {
+   676→   676→    queries.push(`${title} S${pad(season)}E${pad(episode)}`)
+   677→   677→    queries.push(`${title} ${season}x${pad(episode)}`)
+   678→   678→  } else if (season) {
+   679→   679→    queries.push(`${title} S${pad(season)}`)
+   680→   680→  } else {
+   681→   681→    queries.push(title)
+   682→   682→  }
+   683→   683→  for (const q of queries) {
+   684→   684→    try {
+   685→   685→      const rows = await apibaySearch(q)
+   686→   686→      const tvCats = new Set(['205', '208'])
+   687→   687→      const opts = rows
+   688→   688→        .filter((r) => tvCats.has(r.categoryCode) || /\bS\d{1,2}E\d{1,2}\b/i.test(r.name))
+   689→   689→        .map(apibayToTorrentOption)
+   690→   690→      const sorted = sortTorrentsPlayableFirst(opts).slice(0, 12)
+   691→   691→      if (sorted.length) return sorted
+   692→   692→    } catch { /* try next */ }
+   693→   693→  }
+   694→   694→  // 1337x fallback (works when TPB/EZTV are blocked)
+   695→   695→  if (season && episode) {
+   696→   696→    try {
+   697→   697→      const { leetxSearch } = await import('./leetx')
+   698→   698→      const opts = await leetxSearch(`${title} S${pad(season)}E${pad(episode)}`, { category: 'tv', resolve: 8 })
+   699→   699→      if (opts.length) return opts.slice(0, 12)
+   700→   700→    } catch { /* next fallback */ }
+   701→   701→  }
+   702→   702→  // SolidTorrents fallback (DHT index, reachable when trackers are blocked)
+   703→   703→  if (season && episode) {
+   704→   704→    try {
+   705→   705→      const { solidSearch } = await import('./solidtorrents')
+   706→   706→      const opts = await solidSearch(`${title} S${pad(season)}E${pad(episode)}`, { videoOnly: true })
+   707→   707→      const sorted = sortTorrentsPlayableFirst(opts).slice(0, 12)
+   708→   708→      if (sorted.length) return sorted
+   709→   709→    } catch { /* give up */ }
+   710→   710→  }
+   711→   711→  return []
+   712→   712→}
+   713→   713→

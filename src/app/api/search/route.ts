@@ -3,6 +3,10 @@ import { cineCatalog, nyaaSearch, apibaySearch, tvmazeSearch, stripBrokenPosters
 import { ytsSearch } from '@/lib/server/yts'
 import { leetxSearch } from '@/lib/server/leetx'
 import { solidSearch } from '@/lib/server/solidtorrents'
+import { rarbgSearch } from '@/lib/server/rarbg'
+import { limeSearch } from '@/lib/server/limetorrents'
+import { torrentDownloadsSearch } from '@/lib/server/torrentdownloads'
+import { tgxSearch } from '@/lib/server/torrentgalaxy'
 import { tmdbSearchMulti, tmdbStatus } from '@/lib/server/tmdb'
 import type { MetaItem, TorrentOption, TpbItem } from '@/lib/types'
 
@@ -18,7 +22,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get('q') || '').trim()
   if (!q) {
-    return NextResponse.json({ movies: [], series: [], anime: [], tpb: [], leetx: [], solid: [] })
+    return NextResponse.json({ movies: [], series: [], anime: [], tpb: [], leetx: [], solid: [], more: [] })
   }
 
   const safe = async <T>(p: Promise<T>, fallback: T): Promise<T> => {
@@ -37,7 +41,7 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* TMDB optional */ }
 
-  const [movies, series, tvAlt, anime, tpb, ytsMovies, leetx, solid] = await Promise.all([
+  const [movies, series, tvAlt, anime, tpb, ytsMovies, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
     safe(cineCatalog('movie', { search: q, sort: 'top' }), [] as MetaItem[]),
     safe(cineCatalog('series', { search: q, sort: 'top' }), [] as MetaItem[]),
     safe(tvmazeSearch(q), [] as MetaItem[]),
@@ -46,6 +50,10 @@ export async function GET(req: NextRequest) {
     safe(ytsSearch(q), [] as MetaItem[]),
     safe(leetxSearch(q, { resolve: 10 }), [] as TorrentOption[]),
     safe(solidSearch(q), [] as TorrentOption[]),
+    safe(rarbgSearch(q), [] as TorrentOption[]),
+    safe(limeSearch(q), [] as TorrentOption[]),
+    safe(torrentDownloadsSearch(q, { resolve: 10 }), [] as TorrentOption[]),
+    safe(tgxSearch(q, { resolve: 10 }), [] as TorrentOption[]),
   ])
 
   // merge TMDB results first (best metadata), dedupe by imdb id then title
@@ -91,6 +99,17 @@ export async function GET(req: NextRequest) {
     stripBrokenPosters(seriesMerged).catch(() => seriesMerged),
   ])
 
+  // new-site fan-out merged into one "More torrent sites" tab (deduped by hash)
+  const moreSeen = new Set<string>()
+  const more: TorrentOption[] = []
+  for (const t of [...rarbg, ...lime, ...td, ...tgx]) {
+    const key = (t.hash || t.source || '').toLowerCase()
+    if (!key || moreSeen.has(key)) continue
+    moreSeen.add(key)
+    more.push(t)
+  }
+  more.sort((a, b) => (b.seeds || 0) - (a.seeds || 0))
+
   return NextResponse.json({
     movies: moviesClean.slice(0, 40),
     series: seriesClean,
@@ -98,5 +117,6 @@ export async function GET(req: NextRequest) {
     tpb: tpb.slice(0, 30),
     leetx: leetx.slice(0, 20),
     solid: solid.slice(0, 20),
+    more: more.slice(0, 30),
   })
 }

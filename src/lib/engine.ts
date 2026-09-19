@@ -203,6 +203,25 @@ export async function streamTorrentOption(
     current = found
   }
   if (!current.ready) throw new Error('Timed out connecting to the swarm (no peers answered) — try another torrent')
+
+  // Post-ready LIVENESS GATE: index sites frequently list huge, stale seed
+  // counts on swarms that no longer answer (the classic "stuck on buffering"
+  // Spider-Man case). Give the swarm a short window to prove data flows;
+  // otherwise fail fast so the caller can pick another torrent immediately
+  // instead of staring at an endless buffering spinner.
+  const alive = (s: EngineTorrent) =>
+    s.numPeers > 0 && (s.downloaded > 0 || s.downloadSpeed > 10_000 || s.numPeers >= 3)
+  const livenessDeadline = Date.now() + 12_000
+  while (!alive(current) && Date.now() < livenessDeadline) {
+    await new Promise((r) => setTimeout(r, 900))
+    const list = await engineList()
+    const found = list.find((x) => x.infoHash.toLowerCase() === t.infoHash.toLowerCase())
+    if (!found) throw new Error('Torrent dropped while connecting — dead torrent or no peers. Try another one.')
+    if (found.ready) current = found
+  }
+  if (!alive(current)) {
+    throw new Error('This torrent\'s swarm looks dead (stale seed count — nobody is answering). Try another release or quality.')
+  }
   // Prefer the provider-supplied file index (Torrentio fileIdx) when valid —
   // it points at the exact video file instead of the largest one.
   const hinted =

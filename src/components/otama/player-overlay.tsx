@@ -48,6 +48,8 @@ export function PlayerOverlay() {
   const lastSave = useRef(0)
   const retryCount = useRef(0)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autoTried = useRef(0)
+  const autoInProgress = useRef(false)
 
   const active = torrents.find((t) => t.infoHash === player?.infoHash)
   /** Metadata resolved on the engine — only then does <video> get mounted. */
@@ -68,6 +70,8 @@ export function PlayerOverlay() {
     setError(null)
     setFetchedAlts(null)
     retryCount.current = 0
+    autoTried.current = 0
+    autoInProgress.current = false
     if (retryTimer.current) clearTimeout(retryTimer.current)
   }, [player?.infoHash, player?.fileIndex])
 
@@ -229,12 +233,37 @@ export function PlayerOverlay() {
     }
   }
 
+  // AUTO-FAILOVER: when buffering never starts AND the swarm shows no real
+  // data (dead torrent with a stale seed count — the classic "stuck on
+  // buffering" case), automatically switch to the next best alternative.
+  // Max two attempts, H.264-only candidates, never while data is flowing.
+  const stalledLong = ready && waiting && waitingSince !== null && Date.now() - waitingSince > STALL_HINT_AFTER_MS
+  const swarmAlive = (active?.numPeers || 0) > 0 && (active?.downloadSpeed || 0) > 1024
+  useEffect(() => {
+    if (!stalledLong || swarmAlive || switching || autoInProgress.current) return
+    if (autoTried.current >= 2) return
+    const candidates = playableFirst(
+      allAlternatives.filter(
+        (a) => a.source && a.hash !== player?.infoHash && !isHevcName(a.title) && a.codec !== 'hevc',
+      ),
+    )
+    const next = candidates[autoTried.current] || candidates[0]
+    if (!next) return
+    autoInProgress.current = true
+    autoTried.current += 1
+    toast.info(`Swarm looks dead — switching to a healthier torrent (attempt ${autoTried.current}/2)…`, {
+      id: 'auto-switch',
+      duration: 8000,
+    })
+    void switchTo(next).finally(() => {
+      autoInProgress.current = false
+    })
+  }, [stalledLong, swarmAlive, switching, allAlternatives.length])
+
   if (!player) return null
 
   const ext = guessPlayableExt(player.fileName)
   const currentIsHevc = isHevcName(player.fileName)
-  const stalledLong = ready && waiting && waitingSince !== null && Date.now() - waitingSince > STALL_HINT_AFTER_MS
-  const swarmAlive = (active?.numPeers || 0) > 0 && (active?.downloadSpeed || 0) > 1024
   const showDiagnostics = stalledLong || !!error
 
   const stageLabel = !active

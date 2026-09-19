@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MediaCard } from '@/components/otama/media-card'
 import { TorrentList } from '@/components/otama/torrent-list'
@@ -16,6 +17,7 @@ interface SearchResults {
   tpb: TpbItem[]
   leetx: TorrentOption[]
   solid: TorrentOption[]
+  more: TorrentOption[]
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -36,7 +38,27 @@ export function SearchView({ query }: { query: string }) {
 
   const openFor = (item: MetaItem) => {
     const imdb = item.imdbId || (item.refId.startsWith('tt') ? item.refId : undefined)
-    if (imdb) openDetail({ kind: item.kind === 'anime' ? 'anime' : item.kind, imdbId: imdb, title: item.title, poster: item.poster, year: item.year })
+    if (imdb) {
+      openDetail({ kind: item.kind === 'anime' ? 'anime' : item.kind, imdbId: imdb, title: item.title, poster: item.poster, year: item.year })
+      return
+    }
+    // TMDB-only item (imdb lookup failed at list time) — resolve now, then open
+    const tmdbId = item.tmdbId || (item.refId.startsWith('tmdb:') ? parseInt(item.refId.slice(5), 10) : NaN)
+    if (tmdbId) {
+      toast.loading('Resolving title…', { id: 'resolve-tmdb' })
+      fetchJson<{ imdbId?: string | null; error?: string }>(`/api/resolve?tmdbId=${tmdbId}&type=${item.kind === 'tv' ? 'tv' : 'movie'}`)
+        .then((r) => {
+          toast.dismiss('resolve-tmdb')
+          if (r.imdbId) {
+            openDetail({ kind: item.kind === 'anime' ? 'anime' : item.kind, imdbId: r.imdbId, title: item.title, poster: item.poster, year: item.year })
+          } else {
+            toast.error(`Could not resolve “${item.title}” to an IMDb id — torrents are keyed by IMDb.`)
+          }
+        })
+        .catch(() => toast.dismiss('resolve-tmdb'))
+      return
+    }
+    toast.info(`“${item.title}” has no torrent mapping — search for it in the Torrents tab.`)
   }
 
   return (
@@ -62,6 +84,7 @@ export function SearchView({ query }: { query: string }) {
             <TabsTrigger value="tpb">Pirate Bay ({data?.tpb.length ?? 0})</TabsTrigger>
             <TabsTrigger value="leetx">1337x ({data?.leetx.length ?? 0})</TabsTrigger>
             <TabsTrigger value="solid">Solid ({data?.solid.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="more">More Sites ({data?.more.length ?? 0})</TabsTrigger>
           </TabsList>
           <TabsContent value="movies" className="pt-4">
             {(data?.movies.length ?? 0) === 0 ? (
@@ -107,6 +130,13 @@ export function SearchView({ query }: { query: string }) {
               <p className="py-8 text-center text-sm text-zinc-400">No SolidTorrents results (or the index is unreachable right now).</p>
             ) : (
               <TorrentList torrents={data!.solid} compact />
+            )}
+          </TabsContent>
+          <TabsContent value="more" className="pt-4 max-w-3xl">
+            {(data?.more.length ?? 0) === 0 ? (
+              <p className="py-8 text-center text-sm text-zinc-400">No results from RARBG archive, LimeTorrents, TorrentDownloads or TorrentGalaxy (some sites may be blocked on this network).</p>
+            ) : (
+              <TorrentList torrents={data!.more} compact />
             )}
           </TabsContent>
         </Tabs>
