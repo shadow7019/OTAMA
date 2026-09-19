@@ -83,14 +83,20 @@ export async function cfGetText(url: string, timeoutMs = 12_000): Promise<string
   const maxTime = Math.ceil(timeoutMs / 1000)
   try {
     const { execFile } = await import('node:child_process')
-    const out = await new Promise<string>((resolve, reject) => {
-      execFile(
-        'curl',
-        ['-s', '-L', '--compressed', '--max-time', String(maxTime), '-A', UA, '-H', 'Accept: */*', url],
-        { timeout: (maxTime + 2) * 1000, maxBuffer: 8 * 1024 * 1024 },
-        (err, stdout) => (err ? reject(err) : resolve(stdout)),
-      )
-    })
+    const curlOnce = () =>
+      new Promise<string>((resolve, reject) => {
+        execFile(
+          'curl',
+          ['-s', '-L', '--compressed', '--max-time', String(maxTime), '-A', UA, '-H', 'Accept: */*', url],
+          { timeout: (maxTime + 2) * 1000, maxBuffer: 8 * 1024 * 1024 },
+          (err, stdout) => (err ? reject(err) : resolve(stdout)),
+        )
+      })
+    let out = await curlOnce()
+    // apibay & friends occasionally answer with a transient EMPTY body while
+    // curl itself succeeds — one quick retry beats falling back to the
+    // TLS-fingerprinted node fetch that Cloudflare 403-challenges.
+    if (!out.trim()) out = await curlOnce().catch(() => '')
     if (out) return out
   } catch { /* curl missing or failed -> fall back to fetch */ }
   return fetchText(url, timeoutMs)
@@ -259,11 +265,14 @@ export function sortTorrentsPlayableFirst(list: TorrentOption[]): TorrentOption[
 }
 
 export function normalizeApibayRow(row: ApibayRow): TpbItem | null {
+  // apibay returns a synthetic "No results returned" row (id 0, all-zero hash)
+  // for empty result sets — never surface that placeholder to the UI.
   if (!row.info_hash || !row.name) return null
+  if (row.id === '0' || /^0+$/.test(row.info_hash) || /^no results/i.test(row.name)) return null
   const cat = row.category || '0'
   return {
     id: row.id || row.info_hash,
-    name: row.name,
+    name: decodeEntities(row.name),
     hash: row.info_hash.toLowerCase(),
     size: humanSize(row.size),
     sizeBytes: parseInt(row.size || '0', 10) || 0,
@@ -272,7 +281,7 @@ export function normalizeApibayRow(row: ApibayRow): TpbItem | null {
     category: TPB_CATEGORIES[cat] || 'Other',
     categoryCode: cat,
     added: row.added ? new Date(parseInt(row.added, 10) * 1000).toISOString() : '',
-    username: row.username || 'anonymous',
+    username: decodeEntities(row.username || 'anonymous'),
     status: row.status,
     imdb: row.imdb || undefined,
     quality: detectQuality(row.name),
@@ -284,6 +293,33 @@ export async function apibaySearch(q: string, cat = ''): Promise<TpbItem[]> {
   const rows = await cfGetJson<ApibayRow[]>(url, 12_000)
   if (!Array.isArray(rows)) return []
   return rows.map(normalizeApibayRow).filter((r): r is TpbItem => !!r)
+}
+
+/** Video categories that support apibay `category:` browsing. */
+export const TPB_BROWSE_CATS = ['201', '205', '207', '208', '209']
+
+/**
+ * Browse a Pirate Bay category without a query (apibay `q.php?q=category:<id>`).
+ * Returns the newest uploads in that category, ordered by seed count so the
+ * browse page always opens with live, well-seeded torrents. Retries transient
+ * empty/403 answers; throws only after all attempts fail (nothing is cached
+ * on failure, so the next request tries again).
+ */
+export async function apibayBrowse(cat: string): Promise<TpbItem[]> {
+  const id = TPB_BROWSE_CATS.includes(cat) ? cat : '201'
+  return cached(`apibay-browse:${id}`, 3 * 60_000, async () => {
+    const url = `${APIBAY}/q.php?q=${encodeURIComponent(`category:${id}`)}&cat=`
+    let rows: TpbItem[] = []
+    for (let attempt = 0; attempt < 3 && rows.length === 0; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 700 * attempt))
+      try {
+        const raw = await cfGetJson<ApibayRow[]>(url, 12_000)
+        if (Array.isArray(raw)) rows = raw.map(normalizeApibayRow).filter((r): r is TpbItem => !!r)
+      } catch { /* retry */ }
+    }
+    if (rows.length === 0) throw new ProviderError('ThePirateBay did not answer (Cloudflare) — try again shortly')
+    return [...rows].sort((a, b) => b.seeds - a.seeds)
+  })
 }
 
 export function apibayToTorrentOption(item: TpbItem): TorrentOption {
@@ -478,12 +514,22 @@ export function decodeEntities(s: string): string {
   return s
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
+    .replace(/&([a-zA-Z]+);/g, (_, n: string) => NAMED_ENTITIES[n] || `&${n};`)
+}
+
+/** Latin-1 named entities that torrent titles (apibay) commonly carry. */
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: ' ', quot: '"', apos: "'", lt: '<', gt: '>', amp: '&',
+  copy: '©', hellip: '…', mdash: '—', ndash: '–',
+  aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú', yacute: 'ý',
+  agrave: 'à', egrave: 'è', igrave: 'ì', ograve: 'ò', ugrave: 'ù',
+  acirc: 'â', ecirc: 'ê', icirc: 'î', ocirc: 'ô', ucirc: 'û',
+  auml: 'ä', euml: 'ë', iuml: 'ï', ouml: 'ö', uuml: 'ü',
+  ntilde: 'ñ', Ntilde: 'Ñ', ccedil: 'ç', Ccedil: 'Ç',
+  aring: 'å', Aring: 'Å', aelig: 'æ', AElig: 'Æ',
+  oslash: 'ø', Oslash: 'Ø', szlig: 'ß', eth: 'ð', thorn: 'þ',
+  atilde: 'ã', otilde: 'õ', Atilde: 'Ã', Otilde: 'Õ',
+  Eacute: 'É', Agrave: 'À', Ouml: 'Ö', Uuml: 'Ü', Auml: 'Ä',
 }
 
 function cdata(s: string): string {

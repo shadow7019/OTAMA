@@ -16,7 +16,7 @@ const NAV: { id: View; label: string }[] = [
   { id: 'movies', label: 'Movies' },
   { id: 'tv', label: 'TV' },
   { id: 'anime', label: 'Anime' },
-  { id: 'tpb', label: 'Torrents' },
+  { id: 'tpb', label: 'Pirate Bay' },
   { id: 'favorites', label: 'Favorites' },
 ]
 

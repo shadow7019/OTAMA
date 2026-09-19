@@ -23,6 +23,15 @@ const TPB_CATEGORIES = [
   { value: '209', label: '3D Movies' },
 ]
 
+/** Zero-query browse chips — apibay `category:` listings, newest uploads. */
+const TPB_BROWSE = [
+  { value: '201', label: 'Latest movies' },
+  { value: '207', label: 'HD movies' },
+  { value: '205', label: 'TV shows' },
+  { value: '208', label: 'HD TV shows' },
+  { value: '209', label: '3D movies' },
+]
+
 const LEETX_CATEGORIES = [
   { value: 'movies', label: 'Movies' },
   { value: 'tv', label: 'TV Shows' },
@@ -104,6 +113,7 @@ export function TpbView() {
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
   const [tpbCat, setTpbCat] = useState('all')
+  const [tpbBrowseCat, setTpbBrowseCat] = useState('201')
   const [leetxCat, setLeetxCat] = useState('movies')
   const [limeCat, setLimeCat] = useState('all')
   const [page, setPage] = useState(0)
@@ -116,7 +126,14 @@ export function TpbView() {
     queryKey: ['tpb', q, tpbCat],
     queryFn: () => fetchJson<{ items: TpbItem[]; error?: string }>(`/api/tpb?q=${encodeURIComponent(q)}&cat=${tpbCat === 'all' ? '' : tpbCat}`),
     staleTime: 2 * 60_000,
-    enabled: source === 'tpb',
+    enabled: source === 'tpb' && q.length > 0,
+  })
+
+  const tpbBrowseQuery = useQuery({
+    queryKey: ['tpb-browse', tpbBrowseCat],
+    queryFn: () => fetchJson<{ items: TpbItem[]; error?: string }>(`/api/tpb?browse=1&cat=${tpbBrowseCat}`),
+    staleTime: 3 * 60_000,
+    enabled: source === 'tpb' && q.length === 0,
   })
 
   const leetxQuery = useQuery({
@@ -199,7 +216,7 @@ export function TpbView() {
 
   const isTpb = source === 'tpb'
   const activeQuery =
-    isTpb ? tpbQuery
+    isTpb ? (q ? tpbQuery : tpbBrowseQuery)
       : source === 'leetx' ? leetxQuery
       : source === 'solid' ? solidQuery
       : source === 'torrentio' ? torrentioQuery
@@ -223,7 +240,7 @@ export function TpbView() {
                 : source === 'tgx'
                   ? tgxQuery.data?.items || []
                   : []
-  const tpbItems: TpbItem[] = isTpb ? tpbQuery.data?.items || [] : []
+  const tpbItems: TpbItem[] = isTpb ? (q ? tpbQuery.data?.items || [] : tpbBrowseQuery.data?.items || []) : []
   const items: (TpbItem | TorrentOption)[] = isTpb ? tpbItems : torrentItems
   const matchedItem = source === 'torrentio' ? torrentioQuery.data?.item : undefined
   const serverError = (activeQuery.data as { error?: string } | undefined)?.error
@@ -304,22 +321,40 @@ export function TpbView() {
         </div>
       ) : null}
 
-      {!q && !serverError ? (
+      {!q && !serverError && isTpb ? (
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Pirate Bay browse">
+          {TPB_BROWSE.map((c) => (
+            <Button
+              key={c.value}
+              variant="ghost"
+              size="sm"
+              onClick={() => setTpbBrowseCat(c.value)}
+              role="tab"
+              aria-selected={tpbBrowseCat === c.value}
+              className={tpbBrowseCat === c.value ? 'bg-white/10 text-white' : 'text-zinc-400'}
+            >
+              {c.label}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      {!q && !serverError && !isTpb ? (
         <p className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-400">
-          {source === 'tpb'
-            ? 'Tip: leave the query empty and press Search to browse the latest uploads.'
-            : source === 'torrentio'
-              ? 'Type a movie or show title — Torrentio resolves it to IMDb and returns every indexed torrent with the exact video file pre-picked.'
-              : 'Type a query and press Search — results resolve magnets automatically.'}
+          {source === 'torrentio'
+            ? 'Type a movie or show title — Torrentio resolves it to IMDb and returns every indexed torrent with the exact video file pre-picked.'
+            : 'Type a query and press Search — results resolve magnets automatically.'}
         </p>
       ) : null}
 
-      {!q ? null : loading ? (
+      {!q && !isTpb ? null : loading ? (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="h-16 w-full rounded-xl" />
           ))}
         </div>
+      ) : q === '' && items.length === 0 && !serverError && isTpb ? (
+        <p className="py-12 text-center text-sm text-zinc-400">Loading the freshest Pirate Bay uploads…</p>
       ) : items.length === 0 && !serverError ? (
         <p className="py-12 text-center text-sm text-zinc-400">No results{q ? ` for “${q}”` : ''}.</p>
       ) : isTpb ? (

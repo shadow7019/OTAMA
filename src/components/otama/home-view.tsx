@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Hero } from '@/components/otama/hero'
 import { MediaRow } from '@/components/otama/media-row'
 import { ContinueWatchingRow } from '@/components/otama/favorites-view'
+import { PirateBayFreshRow } from '@/components/otama/tpb-fresh-row'
 import { useAppStore } from '@/store/app-store'
 import type { MetaItem } from '@/lib/types'
 
@@ -43,6 +44,7 @@ export function HomeView() {
       <Hero items={movies.data?.items || []} loading={movies.isLoading} />
       <div className="mx-auto max-w-7xl space-y-8 px-4 pt-8 md:px-8">
         <ContinueWatchingRow />
+        <PirateBayFreshRow />
         <MediaRow title="Trending" accent="movies" items={(movies.data?.items || []).slice(0, 20)} loading={movies.isLoading} onSelect={openFor} />
         <MediaRow title="Top" accent="series" items={(series.data?.items || []).slice(0, 20)} loading={series.isLoading} onSelect={openFor} />
         <MediaRow title="Popular" accent="anime" items={(anime.data?.items || []).slice(0, 20)} loading={anime.isLoading} onSelect={openFor} />

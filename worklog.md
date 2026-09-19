@@ -413,3 +413,24 @@ Work Log:
 
 Stage Summary:
 - TMDB is now live with the owner's credentials as the default metadata/catalog layer (env v4 token, builtin v3 fallback for desktop), enriching catalogs, search, and detail pages while all torrent sources remain IMDb-keyed and unchanged. End-to-end verified from TMDB card click to real streamed video frames. TMDB credentials request from the owner is now fully satisfied.
+
+---
+Task ID: 20
+Agent: main (orchestrator)
+Task: "I don't see pirate bay please integrate that too don't remove it" — make Pirate Bay a first-class, unmissable source
+
+Work Log:
+- AUDIT: Pirate Bay (apibay) was already integrated (search via /api/tpb, merged into findMovieTorrents, "Pirate Bay" tab in global search, default tab in the Torrents hub) — but the NAV item was labeled "Torrents", so PB had no visible identity; and the zero-query browse mode returned apibay's synthetic "No results returned" row (id 0, all-zero hash).
+- providers.ts normalizeApibayRow: filters the synthetic placeholder row (id '0' / all-zero info_hash / "No results" name) at the source so no consumer can ever render it.
+- NEW apibayBrowse(cat): apibay `q.php?q=category:<id>` browse (201/205/207/208/209), 3-attempt retry against transient empty-body/CF answers, 3-min cache, success-only caching (throws after all attempts fail so nothing empty is cached), seed-sorted. TPB_BROWSE_CATS exported.
+- cfGetText: curl empty-body retry — apibay occasionally returns HTTP-200-with-empty-body from curl; previously that fell through to node fetch which CF 403-challenges. One curl retry fixes it.
+- decodeEntities: full Latin-1 named-entity map (ñ, ç, é, …, —, © etc.) — apibay titles carry HTML entities ("Subs Espa&ntilde;ol" rendered raw before); wired into normalizeApibayRow (name + username).
+- /api/tpb: new ?browse=1&cat= mode alongside search.
+- tpb-view (Pirate Bay hub): zero-query BROWSE mode with chips — Latest movies / HD movies / TV shows / HD TV shows / 3D movies — real newest uploads, playable rows; search unchanged; all 8 source tabs + More sites kept intact.
+- nav-bar: "Torrents" → "Pirate Bay" (user-facing identity restored; view id still 'tpb').
+- NEW tpb-fresh-row.tsx + home-view: "Fresh from Pirate Bay" row on the HOME screen — 14 seed-sorted latest PB uploads as horizontally scrollable cards (quality/size/seeds badges + one-click Play via addTorrent→bestVideoFile→openPlayer), "Browse Pirate Bay →" shortcut, graceful degraded state when apibay is unreachable.
+- VERIFIED (agent-browser via gateway :81): nav shows "Pirate Bay"; home PB row renders 14 real torrents; PB view browse chips return 50 newest uploads; entity decoding live ("Español" not "Espa&ntilde;ol"); zero-query no longer shows any placeholder row; search tabs show "Pirate Bay (30)". PLAYED Model.by.Day.1994.DVDRip.x264-PTP.mkv end-to-end straight from the home PB row on a 1-peer / 90 KB/s swarm: staged buffering UI → real frames, currentTime 43→49s advancing, readyState 2-4, live stats bar (26.4 MB / 2.0 GB, ETA) — the readyState=0 cold-start self-healed through the app's staged/retry logic with zero manual intervention; MKV diagnostics card offered MP4-first alternatives. Mobile 390px: PB row scrolls horizontally, footer intact. 6 test torrents wiped from engine (?wipe=1). lint clean; dev.log free of runtime errors.
+- NOTE for desktop: the packaged Windows .exe predates Tasks 16-20 (all-sites hub, TMDB, playback fixes, PB-first UI). The web app carries everything; rebuilding the .exe (desktop/ dist:win or the GitHub Actions workflow) picks all of this up.
+
+Stage Summary:
+- Pirate Bay is now impossible to miss: a "Pirate Bay" nav item, a "Fresh from Pirate Bay" playable row on the home screen, a zero-query browse mode (latest movies/HD/TV/3D chips) in the hub, and the existing search/detail/aggregate integration — while every other source (1337x, Solid, Torrentio, RARBG, LimeTorrents, TorrentDownloads, TorrentGalaxy, EZTV, Nyaa, YTS) remains untouched. Along the way two real placeholder-class bugs died: the apibay synthetic "No results returned" row is filtered server-side for all consumers, and apibay HTML-entity titles render human-readable. Fresh-torrent playback verified end-to-end on a 1-peer swarm.
