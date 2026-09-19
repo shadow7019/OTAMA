@@ -102,6 +102,24 @@ export function guessPlayableExt(fileName?: string): string | null {
   return 'unsupported'
 }
 
+/** Container family of a release/file name (for ranking + badges). */
+export function containerOf(fileName?: string | null): 'mp4' | 'webm' | 'mkv' | 'mov' | 'legacy' | null {
+  if (!fileName) return null
+  const m = fileName.toLowerCase().match(/\.(mp4|m4v|webm|mkv|mov|avi|ts)\b/)
+  if (!m) return null
+  if (m[1] === 'mp4' || m[1] === 'm4v') return 'mp4'
+  if (m[1] === 'webm') return 'webm'
+  if (m[1] === 'mkv') return 'mkv'
+  if (m[1] === 'mov') return 'mov'
+  return 'legacy' // avi / ts / mpeg — <video> cannot demux these
+}
+
+/** MKV/MOV: plays in Chromium-based browsers but NOT in Firefox/Safari. */
+export function isRiskyContainer(fileName?: string | null): boolean {
+  const c = containerOf(fileName)
+  return c === 'mkv' || c === 'mov'
+}
+
 /** HEVC/x265/H.265 in a release name — browsers usually cannot decode it. */
 export function isHevcName(name?: string | null): boolean {
   if (!name) return false
@@ -121,12 +139,24 @@ export function playbackBlocker(fileName?: string | null, releaseTitle?: string 
   return null
 }
 
-/** Non-HEVC alternatives first, then by seed count. */
+/**
+ * Playback rank — lower plays in more browsers:
+ * 0 mp4/webm · 1 mkv/mov (Chromium-only) · 2 avi/ts (never) · 3 hevc (never)
+ */
+export function playbackRank(option: { title?: string; codec?: string }): number {
+  if (isHevcName(option.title) || option.codec === 'hevc') return 3
+  const c = containerOf(option.title)
+  if (c === 'legacy') return 2
+  if (c === 'mkv' || c === 'mov') return 1
+  return 0
+}
+
+/** Playable containers first (mp4 before mkv before avi/ts before hevc), then by seed count. */
 export function playableFirst(options: TorrentOption[]): TorrentOption[] {
   return [...options].sort((a, b) => {
-    const ha = isHevcName(a.title) || a.codec === 'hevc' ? 1 : 0
-    const hb = isHevcName(b.title) || b.codec === 'hevc' ? 1 : 0
-    if (ha !== hb) return ha - hb
+    const ra = playbackRank(a)
+    const rb = playbackRank(b)
+    if (ra !== rb) return ra - rb
     return (b.seeds || 0) - (a.seeds || 0)
   })
 }
@@ -145,8 +175,17 @@ export async function ensureTorrent(
   return addTorrent({ source: infoHash, ...meta })
 }
 
-/** Add a torrent option to the engine and pick the best video file. */
-export async function streamTorrentOption(option: TorrentOption, meta?: { poster?: string; refId?: string; kind?: string }) {
+/**
+ * Add a torrent option to the engine and pick the best video file.
+ *
+ * The engine's POST responds instantly with a (possibly still pending) torrent;
+ * metadata resolution is followed by polling the engine list until `ready`, so
+ * the caller always gets a torrent with real files — or a clear error.
+ */
+export async function streamTorrentOption(
+  option: TorrentOption,
+  meta?: { poster?: string; refId?: string; kind?: string },
+) {
   const t = await addTorrent({
     source: option.source,
     title: option.title,
@@ -154,9 +193,19 @@ export async function streamTorrentOption(option: TorrentOption, meta?: { poster
     refId: meta?.refId,
     kind: meta?.kind,
   })
-  const file = bestVideoFile(t)
+  const deadline = Date.now() + 80_000
+  let current = t
+  while (!current.ready && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 800))
+    const list = await engineList()
+    const found = list.find((x) => x.infoHash.toLowerCase() === t.infoHash.toLowerCase())
+    if (!found) throw new Error('Torrent dropped while connecting — dead torrent or no peers. Try another one.')
+    current = found
+  }
+  if (!current.ready) throw new Error('Timed out connecting to the swarm (no peers answered) — try another torrent')
+  const file = bestVideoFile(current)
   if (!file) throw new Error('No video file found in this torrent')
-  return { torrent: t, file }
+  return { torrent: current, file }
 }
 
 export function fmtSpeed(bytesPerSecond: number): string {

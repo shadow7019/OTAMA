@@ -267,3 +267,66 @@ Work Log:
 
 Stage Summary:
 - Root cause of "stuck on buffering" was HEVC/x265 files the browser can't decode — not the swarm or the gateway. OTAMA now (1) ranks browser-playable x264/MP4 releases first, (2) badges and warns about HEVC, (3) diagnoses stalls in-player with one-click switching to a playable torrent, (4) self-heals dropped torrents. YTS is reconnected through its new official API base (accel.li) + legacy domains + the user's yts-official.to mirror + Torrends proxies, with an HTML-scrape fallback. Both engines gained instant-header streaming, 14 trackers, and a bounded self-wiping cache (the disk-full bug).
+
+---
+Task ID: 16
+Agent: main (orchestrator)
+Task: Fix "play Spiderman as its links is not working"
+
+Work Log:
+- DIAGNOSIS (browser-verified): user's failed attempt was Spider-Man: Brand New Day (2026)
+  TELESYNC "V3 x264-DKS.mkv" (hash 593a9e55…) — engine had it at 19% with 0 streams and NO
+  history entry, i.e. the <video> never played. Reproduced cold-start in Chromium: a <video>
+  that mounts while the torrent is missing/pending gets an instant 404/503 from /stream and
+  Chromium converts it to MediaError 4 (MEDIA_ERR_SRC_NOT_SUPPORTED) at ~6ms with NO retry —
+  permanent "links not working". Secondary issues: POST /torrents blocked up to 45s waiting for
+  metadata (frozen UI, timeout = dead link), and the .mkv container (Chromium-only; not
+  Firefox/Safari) was ranked as playable. Verified separately: the MKV/H.264 stream itself
+  plays fine in Chromium (canPlayType "probably", readyState 4, frames advanced).
+
+- Engine v1.2.0 (mini-services/otama-engine/src/index.ts + mirrored desktop/engine/engine.mjs):
+  1. POST /torrents now responds INSTANTLY: startAdd() registers a pending torrent (infoHash
+     parsed synchronously) and resolves metadata in background (timeout 45s -> 75s, entry
+     dropped cleanly on failure).
+  2. /stream + /file are SELF-HEALING: waitForActive() auto-adds the hash when the engine
+     doesn't have it (restart/eviction/resume) and holds the request (up to 90s) until
+     metadata resolves, then streamFile() waits for ready before serving. A stream URL can no
+     longer 404 -> no more permanent MediaError 4.
+  3. Head-of-file preselect: on ready, the largest video file is auto-selected so first pieces
+     download before the first <video> request (faster time-to-first-frame).
+
+- Frontend hardening:
+  * player-overlay.tsx: <video> mounts ONLY when engine reports the torrent ready (staged UI:
+    "Adding torrent…" -> "Connecting to swarm — fetching metadata… (peers/speed)" -> buffering);
+    onError auto-retries v.load() 3x with 1.5/4/8s backoff (skipped when data is flowing =
+    codec issue) before showing the diagnostics card; diagnostics gained an MKV/MOV explanation;
+    ensureTorrent re-add delay 3.5s -> 1.5s; stall watchdog only runs once the video exists.
+  * engine.ts: containerOf()/isRiskyContainer() helpers; playableFirst() + playbackRank() now
+    rank mp4/webm < mkv/mov < avi/ts < hevc; streamTorrentOption() polls engineList until
+    ready (80s) instead of assuming the POST returned a fully resolved torrent.
+  * torrent-list.tsx: play() shows a live "Connecting to swarm… Ns" toast ticker; inline amber
+    MKV/MOV badge when the release title carries the extension (HEVC badge unchanged).
+  * providers.ts: playabilityRank extended to 0..3 with the same container ordering.
+
+- INCIDENT during verification: sandbox Next.js dev server died (OOM) leaving a corrupted
+  Turbopack dev cache (.next/dev/cache/.../00000479.meta "Invalid magic number" at startup).
+  Fixed by deleting .next/dev cache + restart; db/custom.db itself stayed intact (integrity ok).
+
+- VERIFICATION (agent-browser through Caddy :81):
+  * Cold engine -> search "spider-man" -> Brand New Day detail (9 torrents, 5 HEVC badges,
+    x264-first ordering) -> PLAY the exact DKS mkv the user clicked: staged UI appears, video
+    mounts on ready, readyState 4, currentTime advancing, screenshot shows real movie frames
+    with stats bar (9 peers, 1.8 MB/s, ETA 55m), history saved (pos 681.5s).
+  * Self-heal: DELETED the torrent from the engine mid-play -> video auto-recovered via
+    retry + stream auto-add (engine shows torrent back with activeStreams 1), playback resumed.
+  * Continue-watching resume: home -> Resume Spider-Man -> resumes at saved position (691s),
+    plays, no errors. Mobile 390px + footer fine. lint 0 errors; engine /health v1.2.0.
+
+Stage Summary:
+- Root cause of "Spider-Man links not working" was the player mounting <video> against a
+  stream URL that 404/503'd while torrent metadata was still resolving — Chromium fails it
+  permanently in milliseconds. OTAMA now: instant-add + background metadata, self-healing
+  stream URLs that wait for the swarm, ready-gated video mount with staged feedback, automatic
+  error retries, container-aware ranking (mp4 > mkv > avi/ts > hevc) with badges, and
+  clearer diagnostics. Spider-Man (and any cold/rare/dead-ish torrent) now plays end-to-end,
+  recovers from engine loss mid-stream, and resumes correctly.

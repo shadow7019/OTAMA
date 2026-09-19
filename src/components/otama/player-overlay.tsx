@@ -45,8 +45,12 @@ export function PlayerOverlay() {
   const [error, setError] = useState<string | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
   const lastSave = useRef(0)
+  const retryCount = useRef(0)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const active = torrents.find((t) => t.infoHash === player?.infoHash)
+  /** Metadata resolved on the engine — only then does <video> get mounted. */
+  const ready = !!active?.ready
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,11 +65,19 @@ export function PlayerOverlay() {
     setWaiting(true)
     setWaitingSince(Date.now())
     setError(null)
+    retryCount.current = 0
+    if (retryTimer.current) clearTimeout(retryTimer.current)
   }, [player?.infoHash, player?.fileIndex])
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    }
+  }, [])
 
   // Re-add the torrent if the engine dropped it (restart / LRU eviction / resume from history).
   useEffect(() => {
-    if (!player) return
+    if (!player || active) return
     let cancelled = false
     const timer = setTimeout(() => {
       if (cancelled || active) return
@@ -77,7 +89,7 @@ export function PlayerOverlay() {
       }).catch(() => {
         if (!cancelled) setError('Torrent is no longer on the engine and could not be re-added.')
       })
-    }, 3500)
+    }, 1500)
     return () => {
       cancelled = true
       clearTimeout(timer)
@@ -180,9 +192,15 @@ export function PlayerOverlay() {
 
   const ext = guessPlayableExt(player.fileName)
   const currentIsHevc = isHevcName(player.fileName)
-  const stalledLong = waiting && waitingSince !== null && Date.now() - waitingSince > STALL_HINT_AFTER_MS
+  const stalledLong = ready && waiting && waitingSince !== null && Date.now() - waitingSince > STALL_HINT_AFTER_MS
   const swarmAlive = (active?.numPeers || 0) > 0 && (active?.downloadSpeed || 0) > 1024
   const showDiagnostics = stalledLong || !!error
+
+  const stageLabel = !active
+    ? 'Adding torrent to the engine…'
+    : !ready
+      ? 'Connecting to swarm — fetching metadata…'
+      : 'Buffering — streaming from the swarm…'
 
   return (
     <AnimatePresence>
@@ -221,7 +239,8 @@ export function PlayerOverlay() {
           {player.quality ? <QualityBadge quality={player.quality} className="ml-auto shrink-0" /> : null}
         </div>
 
-        {/* video */}
+        {/* video — mounted only once the engine has resolved the torrent metadata,
+            so it can never hit a 404/503 and die with MEDIA_ERR_SRC_NOT_SUPPORTED */}
         <div className="relative flex-1 flex items-center justify-center min-h-0">
           {showDiagnostics ? (
             <div className="absolute z-20 flex max-h-[85%] w-[min(92%,560px)] flex-col gap-3 overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950/95 p-5 text-zinc-200 shadow-2xl otama-scroll">
@@ -242,6 +261,12 @@ export function PlayerOverlay() {
                       </>
                     ) : ext === 'unsupported' ? (
                       <>This container (AVI/TS) cannot play inside browsers. Pick a different release below.</>
+                    ) : ext === 'maybe' ? (
+                      <>
+                        This file is <span className="font-semibold text-amber-300">MKV/MOV</span> — it plays in
+                        Chromium-based browsers but not Firefox/Safari. For maximum compatibility switch to an MP4
+                        release below.
+                      </>
                     ) : (
                       <>
                         Swarm status: {connected ? `${active?.numPeers ?? 0} peers · ${fmtSpeed(active?.downloadSpeed || 0)}` : 'engine offline'}.
@@ -303,10 +328,13 @@ export function PlayerOverlay() {
                 <RefreshCw className="h-3.5 w-3.5" /> Retry this torrent
               </Button>
             </div>
-          ) : waiting ? (
+          ) : !ready || waiting ? (
             <div className="absolute z-10 flex flex-col items-center gap-3 text-zinc-300">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
-              <p className="text-sm">Buffering — streaming from the swarm…</p>
+              <p className="text-sm">{stageLabel}</p>
+              {!ready && retryCount.current > 0 ? (
+                <p className="text-xs text-amber-300/90">Reconnecting (attempt {retryCount.current + 1}/4)…</p>
+              ) : null}
               <p className="flex items-center gap-3 text-xs text-zinc-500">
                 <span className="inline-flex items-center gap-1">
                   <Users className="h-3 w-3" /> {active?.numPeers ?? 0}
@@ -327,25 +355,45 @@ export function PlayerOverlay() {
               )}
             </div>
           ) : null}
-          <video
-            ref={videoRef}
-            src={streamUrl(player.infoHash, player.fileIndex)}
-            controls
-            autoPlay
-            playsInline
-            preload="auto"
-            className="h-full w-full object-contain"
-            onWaiting={() => {
-              setWaiting(true)
-              setWaitingSince((s) => s ?? Date.now())
-            }}
-            onPlaying={() => setWaiting(false)}
-            onCanPlay={() => setWaiting(false)}
-            onError={() => {
-              setWaiting(false)
-              setError('The browser could not decode this file — it may use an unsupported codec/container, or the torrent has no seeds. Try another quality below.')
-            }}
-          />
+          {ready ? (
+            <video
+              ref={videoRef}
+              src={streamUrl(player.infoHash, player.fileIndex)}
+              controls
+              autoPlay
+              playsInline
+              preload="auto"
+              className="h-full w-full object-contain"
+              onWaiting={() => {
+                setWaiting(true)
+                setWaitingSince((s) => s ?? Date.now())
+              }}
+              onPlaying={() => setWaiting(false)}
+              onCanPlay={() => setWaiting(false)}
+              onError={() => {
+                // Transient races (engine restart / eviction / pending metadata)
+                // used to kill playback permanently with MediaError 4 — auto
+                // retry a few times before showing the diagnostics card.
+                const dataFlowing = (active?.downloaded || 0) > 2 * 1024 * 1024
+                if (!dataFlowing && retryCount.current < 3) {
+                  const attempt = retryCount.current++
+                  if (retryTimer.current) clearTimeout(retryTimer.current)
+                  retryTimer.current = setTimeout(
+                    () => {
+                      const v = videoRef.current
+                      if (!v) return
+                      v.load()
+                      void v.play().catch(() => {})
+                    },
+                    [1500, 4000, 8000][attempt] ?? 8000,
+                  )
+                  return
+                }
+                setWaiting(false)
+                setError('The browser could not decode this file — it may use an unsupported codec/container, or the torrent has no seeds. Try another quality below.')
+              }}
+            />
+          ) : null}
         </div>
 
         {/* stats bar */}

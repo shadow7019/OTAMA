@@ -5,7 +5,7 @@ import { Play, Loader2, ExternalLink, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { QualityBadge, Seeds } from '@/components/otama/media-card'
-import { streamTorrentOption, guessPlayableExt, isHevcName, playableFirst } from '@/lib/engine'
+import { streamTorrentOption, guessPlayableExt, isHevcName, isRiskyContainer, containerOf, playableFirst } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 import type { TorrentOption } from '@/lib/types'
 
@@ -34,6 +34,10 @@ export function TorrentList({
   const play = async (option: TorrentOption) => {
     if (addingHash) return
     setAddingHash(option.hash)
+    const startedAt = Date.now()
+    const ticker = setInterval(() => {
+      toast.loading(`Connecting to swarm… ${Math.round((Date.now() - startedAt) / 1000)}s — rare releases can take a minute`, { id: 'add-torrent' })
+    }, 5000)
     try {
       const blocked = isHevcName(option.title) || option.codec === 'hevc'
       if (blocked) {
@@ -45,7 +49,7 @@ export function TorrentList({
       if (ext === 'unsupported') {
         toast.warning(`"${file.name}" may not be playable in browsers. Trying anyway…`)
       } else if (ext === 'maybe') {
-        toast.info('MKV/MOV streaming works in some browsers — if playback fails, try another quality.')
+        toast.info('MKV/MOV streaming works in Chromium-based browsers — if playback fails, try an MP4 release.')
       }
       toast.success('Streaming started', { id: 'add-torrent' })
       closeDetail()
@@ -63,6 +67,7 @@ export function TorrentList({
     } catch (err) {
       toast.error((err as Error).message || 'Failed to start torrent', { id: 'add-torrent' })
     } finally {
+      clearInterval(ticker)
       setAddingHash(null)
     }
   }
@@ -104,6 +109,14 @@ export function TorrentList({
                   title="HEVC/x265 — browsers usually cannot decode this codec; prefer an H.264/x264 release"
                 >
                   <ShieldAlert className="h-3 w-3" /> HEVC
+                </span>
+              ) : null}
+              {isRiskyContainer(t.title) ? (
+                <span
+                  className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 uppercase"
+                  title={`${(containerOf(t.title) || 'mkv').toUpperCase()} container — plays in Chromium-based browsers, but not Firefox/Safari; an MP4 release is more compatible`}
+                >
+                  {containerOf(t.title)}
                 </span>
               ) : null}
             </div>

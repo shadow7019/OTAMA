@@ -227,12 +227,17 @@ export function detectCodecFromName(name: string): 'h264' | 'hevc' | undefined {
   return undefined
 }
 
-/** Browser playability of a release name — 'blocked' files spin forever. */
-export function playabilityRank(name: string, codec?: string): 0 | 1 | 2 {
+/**
+ * Browser playability of a release name — 0 plays everywhere, higher ranks
+ * may not play: 1 MKV/MOV (Chromium-only), 2 AVI/TS (<video> can't demux),
+ * 3 HEVC/x265 (browsers cannot decode without hardware support).
+ */
+export function playabilityRank(name: string, codec?: string): 0 | 1 | 2 | 3 {
   const c = (codec as 'h264' | 'hevc' | undefined) || detectCodecFromName(name)
-  if (c === 'hevc') return 2
+  if (c === 'hevc') return 3
   const ext = (name.match(/\.(mp4|m4v|mkv|mov|avi|ts|webm)\b/i) || [])[1]?.toLowerCase()
-  if (ext === 'avi' || ext === 'ts') return 1 // container not supported by <video>
+  if (ext === 'avi' || ext === 'ts') return 2 // container not supported by <video>
+  if (ext === 'mkv' || ext === 'mov') return 1 // plays in Chromium/Chrome, not Firefox/Safari
   return 0
 }
 

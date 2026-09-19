@@ -24,9 +24,12 @@ import torrentStream from 'torrent-stream'
 import type { Engine as TSEngine, EngineFile } from 'torrent-stream'
 
 const PORT = 3003
-const ENGINE_VERSION = '1.1.0'
+const ENGINE_VERSION = '1.2.0'
 const DOWNLOAD_ROOT = process.env.OTAMA_DOWNLOAD_DIR || '/tmp/otama-engine'
-const META_TIMEOUT_MS = 45_000
+/** How long we keep trying to fetch metadata before dropping the torrent. */
+const META_TIMEOUT_MS = 75_000
+/** How long a stream/file request may wait for metadata + first pieces. */
+const STREAM_WAIT_TIMEOUT_MS = 90_000
 const IDLE_DESTROY_MS = 30 * 60 * 1000
 const MAX_ENGINES = 6
 const BROADCAST_INTERVAL = 1500
@@ -89,7 +92,11 @@ interface ActiveTorrent {
   streams: number
 }
 
-const torrents = new Map<string, ActiveTorrent>() // key: infoHash (upper)
+const torrents = new Map<string, ActiveTorrent>() // key: infoHash (lower)
+/** Hashes with a metadata fetch currently in flight (no duplicate adds). */
+const pendingAdds = new Set<string>()
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 fs.mkdirSync(DOWNLOAD_ROOT, { recursive: true })
 
@@ -202,60 +209,131 @@ function destroyTorrent(infoHash: string, wipe: boolean): Promise<void> {
   })
 }
 
-function addTorrent(source: string, meta: Meta): Promise<ActiveTorrent & { infoHash: string }> {
-  const magnet = buildMagnet(source)
-  return new Promise((resolve, reject) => {
-    let engine: TSEngine
-    try {
-      engine = torrentStream(magnet, {
-        connections: 150,
-        uploads: 12,
-        path: DOWNLOAD_ROOT,
-        trackers: DEFAULT_TRACKERS,
-        verify: true,
-      }) as TSEngine
-    } catch (err) {
-      reject(new Error(`Invalid torrent source: ${(err as Error).message}`))
-      return
-    }
-    let settled = false
-    const timeout = setTimeout(() => {
-      if (settled) return
-      settled = true
-      try { engine.destroy() } catch { /* noop */ }
-      reject(new Error('Timed out waiting for torrent metadata (no peers or dead torrent)'))
-    }, META_TIMEOUT_MS)
+/**
+ * Synchronously parse the infoHash out of a magnet/hash source so the REST
+ * layer can respond instantly (the metadata fetch continues in background).
+ */
+function sourceHash(source: string): string | null {
+  const s = source.trim()
+  const m = /^magnet:\?xt=urn:btih:([0-9a-zA-Z]+)/i.exec(s)
+  const raw = m ? m[1] : s
+  if (/^[0-9a-fA-F]{40}$/.test(raw)) return normalizeHash(raw)
+  if (/^[A-Z2-7]{32}$/i.test(raw)) return normalizeHash(raw) // base32
+  return null
+}
 
-    engine.on('ready', () => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      const infoHash = normalizeHash(engine.infoHash)
-      // Auto-select small files (subtitles etc.) but leave big media unselected;
-      // streaming a range auto-prioritises the pieces it needs.
-      engine.files.forEach((f: EngineFile) => {
-        if (f.length < 10 * 1024 * 1024 && !isVideoFile(f)) f.select()
-        else f.deselect()
-      })
-      const a: ActiveTorrent = {
-        engine,
-        meta,
-        addedAt: Date.now(),
-        lastAccessed: Date.now(),
-        ready: true,
-        selectedFile: null,
-        streams: 0,
-      }
-      torrents.set(infoHash, a)
-      resolve({ ...(a as ActiveTorrent & { infoHash: string }), infoHash })
+/**
+ * Start fetching a torrent WITHOUT blocking: the (pending) entry is registered
+ * immediately so the UI/stream endpoints can track it, and metadata resolution
+ * continues in the background. On success the entry flips to ready and the
+ * biggest video file is pre-selected so head-of-file pieces start downloading
+ * before the first <video> request even arrives (fast time-to-first-frame).
+ */
+function startAdd(source: string, meta: Meta): ActiveTorrent | null {
+  const hash = sourceHash(source)
+  const magnet = buildMagnet(source)
+  let engine: TSEngine
+  try {
+    engine = torrentStream(magnet, {
+      connections: 150,
+      uploads: 12,
+      path: DOWNLOAD_ROOT,
+      trackers: DEFAULT_TRACKERS,
+      verify: true,
+    }) as TSEngine
+  } catch {
+    return null // invalid source
+  }
+  const key = normalizeHash(engine.infoHash || hash || '')
+  const a: ActiveTorrent = {
+    engine,
+    meta,
+    addedAt: Date.now(),
+    lastAccessed: Date.now(),
+    ready: false,
+    selectedFile: null,
+    streams: 0,
+  }
+  if (key) torrents.set(key, a)
+  pendingAdds.add(key || magnet)
+
+  const settle = (ok: boolean) => {
+    pendingAdds.delete(key || magnet)
+    if (!ok) {
+      // metadata never arrived / engine broken — drop the entry so callers
+      // stop waiting and report a clean "dead torrent" state.
+      const k = [...torrents.entries()].find(([, v]) => v === a)?.[0]
+      if (k) torrents.delete(k)
+      try { engine.destroy() } catch { /* noop */ }
+    }
+  }
+
+  const timeout = setTimeout(() => settle(false), META_TIMEOUT_MS)
+  engine.on('ready', () => {
+    clearTimeout(timeout)
+    a.ready = true
+    a.lastAccessed = Date.now()
+    // Auto-select small files (subtitles etc.) but leave big media unselected;
+    // streaming a range auto-prioritises the pieces it needs.
+    engine.files.forEach((f: EngineFile) => {
+      if (f.length < 10 * 1024 * 1024 && !isVideoFile(f)) f.select()
+      else f.deselect()
     })
-    engine.on('error', (err: Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      reject(err)
-    })
+    // Pre-select the largest video file: its first pieces download immediately
+    // (torrent-stream pulls selected pieces in order) — playback starts as
+    // soon as the browser asks, instead of racing the first range request.
+    const videos = engine.files.filter((f: EngineFile) => isVideoFile(f) && f.length >= 10 * 1024 * 1024)
+    if (videos.length) {
+      const best = videos.reduce((x: EngineFile, y: EngineFile) => (y.length > x.length ? y : x))
+      best.select()
+      a.selectedFile = engine.files.indexOf(best)
+    }
   })
+  engine.on('error', () => { clearTimeout(timeout); settle(false) })
+  return a
+}
+
+/**
+ * Resolve an ActiveTorrent for streaming endpoints, AUTO-ADDING the torrent
+ * from its hash when the engine does not have it (restart / LRU eviction /
+ * resumed session). The stream URL is therefore self-healing: a <video> that
+ * requests /stream/:hash/:i always eventually gets data instead of a 404
+ * (Chromium turns an instant 404 into MEDIA_ERR_SRC_NOT_SUPPORTED, which used
+ * to kill playback permanently).
+ */
+async function waitForActive(source: string): Promise<ActiveTorrent | null> {
+  const hash = normalizeHash(source)
+  const deadline = Date.now() + STREAM_WAIT_TIMEOUT_MS
+  let started = false
+  for (;;) {
+    const found = findHash(hash)
+    if (found) {
+      const a = torrents.get(found)!
+      a.lastAccessed = Date.now()
+      if (a.ready) return a
+      // pending metadata — keep the request hanging (no headers sent yet)
+    } else if (!started) {
+      started = true
+      startAdd(hash, {})
+    }
+    if (Date.now() >= deadline) {
+      const k = findHash(hash)
+      return k && torrents.get(k)!.ready ? torrents.get(k)! : null
+    }
+    await sleep(400)
+  }
+}
+
+/** Evict least-recently-used, non-streaming torrents when over capacity. */
+function evictIfNeeded(excludeHash?: string) {
+  if (torrents.size <= MAX_ENGINES) return
+  const entries = [...torrents.entries()]
+    .filter(([h]) => h !== excludeHash && torrents.get(h)!.streams === 0)
+    .sort((x, y) => x[1].lastAccessed - y[1].lastAccessed)
+  while (torrents.size > MAX_ENGINES && entries.length) {
+    const [h] = entries.shift()!
+    void destroyTorrent(h, true)
+  }
 }
 
 /* ------------------------------ range streaming ------------------------------ */
@@ -279,7 +357,7 @@ function parseRange(header: string | undefined, size: number): { start: number; 
   return { start, end: Math.min(end, size - 1) }
 }
 
-function streamFile(
+async function streamFile(
   req: import('node:http').IncomingMessage,
   res: import('node:http').ServerResponse,
   a: ActiveTorrent,
@@ -287,10 +365,14 @@ function streamFile(
   fileIndex: number,
   attachment: boolean,
 ) {
+  // Wait for metadata if a pending add is still resolving (no headers have
+  // been sent, so the browser just waits — that is exactly what we want).
+  const deadline = Date.now() + STREAM_WAIT_TIMEOUT_MS
+  while (!a.ready && Date.now() < deadline) await sleep(300)
   const t = a.engine.torrent
   if (!t || !a.ready) {
     res.writeHead(503, { 'Content-Type': 'text/plain' })
-    res.end('Torrent metadata not ready')
+    res.end('Torrent metadata not ready (dead torrent or no peers)')
     return
   }
   const file = a.engine.files[fileIndex] as (EngineFile & { name: string; length: number }) | undefined
@@ -415,10 +497,12 @@ const server = createServer(async (req, res) => {
       return
     }
 
-    // POST /torrents — add
+    // POST /torrents — add (responds instantly; metadata resolves in background
+    // and the UI/stream endpoints follow the ready flag via socket / polling)
     if (url.pathname === '/torrents' && req.method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}') as { source?: string; title?: string; poster?: string; refId?: string; kind?: string }
       if (!body.source) { json(res, 400, { error: 'source (magnet uri or info hash) required' }); return }
+      const meta: Meta = { title: body.title, poster: body.poster, refId: body.refId, kind: body.kind }
       const existing = findHash(body.source.replace(/^magnet:\?xt=urn:btih:/i, '').slice(0, 40))
       if (existing) {
         const a = torrents.get(existing)!
@@ -429,20 +513,11 @@ const server = createServer(async (req, res) => {
         json(res, 200, torrentStats(a, existing))
         return
       }
-      const created = await addTorrent(body.source, {
-        title: body.title,
-        poster: body.poster,
-        refId: body.refId,
-        kind: body.kind,
-      })
-      if (torrents.size > MAX_ENGINES) {
-        // evict least recently accessed (not currently streaming) — wipe its cache
-        const entries = [...torrents.entries()]
-          .filter(([h]) => h !== created.infoHash && torrents.get(h)!.streams === 0)
-          .sort((x, y) => x[1].lastAccessed - y[1].lastAccessed)
-        if (entries[0]) void destroyTorrent(entries[0][0], true)
-      }
-      json(res, 200, torrentStats(created, created.infoHash))
+      const created = startAdd(body.source, meta)
+      if (!created) { json(res, 400, { error: 'Invalid torrent source (bad magnet or info hash)' }); return }
+      const newKey = [...torrents.entries()].find(([, v]) => v === created)?.[0] || undefined
+      evictIfNeeded(newKey)
+      json(res, 200, torrentStats(created, newKey || ''))
       return
     }
 
@@ -471,12 +546,16 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // GET /stream/:hash/:index or /file/:hash/:index
+    // GET /stream/:hash/:index or /file/:hash/:index — self-healing: the hash
+    // is auto-added when missing and the request waits out metadata resolution.
     if ((parts[0] === 'stream' || parts[0] === 'file') && parts[1] && parts[2] !== undefined) {
-      const hash = findHash(parts[1])
-      if (!hash) { json(res, 404, { error: 'torrent not active' }); return }
-      const a = torrents.get(hash)!
-      streamFile(req, res, a, hash, parseInt(parts[2], 10), parts[0] === 'file')
+      const a = await waitForActive(parts[1])
+      if (!a) {
+        json(res, 503, { error: 'Torrent metadata could not be fetched (dead torrent or no peers)' })
+        return
+      }
+      const hash = [...torrents.entries()].find(([, v]) => v === a)![0]
+      void streamFile(req, res, a, hash, parseInt(parts[2], 10), parts[0] === 'file')
       return
     }
 
