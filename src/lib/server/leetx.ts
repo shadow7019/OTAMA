@@ -13,7 +13,7 @@
  *                so the top N detail pages are resolved in parallel and cached 24h.
  */
 import type { TorrentOption } from '@/lib/types'
-import { cfGetText, decodeEntities, detectQuality, cached } from './providers'
+import { cfGetText, decodeEntities, detectQuality, detectCodecFromName, cached } from './providers'
 import { torrendsMirrorsFor } from './torrends'
 
 const STATIC_MIRRORS = [
@@ -162,6 +162,7 @@ function optionFromRow(r: LeetxRow, magnet: string | null): TorrentOption {
     hash,
     title: r.name,
     quality: detectQuality(r.name),
+    codec: detectCodecFromName(r.name),
     size: r.size,
     sizeBytes: r.sizeBytes,
     seeds: r.seeds,

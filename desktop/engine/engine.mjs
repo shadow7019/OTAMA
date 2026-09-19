@@ -30,22 +30,35 @@ import torrentStream from 'torrent-stream'
 
 const PORT = Number(process.env.OTAMA_ENGINE_PORT) || 3003
 const HOST = process.env.OTAMA_HOST || '127.0.0.1'
-const ENGINE_VERSION = '1.0.0'
+const ENGINE_VERSION = '1.1.0'
 const DOWNLOAD_ROOT = process.env.OTAMA_DOWNLOAD_DIR || path.join(os.tmpdir(), 'otama-engine')
 const META_TIMEOUT_MS = 45_000
 const IDLE_DESTROY_MS = 30 * 60 * 1000
 const MAX_ENGINES = 6
 const BROADCAST_INTERVAL = 1500
+/** Streaming cache is disposable — bound it so the disk never fills up. */
+const MAX_CACHE_BYTES = (parseInt(process.env.OTAMA_MAX_CACHE_MB || '', 10) || 8192) * 1024 * 1024
 
+/**
+ * Wide tracker mix (UDP + HTTP + HTTPS). In networks where UDP egress is
+ * blocked, the HTTP(S) trackers and DHT still get us peers — a dead swarm is
+ * the other common cause of endless buffering.
+ */
 const DEFAULT_TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://tracker.openbittorrent.com:6969/announce',
   'udp://open.demonii.com:1337/announce',
+  'udp://open.stealth.si:80/announce',
   'udp://tracker.torrent.eu.org:451/announce',
   'udp://exodus.desync.com:6969/announce',
   'udp://tracker.tiny-vps.com:6969/announce',
   'udp://tracker.dler.org:6969/announce',
+  'udp://p4p.arenabg.com:1337/announce',
+  'udp://tracker.theoks.net:6969/announce',
+  'udp://opentracker.io:6969/announce',
   'https://tracker.tamersunion.org:443/announce',
+  'http://tracker.gbitt.info:80/announce',
+  'https://tracker.gbitt.info:443/announce',
 ]
 
 const MIME = {
@@ -180,7 +193,7 @@ function addTorrent(source, meta) {
     let engine
     try {
       engine = torrentStream(magnet, {
-        connections: 100,
+        connections: 150,
         uploads: 12,
         path: DOWNLOAD_ROOT,
         trackers: DEFAULT_TRACKERS,
@@ -290,7 +303,8 @@ function streamFile(req, res, a, infoHash, fileIndex, attachment) {
   const headers = {
     'Accept-Ranges': 'bytes',
     'Content-Type': fileMime(file),
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
   }
   if (attachment) {
     headers['Content-Disposition'] = `attachment; filename="${encodeURIComponent(file.name)}"`
@@ -308,6 +322,16 @@ function streamFile(req, res, a, infoHash, fileIndex, attachment) {
   headers['Content-Length'] = range.end - range.start + 1
 
   res.writeHead(statusCode, headers)
+
+  // HEAD probe (players / TV remotes use it) — headers only, no body.
+  if (req.method === 'HEAD') {
+    res.end()
+    return
+  }
+
+  // Push headers to the client immediately so <video> starts buffering the
+  // moment a single piece is available instead of waiting on the first chunk.
+  res.flushHeaders()
 
   const stream = file.createReadStream({ start: range.start, end: range.end })
   a.streams++
@@ -400,11 +424,11 @@ const server = createServer(async (req, res) => {
         kind: body.kind,
       })
       if (torrents.size > MAX_ENGINES) {
-        // evict least recently accessed (not currently streaming)
+        // evict least recently accessed (not currently streaming) — wipe its cache
         const entries = [...torrents.entries()]
           .filter(([h]) => h !== created.infoHash && torrents.get(h).streams === 0)
           .sort((x, y) => x[1].lastAccessed - y[1].lastAccessed)
-        if (entries[0]) void destroyTorrent(entries[0][0], false)
+        if (entries[0]) void destroyTorrent(entries[0][0], true)
       }
       json(res, 200, torrentStats(created, created.infoHash))
       return
@@ -504,13 +528,16 @@ io.on('connection', (socket) => {
 
 setInterval(broadcastState, BROADCAST_INTERVAL)
 
-// idle reaper + LRU eviction
+// idle reaper + LRU eviction + cache quota
+// All internal evictions WIPE the data: streamed content is a disposable
+// cache, and keeping it around silently fills the disk (seen in the wild:
+// 8 GB of orphaned pieces -> ENOSPC).
 setInterval(() => {
   const now = Date.now()
   for (const [hash, a] of torrents.entries()) {
     if (a.streams === 0 && now - a.lastAccessed > IDLE_DESTROY_MS) {
       console.log(`[otama-engine] idle destroy ${hash}`)
-      void destroyTorrent(hash, false)
+      void destroyTorrent(hash, true)
     }
   }
   const sorted = [...torrents.entries()]
@@ -518,7 +545,16 @@ setInterval(() => {
     .sort((x, y) => x[1].lastAccessed - y[1].lastAccessed)
   while (torrents.size > MAX_ENGINES && sorted.length) {
     const [hash] = sorted.shift()
-    void destroyTorrent(hash, false)
+    void destroyTorrent(hash, true)
+  }
+  // hard cap on cache size (approximate: bytes pulled from the swarm)
+  let cacheBytes = 0
+  for (const a of torrents.values()) cacheBytes += a.engine.swarm.downloaded || 0
+  while (cacheBytes > MAX_CACHE_BYTES && sorted.length) {
+    const [hash, a] = sorted.shift()
+    cacheBytes -= a.engine.swarm.downloaded || 0
+    console.log(`[otama-engine] cache quota eviction ${hash}`)
+    void destroyTorrent(hash, true)
   }
 }, 60_000)
 

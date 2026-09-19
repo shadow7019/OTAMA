@@ -37,7 +37,7 @@ Electron-era codebase.
 | Layer | Tech |
 |---|---|
 | UI | Next.js 16 App Router, TypeScript, Tailwind 4, shadcn/ui, Zustand, socket.io-client |
-| Data | Cinemeta · TVMaze · EZTV · Apibay (The Pirate Bay API) · Nyaa RSS — keyless public APIs |
+| Data | Cinemeta · TVMaze · EZTV · Apibay (The Pirate Bay API) · **YTS** (YIFY JSON API) · Nyaa RSS — keyless public APIs |
 | Optional data | **TMDB** (The Movie Database) — trending/popular/top-rated/genre catalogs, deeper search, better art. Bring your own free key (in-app ⚙ Settings dialog or `TMDB_API_KEY` env) |
 | Library state | Prisma + SQLite (favorites, continue-watching history) |
 | Streaming | `torrent-stream` engine (the exact peerflix stack popcorn-desktop used) with 206 range streaming |
@@ -48,11 +48,16 @@ Electron-era codebase.
 The original repo's known failure modes and how OTAMA addresses them:
 
 1. **Dead provider APIs** — old popcorn providers (YTS/EZTV scrapers) rot and break silently.
-   OTAMA uses live keyless APIs (Cinemeta/TVMaze/Apibay/Nyaa) with TTL caching *and* a
+   OTAMA uses live keyless APIs (Cinemeta/TVMaze/Apibay/YTS/Nyaa) with TTL caching *and* a
    curl-subprocess transport that defeats Cloudflare TLS fingerprinting (Node `fetch` gets 403;
-   upstream never handled this).
+   upstream never handled this). The YTS client chains its new official API base
+   (`movies-api.accel.li`), the legacy `yts.lt/yts.am/yts.ag` domains, `yts.mx`, the
+   `yts-official.to` mirror family and Torrends' live proxy list, with an HTML-scrape fallback —
+   if one domain dies (as `yts.mx` DNS did), the next one takes over automatically.
 2. **Memory leaks from unmanaged torrents** — the desktop app leaks engines. OTAMA's engine
-   has an idle reaper (30 min), an LRU cap (6 torrents) and explicit destroy/wipe endpoints.
+   has an idle reaper (30 min), an LRU cap (6 torrents), explicit destroy/wipe endpoints and a
+   hard streaming-cache quota (`OTAMA_MAX_CACHE_MB`, default 8 GB) — every internal eviction
+   wipes its files so the disk can never fill up with orphaned pieces.
 3. **socket.io path collision** — serving realtime on `/` swallowed REST routes; fixed by
    isolating realtime on `/socket.io`.
 4. **Broken resume** — upstream lost playback position across restarts. OTAMA persists
@@ -63,6 +68,15 @@ The original repo's known failure modes and how OTAMA addresses them:
    auto-selects only the chosen video (plus small subtitle files) and prioritizes streaming ranges.
 7. **UI thread blocking** — heavy work moved out of the UI process into the engine service;
    the UI only consumes REST + socket state.
+8. **"Stuck on buffering" with no explanation** — HEVC/x265 releases (most of today's scene
+   uploads) cannot be decoded by browsers, and upstream happily played them into an infinite
+   spinner. OTAMA detects codecs in release names, ranks browser-playable x264/MP4 torrents
+   first, badges HEVC rows, and if playback still stalls >12 s shows an in-player diagnostics
+   card (live peers/speed + codec explanation) with one-click switching to another torrent —
+   no re-opening the details screen.
+9. **Gateway/proxy buffering** — streamed responses are flushed immediately end-to-end
+   (`res.flushHeaders()` in the engine, `flush_interval -1` in the Caddy gateway) so `<video>`
+   starts on the first available piece.
 
 ## TMDB integration (optional, recommended)
 

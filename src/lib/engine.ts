@@ -71,9 +71,15 @@ export async function addTorrent(opts: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),
   })
-  const data = await res.json()
+  let data: { error?: string } & EngineTorrent
+  try {
+    data = await res.json()
+  } catch {
+    // HTML/empty body -> the engine was not reachable through the gateway
+    throw new Error('Streaming engine unreachable — try reloading the page')
+  }
   if (!res.ok) throw new Error(data.error || 'Failed to add torrent')
-  return data as EngineTorrent
+  return data
 }
 
 export async function destroyTorrent(infoHash: string, wipe = false): Promise<void> {
@@ -94,6 +100,49 @@ export function guessPlayableExt(fileName?: string): string | null {
   if (['mp4', 'm4v', 'webm'].includes(ext)) return 'ok'
   if (['mkv', 'mov'].includes(ext)) return 'maybe'
   return 'unsupported'
+}
+
+/** HEVC/x265/H.265 in a release name — browsers usually cannot decode it. */
+export function isHevcName(name?: string | null): boolean {
+  if (!name) return false
+  return /\b(x\s?265|h\.?265|hevc)\b/i.test(name)
+}
+
+/**
+ * Why will this torrent probably not play in a browser?
+ * Returns null when it should play fine.
+ */
+export function playbackBlocker(fileName?: string | null, releaseTitle?: string | null): string | null {
+  if (isHevcName(fileName) || isHevcName(releaseTitle)) {
+    return 'HEVC/x265 codec — browsers cannot decode it without hardware support'
+  }
+  const ext = guessPlayableExt(fileName)
+  if (ext === 'unsupported') return 'container format (AVI/TS/MPEG) is not supported by browsers'
+  return null
+}
+
+/** Non-HEVC alternatives first, then by seed count. */
+export function playableFirst(options: TorrentOption[]): TorrentOption[] {
+  return [...options].sort((a, b) => {
+    const ha = isHevcName(a.title) || a.codec === 'hevc' ? 1 : 0
+    const hb = isHevcName(b.title) || b.codec === 'hevc' ? 1 : 0
+    if (ha !== hb) return ha - hb
+    return (b.seeds || 0) - (a.seeds || 0)
+  })
+}
+
+/**
+ * Make sure a torrent exists on the engine (re-add after eviction/restart).
+ * Returns the engine torrent or throws.
+ */
+export async function ensureTorrent(
+  infoHash: string,
+  meta?: { title?: string; poster?: string; refId?: string; kind?: string },
+): Promise<EngineTorrent> {
+  const list = await engineList()
+  const found = list.find((t) => t.infoHash.toLowerCase() === infoHash.toLowerCase())
+  if (found) return found
+  return addTorrent({ source: infoHash, ...meta })
 }
 
 /** Add a torrent option to the engine and pick the best video file. */

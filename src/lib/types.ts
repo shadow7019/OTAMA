@@ -16,13 +16,15 @@ export interface MetaItem {
   imdbId?: string
   tvmazeId?: number
   tmdbId?: number
-  provider: 'cinemeta' | 'tvmaze' | 'tmdb'
+  provider: 'cinemeta' | 'tvmaze' | 'tmdb' | 'yts'
 }
 
 export interface TorrentOption {
   hash: string
   title: string
   quality?: string
+  /** detected video codec — 'hevc' releases usually cannot play in browsers */
+  codec?: 'h264' | 'hevc' | string
   size?: string
   sizeBytes?: number
   seeds?: number
@@ -116,6 +118,8 @@ export interface PlayerPayload {
   /** quality label of the chosen torrent */
   quality?: string
   fileName?: string
+  /** other torrent options for the same title — enables in-player switching */
+  alternatives?: TorrentOption[]
 }
 
 export interface HistoryEntry {

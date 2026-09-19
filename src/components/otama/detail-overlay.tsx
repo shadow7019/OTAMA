@@ -150,7 +150,7 @@ function MovieDetailBody({
       />
       <div className="space-y-3 p-5 md:p-8">
         <h3 className="text-base font-bold flex items-center gap-2">
-          Available torrents <span className="text-xs font-normal text-zinc-500">(ThePirateBay)</span>
+          Available torrents <span className="text-xs font-normal text-zinc-500">(TPB · YTS · 1337x — browser-friendly releases first)</span>
         </h3>
         {error ? <p className="text-sm text-red-400">Failed to load details: {(error as Error).message}</p> : null}
         {isLoading ? (

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cineCatalog, tvmazeBrowse } from '@/lib/server/providers'
-import { ytsBrowse } from '@/lib/server/yts'
+import { ytsBrowse, ytsBrowseHtml } from '@/lib/server/yts'
 import { tmdbCatalog, tmdbStatus } from '@/lib/server/tmdb'
 import type { MetaItem } from '@/lib/types'
 
@@ -31,7 +31,13 @@ export async function GET(req: NextRequest) {
     }
 
     if (source === 'yts' && type === 'movie') {
-      const items = await ytsBrowse({ page, genre, sort })
+      try {
+        const items = await ytsBrowse({ page, genre, sort })
+        if (items.length) return NextResponse.json({ items, provider: 'yts' })
+      } catch { /* API chain failed -> HTML scrape below */ }
+      // Every YTS API mirror down: scrape the yts-official.to browse HTML.
+      const items = await ytsBrowseHtml({ page, genre, sort })
+      if (items.length) return NextResponse.json({ items, provider: 'yts' })
       return NextResponse.json({ items, provider: 'yts' })
     }
 

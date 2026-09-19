@@ -1,11 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Play, Loader2, ExternalLink } from 'lucide-react'
+import { Play, Loader2, ExternalLink, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { QualityBadge, Seeds } from '@/components/otama/media-card'
-import { streamTorrentOption, guessPlayableExt } from '@/lib/engine'
+import { streamTorrentOption, guessPlayableExt, isHevcName, playableFirst } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 import type { TorrentOption } from '@/lib/types'
 
@@ -35,6 +35,10 @@ export function TorrentList({
     if (addingHash) return
     setAddingHash(option.hash)
     try {
+      const blocked = isHevcName(option.title) || option.codec === 'hevc'
+      if (blocked) {
+        toast.warning('HEVC/x265 release — most browsers cannot decode it. Picking it anyway; if it stays buffering, switch to a non-HEVC torrent from the player.', { duration: 8000 })
+      }
       toast.loading('Connecting to swarm…', { id: 'add-torrent' })
       const { torrent, file } = await streamTorrentOption(option, meta)
       const ext = guessPlayableExt(file.name)
@@ -54,6 +58,7 @@ export function TorrentList({
         kind: meta?.kind,
         quality: option.quality,
         fileName: file.name,
+        alternatives: playableFirst(torrents.filter((t) => t.source && t.hash !== option.hash)).slice(0, 10),
       })
     } catch (err) {
       toast.error((err as Error).message || 'Failed to start torrent', { id: 'add-torrent' })
@@ -91,6 +96,14 @@ export function TorrentList({
               {t.status === 'vip' || t.status === 'trusted' ? (
                 <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300 uppercase">
                   {t.status}
+                </span>
+              ) : null}
+              {isHevcName(t.title) || t.codec === 'hevc' ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-300 uppercase"
+                  title="HEVC/x265 — browsers usually cannot decode this codec; prefer an H.264/x264 release"
+                >
+                  <ShieldAlert className="h-3 w-3" /> HEVC
                 </span>
               ) : null}
             </div>

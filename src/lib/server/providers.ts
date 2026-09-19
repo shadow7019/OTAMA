@@ -214,6 +214,41 @@ export function detectQuality(name: string): string | undefined {
   return q.replace(/\s/g, '')
 }
 
+/**
+ * Codec detection from a release name. HEVC/x265 releases typically CANNOT be
+ * decoded by browsers (Chrome only plays H.265 with hardware support), which
+ * is the #1 cause of the "stuck on buffering" report — so OTAMA surfaces and
+ * deprioritises them.
+ */
+export function detectCodecFromName(name: string): 'h264' | 'hevc' | undefined {
+  const s = (name || '').toLowerCase()
+  if (/\b(x\s?265|h\.?265|hevc)\b/.test(s)) return 'hevc'
+  if (/\b(x\s?264|h\.?264|avc)\b/.test(s)) return 'h264'
+  return undefined
+}
+
+/** Browser playability of a release name — 'blocked' files spin forever. */
+export function playabilityRank(name: string, codec?: string): 0 | 1 | 2 {
+  const c = (codec as 'h264' | 'hevc' | undefined) || detectCodecFromName(name)
+  if (c === 'hevc') return 2
+  const ext = (name.match(/\.(mp4|m4v|mkv|mov|avi|ts|webm)\b/i) || [])[1]?.toLowerCase()
+  if (ext === 'avi' || ext === 'ts') return 1 // container not supported by <video>
+  return 0
+}
+
+/**
+ * Sort torrent options so that browser-playable releases come first, then by
+ * seed count. Keeps the popular x265-HEVC packs from hijacking the top slot.
+ */
+export function sortTorrentsPlayableFirst(list: TorrentOption[]): TorrentOption[] {
+  return [...list].sort((a, b) => {
+    const pa = playabilityRank(a.title, a.codec)
+    const pb = playabilityRank(b.title, b.codec)
+    if (pa !== pb) return pa - pb
+    return (b.seeds || 0) - (a.seeds || 0)
+  })
+}
+
 export function normalizeApibayRow(row: ApibayRow): TpbItem | null {
   if (!row.info_hash || !row.name) return null
   const cat = row.category || '0'
@@ -247,6 +282,7 @@ export function apibayToTorrentOption(item: TpbItem): TorrentOption {
     hash: item.hash,
     title: item.name,
     quality: item.quality,
+    codec: detectCodecFromName(item.name),
     size: item.size,
     sizeBytes: item.sizeBytes,
     seeds: item.seeds,
@@ -292,13 +328,14 @@ export async function findMovieTorrents(imdbId?: string, title?: string, year?: 
     ])
 
     const seen = new Set<string>()
-    const out: TorrentOption[] = []
-    for (const t of [...tpb, ...yts, ...leetx].sort((a, b) => (b.seeds || 0) - (a.seeds || 0))) {
+    const merged: TorrentOption[] = []
+    for (const t of [...tpb, ...yts, ...leetx]) {
       if (!t.source || seen.has(t.source)) continue
       seen.add(t.source)
-      out.push(t)
+      merged.push(t)
     }
-    return out.slice(0, 30)
+    // Browser-playable (H.264/x264, MP4/MKV) releases first, seeds second.
+    return sortTorrentsPlayableFirst(merged).slice(0, 30)
   })
 }
 
@@ -327,6 +364,7 @@ async function eztvByImdb(imdbNumeric: string): Promise<TorrentOption[]> {
       hash: r.hash!.toLowerCase(),
       title: r.title || r.filename || r.hash!,
       quality: detectQuality(r.title || r.filename || ''),
+      codec: detectCodecFromName(r.title || r.filename || ''),
       size: humanSize(r.size_bytes),
       sizeBytes: parseInt(String(r.size_bytes || '0'), 10) || 0,
       seeds: r.seeds || 0,
@@ -541,14 +579,15 @@ export async function findEpisodeTorrents(
   if (imdbId && /^\d+$/.test(imdbId.replace(/^tt/, ''))) {
     try {
       const list = await cached(`eztv:${imdbId}`, 10 * 60_000, () => eztvByImdb(imdbId.replace(/^tt/, '')))
+      const sorted = sortTorrentsPlayableFirst(list)
       if (season && episode) {
-        const exact = list.filter((t) => t.season === season && t.episode === episode)
-        if (exact.length) return exact.sort((a, b) => (b.seeds || 0) - (a.seeds || 0)).slice(0, 12)
+        const exact = sorted.filter((t) => t.season === season && t.episode === episode)
+        if (exact.length) return exact.slice(0, 12)
       } else if (season) {
-        const pack = list.filter((t) => t.season === season && (t.episode == null || t.episode === 0))
-        if (pack.length) return pack.sort((a, b) => (b.seeds || 0) - (a.seeds || 0)).slice(0, 12)
+        const pack = sorted.filter((t) => t.season === season && (t.episode == null || t.episode === 0))
+        if (pack.length) return pack.slice(0, 12)
       } else {
-        return list.sort((a, b) => (b.seeds || 0) - (a.seeds || 0)).slice(0, 24)
+        return sorted.slice(0, 24)
       }
     } catch { /* EZTV unavailable -> TPB */ }
   }
@@ -570,9 +609,8 @@ export async function findEpisodeTorrents(
       const opts = rows
         .filter((r) => tvCats.has(r.categoryCode) || /\bS\d{1,2}E\d{1,2}\b/i.test(r.name))
         .map(apibayToTorrentOption)
-        .sort((a, b) => (b.seeds || 0) - (a.seeds || 0))
-        .slice(0, 12)
-      if (opts.length) return opts
+      const sorted = sortTorrentsPlayableFirst(opts).slice(0, 12)
+      if (sorted.length) return sorted
     } catch { /* try next */ }
   }
   // 1337x fallback (works when TPB/EZTV are blocked)
