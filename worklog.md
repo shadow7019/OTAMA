@@ -397,3 +397,19 @@ Work Log:
 
 Stage Summary:
 - OTAMA now aggregates Torrentio (12+ sites incl. dead RARBG archive), SolidTorrents, ThePirateBay, 1337x, EZTV, Nyaa, YTS with real playable links everywhere: Torrents hub tabs, global search tabs, and detail overlay (movies + episodes with exact file indices). Spider-Man 2002 — the original broken-link report — streams end-to-end. Broken metahub poster placeholders replaced by branded no-artwork cards. TMDB key still pending from user.
+
+---
+Task ID: 19
+Agent: main (orchestrator)
+Task: Wire up user-provided TMDB credentials and verify the TMDB integration end-to-end
+
+Work Log:
+- Found the prior session had already implemented the full TMDB layer but ran out of context before verification; this task validated everything live with the owner's credentials (v3 key b3e1f18… + v4 read token, stored in .env and as BUILTIN_TMDB_API_KEY fallback in src/lib/server/tmdb.ts so web AND desktop work out of the box).
+- Key resolution order confirmed: DB Setting -> env (v4 preferred) -> builtin; /api/tmdb GET returns {configured:true, mode:'v4', source:'env', valid:true}.
+- Verified live through the gateway: /api/catalog?source=tmdb returns TMDB trending with IMDb-enriched refIds; /api/search merges TMDB multi-search (deduped by imdb/title, obscure TMDB-only titles appear, no duplicate cards); /api/resolve?tmdbId=557 -> tt0145487; /api/meta/movie/tt0145487 shows TMDB backdrop + runtime 121m + genres with 40 torrents merged from all sites.
+- Browser verification (agent-browser via :81): Movies + TV catalogs auto-switch to TMDB (Trending) with real TMDB posters/ratings; TMDB-only card "Spider-Man: Brand New Day" resolves TMDB->IMDb on click and opens the detail overlay with TMDB backdrop, 8.1 rating, 145m runtime, Action/Adventure/Sci-Fi genres, and a fully populated torrent list (Torrentio via 1337x/ThePirateBay, TorrentDownloads, LimeTorrents); TMDB settings dialog shows green "Connected (v4 token, from environment)"; search "interstellar" shows merged tabs Movies(19)/TV(6)/Anime(12)/PB(30)/Solid(20)/MoreSites(30).
+- Playback smoke test from a TMDB-sourced card: Reacher (TMDB trending) -> detail overlay (TMDB backdrop/genres) -> S01E02 "First Dance" -> Find torrents (Torrentio exact fileIdx: GalaxyTV pack picked, 354 seeds) -> PLAY: real frames, currentTime 14.9s+ advancing, readyState 4, 5 peers, 550 KB/s, ETA 1h11m; MKV diagnostics card self-dismissed once playback started.
+- Housekeeping: wiped 3 test torrents from the engine (Spider-Man x2, Reacher pack) via DELETE ?wipe=1; updated stale about-dialog chip "TMDB (optional, bring your key)" -> "TMDB (connected — richer metadata)"; lint clean; dev.log free of runtime errors.
+
+Stage Summary:
+- TMDB is now live with the owner's credentials as the default metadata/catalog layer (env v4 token, builtin v3 fallback for desktop), enriching catalogs, search, and detail pages while all torrent sources remain IMDb-keyed and unchanged. End-to-end verified from TMDB card click to real streamed video frames. TMDB credentials request from the owner is now fully satisfied.

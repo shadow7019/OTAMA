@@ -64,7 +64,7 @@ export function AboutDialog() {
           <span className="rounded-full border border-white/10 px-2 py-0.5">socket.io live stats</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">Prisma / SQLite</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">Cinemeta · TVMaze · TPB · Nyaa · YTS · 1337x · Torrends</span>
-          <span className="rounded-full border border-white/10 px-2 py-0.5">TMDB (optional, bring your key)</span>
+          <span className="rounded-full border border-white/10 px-2 py-0.5">TMDB (connected — richer metadata)</span>
           <span className={`rounded-full border px-2 py-0.5 ${connected ? 'border-emerald-500/40 text-emerald-400' : 'border-red-500/40 text-red-400'}`}>
             engine {connected ? 'online' : 'offline'}
           </span>
