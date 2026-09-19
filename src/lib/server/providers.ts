@@ -7,13 +7,16 @@
  *  - Apibay    (ThePirateBay official API)        -> torrent search incl. imdb-keyed lookup
  *  - EZTV      (TV torrent api, best-effort)      -> episode torrents w/ automatic TPB fallback
  *  - Nyaa      (anime tracker, RSS)               -> anime torrents
+ *  - YTS       (YIFY movies, JSON API)            -> movie catalog + hash-ready torrents
+ *  - 1337x     (HTML scraper)                     -> general torrent search
+ *  - Torrends  (site directory + live proxies)    -> mirror resolution + 700+ site links
  *
  * Every provider degrades gracefully: if one is unavailable the callers fall
- * back to ThePirateBay so the app keeps working.
+ * back to the remaining sources so the app keeps working.
  */
 import type { MetaItem, MetaKind, TorrentOption, EpisodeInfo, TpbItem } from '@/lib/types'
 
-const UA =
+export const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
 const CINE = 'https://v3-cinemeta.strem.io'
@@ -72,7 +75,7 @@ export class ProviderError extends Error {}
  * passes. Use curl as the primary transport for those hosts with a fetch
  * fallback for environments without curl.
  */
-async function cfGetText(url: string, timeoutMs = 12_000): Promise<string> {
+export async function cfGetText(url: string, timeoutMs = 12_000): Promise<string> {
   const maxTime = Math.ceil(timeoutMs / 1000)
   try {
     const { execFile } = await import('node:child_process')
@@ -255,26 +258,48 @@ export function apibayToTorrentOption(item: TpbItem): TorrentOption {
   }
 }
 
-/** Find movie torrents: try imdb id first, then title+year. */
+/** Find movie torrents: TPB (imdb-keyed) + YTS (imdb-keyed) + 1337x, merged by seed count. */
 export async function findMovieTorrents(imdbId?: string, title?: string, year?: number): Promise<TorrentOption[]> {
-  let rows: TpbItem[] = []
-  if (imdbId) {
-    try {
-      rows = await apibaySearch(imdbId)
-    } catch { /* fall through */ }
-  }
-  if (rows.length === 0 && title) {
-    const q = year ? `${title} ${year}` : title
-    try {
-      rows = await apibaySearch(q)
-    } catch { /* fall through */ }
-  }
-  const videoCats = new Set(['201', '202', '207', '208', '209', '299'])
-  return rows
-    .filter((r) => videoCats.has(r.categoryCode) || r.imdb)
-    .map(apibayToTorrentOption)
-    .sort((a, b) => (b.seeds || 0) - (a.seeds || 0))
-    .slice(0, 24)
+  return cached(`movtorrent:${imdbId || '-'}|${title || '-'}|${year || '-'}`, 10 * 60_000, async () => {
+    const { ytsMovieTorrents } = await import('./yts')
+    const { leetxSearch } = await import('./leetx')
+
+    const tpbTask = (async () => {
+      let rows: TpbItem[] = []
+      if (imdbId) {
+        try {
+          rows = await apibaySearch(imdbId)
+        } catch { /* fall through */ }
+      }
+      if (rows.length === 0 && title) {
+        const q = year ? `${title} ${year}` : title
+        try {
+          rows = await apibaySearch(q)
+        } catch { /* fall through */ }
+      }
+      const videoCats = new Set(['201', '202', '207', '208', '209', '299'])
+      return rows
+        .filter((r) => videoCats.has(r.categoryCode) || r.imdb)
+        .map(apibayToTorrentOption)
+    })()
+
+    const [tpb, yts, leetx] = await Promise.all([
+      tpbTask,
+      ytsMovieTorrents(imdbId, title, year).catch(() => [] as TorrentOption[]),
+      title
+        ? leetxSearch(`${title}${year ? ` ${year}` : ''}`, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
+    ])
+
+    const seen = new Set<string>()
+    const out: TorrentOption[] = []
+    for (const t of [...tpb, ...yts, ...leetx].sort((a, b) => (b.seeds || 0) - (a.seeds || 0))) {
+      if (!t.source || seen.has(t.source)) continue
+      seen.add(t.source)
+      out.push(t)
+    }
+    return out.slice(0, 30)
+  })
 }
 
 /* ------------------------------ eztv (best-effort) ------------------------------ */
@@ -316,7 +341,7 @@ async function eztvByImdb(imdbNumeric: string): Promise<TorrentOption[]> {
 
 /* ------------------------------ nyaa ------------------------------ */
 
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
@@ -549,6 +574,14 @@ export async function findEpisodeTorrents(
         .slice(0, 12)
       if (opts.length) return opts
     } catch { /* try next */ }
+  }
+  // 1337x fallback (works when TPB/EZTV are blocked)
+  if (season && episode) {
+    try {
+      const { leetxSearch } = await import('./leetx')
+      const opts = await leetxSearch(`${title} S${pad(season)}E${pad(episode)}`, { category: 'tv', resolve: 8 })
+      if (opts.length) return opts.slice(0, 12)
+    } catch { /* give up */ }
   }
   return []
 }

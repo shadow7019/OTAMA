@@ -43,7 +43,7 @@ export function FavoritesView() {
   const open = (row: FavRow) => {
     if (row.kind === 'tpb') {
       // raw torrent favorite — resume browsing via pirate bay view is fine; simplest: open detail-less player? Keep details open.
-      toast.info('Raw torrent favorites play from the Pirate Bay tab.')
+      toast.info('Raw torrent favorites play from the Torrents tab.')
       return
     }
     openDetail({

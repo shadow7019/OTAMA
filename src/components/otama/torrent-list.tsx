@@ -1,13 +1,22 @@
 'use client'
 
 import { useState } from 'react'
-import { Play, Loader2 } from 'lucide-react'
+import { Play, Loader2, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { QualityBadge, Seeds } from '@/components/otama/media-card'
 import { streamTorrentOption, guessPlayableExt } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 import type { TorrentOption } from '@/lib/types'
+
+const PROVIDER_LABEL: Record<string, string> = {
+  tpb: 'TPB',
+  eztv: 'EZTV',
+  nyaa: 'Nyaa',
+  yts: 'YTS',
+  '1337x': '1337X',
+  torrends: 'Torrends',
+}
 
 export function TorrentList({
   torrents,
@@ -77,7 +86,7 @@ export function TorrentList({
               {t.size ? <span>{t.size}</span> : null}
               <Seeds count={t.seeds} leechers={t.leechers} />
               <span className="rounded bg-white/5 px-1.5 py-0.5 uppercase text-[10px] tracking-wide text-zinc-400">
-                {t.provider}
+                {PROVIDER_LABEL[t.provider] || t.provider}
               </span>
               {t.status === 'vip' || t.status === 'trusted' ? (
                 <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300 uppercase">
@@ -96,6 +105,17 @@ export function TorrentList({
             {addingHash === t.hash ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-black" />}
             {!compact && <span className="ml-1">Play</span>}
           </Button>
+          {t.detailUrl ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 shrink-0"
+              onClick={() => window.open(t.detailUrl, '_blank', 'noopener,noreferrer')}
+              aria-label={`Open ${t.title} on source site`}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
         </li>
       ))}
     </ul>

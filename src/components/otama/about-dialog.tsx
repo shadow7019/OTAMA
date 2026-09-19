@@ -12,14 +12,14 @@ import { useAppStore } from '@/store/app-store'
 import { useEngineState } from '@/hooks/use-engine-state'
 
 const FIXES: { title: string; detail: string }[] = [
-  { title: 'Dead providers replaced', detail: 'RARBG shut down in 2023 and YTS/EZTV are geo/CF-blocked in many regions. OTAMA rebuilds the provider layer on Cinemeta (metadata), TVMaze (episodes), ThePirateBay via its official API, Nyaa (anime) and EZTV with automatic fallback to ThePirateBay.' },
+  { title: 'Dead providers replaced', detail: 'RARBG shut down in 2023 and YTS/EZTV are geo/CF-blocked in many regions. OTAMA rebuilds the provider layer on Cinemeta (metadata), TVMaze (episodes), ThePirateBay via its official API, Nyaa (anime), EZTV with automatic fallback, plus YTS, 1337x (mirror network) and a Torrends.to directory of 700+ sites with live proxies.' },
   { title: 'Cloudflare 403 / TLS fingerprinting fixed', detail: 'Node fetch/https get challenged by Cloudflare even with browser UAs. OTAMA routes tracker APIs through a curl transport with fetch fallback — no more silent empty results.' },
   { title: 'Memory-leak / zombie-torrent fix', detail: 'The desktop app left torrents running forever. The engine now reaps idle torrents after 30 min, caps at 6 concurrent engines (LRU), and destroys streams when the browser tab disconnects.' },
   { title: 'Metadata mismatch fix', detail: 'Torrent-to-title matching is keyed by IMDB id (apibay supports imdb lookups) with title+year fallback — no more wrong-poster/wrong-movie results.' },
   { title: 'Sane file selection', detail: 'Instead of grabbing every file in a pack, the engine downloads the selected video plus small subtitle files only, and prioritises the exact byte ranges you seek to.' },
   { title: 'Instant seek, proper range streaming', detail: 'HTTP 206 range responses verified end-to-end so scrubbing works like a normal video site instead of re-downloading from the start.' },
   { title: 'Resume playback', detail: 'Positions are saved to SQLite every 10s; the player resumes where you left off (the desktop app lost your position on every restart).' },
-  { title: 'Search everywhere at once', detail: 'One query fans out to movies, series, anime and Pirate Bay in parallel — the original app searched providers one at a time.' },
+  { title: 'Search everywhere at once', detail: 'One query fans out to movies, series, anime, Pirate Bay and 1337x in parallel — the original app searched providers one at a time.' },
 ]
 
 export function AboutDialog() {
@@ -63,7 +63,7 @@ export function AboutDialog() {
           <span className="rounded-full border border-white/10 px-2 py-0.5">torrent-stream (peerflix lineage)</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">socket.io live stats</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">Prisma / SQLite</span>
-          <span className="rounded-full border border-white/10 px-2 py-0.5">Cinemeta · TVMaze · TPB · Nyaa</span>
+          <span className="rounded-full border border-white/10 px-2 py-0.5">Cinemeta · TVMaze · TPB · Nyaa · YTS · 1337x · Torrends</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5">TMDB (optional, bring your key)</span>
           <span className={`rounded-full border px-2 py-0.5 ${connected ? 'border-emerald-500/40 text-emerald-400' : 'border-red-500/40 text-red-400'}`}>
             engine {connected ? 'online' : 'offline'}

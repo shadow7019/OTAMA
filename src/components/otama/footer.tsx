@@ -20,7 +20,7 @@ export function Footer() {
             <span aria-hidden>·</span>
             <span>torrent-stream engine</span>
             <span aria-hidden>·</span>
-            <span>Cinemeta / TVMaze / TPB / Nyaa / TMDB</span>
+            <span>Cinemeta / TVMaze / TPB / Nyaa / YTS / 1337x / Torrends / TMDB</span>
             <span aria-hidden>·</span>
             <span>socket.io live stats</span>
           </div>

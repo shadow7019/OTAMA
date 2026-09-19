@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cineCatalog, tvmazeBrowse } from '@/lib/server/providers'
+import { ytsBrowse } from '@/lib/server/yts'
 import { tmdbCatalog, tmdbStatus } from '@/lib/server/tmdb'
 import type { MetaItem } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/catalog?type=movie|series|anime&genre=&skip=&sort=top|imdbRating|year|trending|popular&source=tmdb|cinemeta|tvmaze&page=
+ * GET /api/catalog?type=movie|series|anime&genre=&skip=&sort=top|imdbRating|year|trending|popular&source=tmdb|cinemeta|tvmaze|yts&page=
  * Unified browse endpoint for the grid views.
  * source=tmdb requires a configured TMDB key (Settings dialog or TMDB_API_KEY env);
  * it falls back to Cinemeta automatically when unavailable.
+ * source=yts browses the YTS movie catalog (genre/sort mapped, page-based).
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -26,6 +28,11 @@ export async function GET(req: NextRequest) {
       // sort by rating for a nicer grid
       items.sort((a, b) => (b.rating || 0) - (a.rating || 0))
       return NextResponse.json({ items })
+    }
+
+    if (source === 'yts' && type === 'movie') {
+      const items = await ytsBrowse({ page, genre, sort })
+      return NextResponse.json({ items, provider: 'yts' })
     }
 
     if (source === 'tmdb' && type !== 'anime') {

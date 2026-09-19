@@ -30,8 +30,15 @@ const CINE_SORTS = [
   { value: 'imdbRating', label: 'Top rated' },
   { value: 'year', label: 'Newest' },
 ]
+const YTS_SORTS = [
+  { value: 'popular', label: 'Popular' },
+  { value: 'seeds', label: 'Most seeded' },
+  { value: 'top', label: 'Top rated' },
+  { value: 'year', label: 'Newest' },
+  { value: 'latest', label: 'Latest uploads' },
+]
 
-type CatalogSource = 'tmdb' | 'cinemeta' | 'tvmaze'
+type CatalogSource = 'tmdb' | 'cinemeta' | 'tvmaze' | 'yts'
 
 export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
   const openDetail = useAppStore((s) => s.openDetail)
@@ -66,6 +73,9 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
       const params = new URLSearchParams({ type, sort, source })
       if (source === 'tvmaze' && type === 'tv') {
         params.set('page', '0')
+      } else if (source === 'yts') {
+        if (genre !== 'all') params.set('genre', genre)
+        params.set('page', '0')
       } else {
         if (genre !== 'all') params.set('genre', genre)
       }
@@ -86,6 +96,9 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
       const next = page + 1
       const params = new URLSearchParams({ type, sort, source })
       if (source === 'tvmaze' && type === 'tv') {
+        params.set('page', String(next))
+      } else if (source === 'yts') {
+        if (genre !== 'all') params.set('genre', genre)
         params.set('page', String(next))
       } else if (source === 'tmdb') {
         if (genre !== 'all') params.set('genre', genre)
@@ -115,7 +128,7 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
   }
 
   const genres = type === 'movie' ? MOVIE_GENRES : TV_GENRES
-  const sortOptions = source === 'tmdb' ? TMDB_SORTS : CINE_SORTS
+  const sortOptions = source === 'tmdb' ? TMDB_SORTS : source === 'yts' ? YTS_SORTS : CINE_SORTS
   const grid = useMemo(() => items, [items])
 
   return (
@@ -151,7 +164,7 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
             </Select>
           ) : null}
           {type !== 'anime' ? (
-            <Select value={source} onValueChange={(v) => { setSource(v as CatalogSource); setSort(v === 'tmdb' ? 'trending' : 'top'); refetch() }}>
+            <Select value={source} onValueChange={(v) => { const src = v as CatalogSource; setSource(src); setSort(src === 'tmdb' ? 'trending' : src === 'yts' ? 'popular' : 'top'); refetch() }}>
               <SelectTrigger className="w-[150px]" aria-label="Catalog source">
                 <SelectValue placeholder="Source" />
               </SelectTrigger>
@@ -159,6 +172,7 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
                 <SelectItem value="tmdb">TMDB</SelectItem>
                 <SelectItem value="cinemeta">Cinemeta</SelectItem>
                 {type === 'tv' ? <SelectItem value="tvmaze">TVmaze</SelectItem> : null}
+                {type === 'movie' ? <SelectItem value="yts">YTS Movies</SelectItem> : null}
               </SelectContent>
             </Select>
           ) : null}

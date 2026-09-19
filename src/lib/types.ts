@@ -27,13 +27,15 @@ export interface TorrentOption {
   sizeBytes?: number
   seeds?: number
   leechers?: number
-  provider: 'tpb' | 'eztv' | 'nyaa'
+  provider: 'tpb' | 'eztv' | 'nyaa' | 'yts' | '1337x' | 'torrends'
   /** magnet uri or raw info hash for the engine */
   source: string
   season?: number
   episode?: number
   date?: string
   status?: 'vip' | 'trusted' | string
+  /** web page of this torrent (used for "open on site" fallbacks) */
+  detailUrl?: string
 }
 
 export interface EpisodeInfo {
