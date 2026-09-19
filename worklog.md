@@ -462,3 +462,36 @@ Work Log:
 
 Stage Summary:
 - "Swarm player is dead" was the demuxer waiting for the MKV seek index while the engine only prioritised the file head, compounded by a resume-seek detour, no-priority range fetches, and static feedback. The engine now prefetches head AND tail with priority, range requests jump the download queue, the player resumes via media fragment (first request = right offset), the waiting overlay streams live numbers, and a 45s readyState=0 watchdog triggers failover even on "alive" swarms. Cold resume to first frame: ~60-90s+ (or never) → ~15-20s; deep seeks: multi-minute → seconds.
+
+---
+Task ID: 22
+Agent: main (orchestrator)
+Task: "in some movies we cannot see play button and we can't make the video full screen as the placeholder is behind the close button" — player controls blocked by buffering overlay + missing/invisible Play buttons
+
+Work Log:
+- DIAGNOSIS (both complaints reproduced live):
+  1. PLAYER FULLSCREEN/PLAY BLOCKED: the buffering placeholder in player-overlay.tsx was `absolute z-10` with NO inset and NO pointer-events-none — while buffering (cold start AND every rebuffer) it sat ON TOP of the <video controls> and swallowed every click. The video's native play button and native fullscreen button were unreachable; the only responding control was the top-bar close X ("the placeholder is behind the close button"). Computed-style check during a live rebuffer confirmed the overlay intercepted pointer events.
+  2. PLAY BUTTON INVISIBLE FOR "SOME MOVIES": (a) the detail overlay had NO prominent Play — only small per-torrent buttons below the fold, and movies with 0 provider torrents had no play affordance at all; (b) THE BIG ONE — Radix ScrollArea sizes its content wrapper with display:table (shrink-to-fit), so one long `truncate` torrent name (e.g. multi-part Russian releases, 878px+) forced the WHOLE detail sheet to ~1036px: header Play/heart and per-torrent Play buttons were pushed OFF-SCREEN (Play button measured at x=892 on a 390px phone; 12px off even on the 1024px desktop sheet). Movies with long torrent names = "some movies" without a visible play button.
+- PLAYER FIXES (player-overlay.tsx):
+  * Placeholder is now `pointer-events-none absolute inset-0 flex items-center justify-center pb-20` — all clicks pass through to the video's native controls (play, seek, volume, native fullscreen) even mid-buffer; pb-20 keeps the label visually clear of the control bar.
+  * NEW always-visible fullscreen toggle in the top bar (Maximize2/Minimize2, aria-label swaps, title hint "F or double-click"). Fullscreens the player ROOT so top bar + video + stats bar all stay visible; falls back to <video>.requestFullscreen / webkitEnterFullscreen on iOS Safari.
+  * Double-click anywhere on the video area toggles fullscreen (diagnostics card stops propagation); F shortcut added.
+  * Escape guard: when document.fullscreenElement is set, Escape now exits fullscreen ONLY and keeps the player open (previously it closed the whole player mid-fullscreen).
+  * Close button (closeAndSave) exits fullscreen first, saves progress, then closes.
+  * Diagnostics card centered explicitly (inset-0 m-auto) instead of relying on abspos static-position quirks.
+- DETAIL OVERLAY FIXES (detail-overlay.tsx):
+  * ScrollArea → plain `otama-scroll h-full overflow-y-auto` div: kills the display:table shrink-to-fit, so truncate/min-w-0 work and the sheet NEVER overflows horizontally (mobile scrollWidth now exactly 390, desktop 0 overflow).
+  * NEW PlayBestTorrentButton: prominent amber "Play" in the detail header next to the heart — auto-picks the best torrent (playableFirst, non-HEVC preferred), streams via streamTorrentOption, passes the remaining options as player alternatives; disabled "No streams" state when a movie has no torrents; busy spinner while connecting. Wired through a new optional `action` prop on DetailHeader.
+- SAME LATENT BUG FIXED ELSEWHERE: downloads-sheet.tsx and torrends-sites-dialog.tsx also used ScrollArea with truncate'd torrent/site names — both switched to plain overflow-y-auto scroll containers.
+- TORRENT LIST: empty state is now actionable — "Search "<title>" across all torrent sites" button (closes detail, opens global search) instead of a dead-end message.
+- VERIFIED (agent-browser via gateway :81, desktop 1280 + mobile 390x844):
+  * Detail header shows the amber Play (auto-picked the 1080p YTS MP4 for Practical Magic) + heart; playback started from the header button; stats bar live.
+  * Mid-buffer deep seek (2400s): placeholder computed pointer-events:none; native controls (play/volume/native fullscreen) visible and clickable UNDER the overlay; top-bar fullscreen button clicked while buffering → document.fullscreenElement=true (root dialog fullscreened, top bar + stats bar retained).
+  * Escape in fullscreen → exits fullscreen, player STAYS open (video kept playing, currentTime advanced). F key toggles with icon/aria-label sync. Real double-click toggles fullscreen. Close-while-fullscreen → fullscreen exits + player closes + history saved (dev.log shows the /api/history POST).
+  * Note: during verification the 45s hard-stall failover (Task 21) fired live — YTS swarm "alive" (11 peers/32KB/s) but 0% for 45s+ → auto-switched to the healthier OFT release which played instantly at the deep-seek position; exactly as designed.
+  * Mobile 390px: detail Play button back on-screen (x=892 → x=247, sheet scrollWidth 1036 → 390); titles truncate; player top bar fits (fullscreen toggle at x=338); mobile fullscreen + Escape verified.
+  * Desktop: detail scrolls vertically (3774px content), ZERO horizontal overflow, 40 torrent rows render.
+  * Test torrents wiped from engine (user's continue-watching torrents left intact); lint clean; dev.log free of errors; browser closed.
+
+Stage Summary:
+- "Can't see the play button" had two real roots: Radix ScrollArea's display:table wrapper letting one long torrent name shove every Play button off-screen (fixed by plain scroll containers in detail overlay, downloads sheet and sites dialog), plus movies with zero torrents having no play affordance (fixed by the prominent header Play + actionable empty state). "Can't make the video fullscreen" died with pointer-events-none on the buffering overlay, plus a dedicated always-visible fullscreen toggle, double-click/F shortcuts, and an Escape guard so exiting fullscreen no longer kills the player.

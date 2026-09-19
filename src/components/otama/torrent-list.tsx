@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Play, Loader2, ExternalLink, ShieldAlert } from 'lucide-react'
+import { Play, Loader2, ExternalLink, ShieldAlert, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { QualityBadge, Seeds } from '@/components/otama/media-card'
@@ -35,6 +35,8 @@ export function TorrentList({
 }) {
   const openPlayer = useAppStore((s) => s.openPlayer)
   const closeDetail = useAppStore((s) => s.closeDetail)
+  const setQuery = useAppStore((s) => s.setQuery)
+  const setView = useAppStore((s) => s.setView)
   const [addingHash, setAddingHash] = useState<string | null>(null)
 
   const play = async (option: TorrentOption) => {
@@ -83,7 +85,20 @@ export function TorrentList({
   if (torrents.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-sm text-zinc-400">
-        No torrents found for this selection. Try another episode/season or search Pirate Bay directly.
+        <p>No torrents found for this selection. Try another episode/season or search every site directly.</p>
+        {meta?.title ? (
+          <Button
+            size="sm"
+            className="mt-3 bg-amber-500 font-bold text-black hover:bg-amber-400 min-h-[44px]"
+            onClick={() => {
+              closeDetail()
+              setQuery(meta.title!)
+              setView('search')
+            }}
+          >
+            <Search className="mr-1.5 h-4 w-4" /> Search “{meta.title}” across all torrent sites
+          </Button>
+        ) : null}
       </div>
     )
   }

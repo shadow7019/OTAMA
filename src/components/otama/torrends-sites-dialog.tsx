@@ -5,7 +5,6 @@ import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Globe, Loader2, PlayCircle, Search } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store/app-store'
@@ -150,7 +149,8 @@ export function TorrendsSitesDialog({
             Torrends directory unavailable: {(error as Error).message}
           </p>
         ) : (
-          <ScrollArea className="otama-scroll -mr-2 min-h-0 flex-1 pr-2">
+          /* plain scroll container — avoids Radix ScrollArea's display:table shrink-to-fit sizing */
+          <div className="otama-scroll -mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
             <ul className="space-y-1.5">
               {sites.map((s) => (
                 <li key={s.name}>
@@ -181,7 +181,7 @@ export function TorrendsSitesDialog({
                 </li>
               ))}
             </ul>
-          </ScrollArea>
+          </div>
         )}
 
         <div className="flex items-center justify-between border-t border-white/5 pt-3 text-xs text-zinc-500">

@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Users, ArrowDownToLine, Signal, RefreshCw, ShieldAlert, WifiOff, Loader2 } from 'lucide-react'
+import { X, Users, ArrowDownToLine, Signal, RefreshCw, ShieldAlert, WifiOff, Loader2, Maximize2, Minimize2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -44,6 +44,9 @@ export function PlayerOverlay() {
   const closePlayer = useAppStore((s) => s.closePlayer)
   const { torrents, connected } = useEngineState()
   const videoRef = useRef<HTMLVideoElement>(null)
+  /** Player root — fullscreened as a whole so the top bar + stats bar stay visible. */
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [waiting, setWaiting] = useState(true)
   const [waitingSince, setWaitingSince] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -65,13 +68,61 @@ export function PlayerOverlay() {
   /** Metadata resolved on the engine — only then does <video> get mounted. */
   const ready = !!active?.ready
 
+  /** Fullscreen the player ROOT (top bar + video + stats bar stay), falling
+   *  back to the <video> element itself on iOS Safari where only video may
+   *  go fullscreen. Toggleable from the top-bar button, double-click, or F. */
+  const toggleFullscreen = useCallback(() => {
+    try {
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {})
+        return
+      }
+      const el = rootRef.current
+      if (el?.requestFullscreen) {
+        el.requestFullscreen().catch(() => {
+          const v = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
+          try {
+            v?.webkitEnterFullscreen?.()
+          } catch { /* iOS refusing — nothing else we can do */ }
+        })
+      } else {
+        const v = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
+        try {
+          v?.webkitEnterFullscreen?.()
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closePlayer()
+      if (e.key === 'Escape') {
+        // In fullscreen, Escape is the standard "exit fullscreen" key — let the
+        // browser handle it and KEEP the player open (closing it here used to
+        // kill the whole session when the user only wanted the window back).
+        if (document.fullscreenElement) return
+        closePlayer()
+      }
+      if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) toggleFullscreen()
     }
     if (player) window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [player, closePlayer])
+  }, [player, closePlayer, toggleFullscreen])
+
+  // keep the fullscreen icon in sync when the user exits via Esc / browser UI
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  /** Save progress, leave fullscreen if active, then close. */
+  const closeAndSave = () => {
+    const v = videoRef.current
+    if (v && v.currentTime > 5) void saveHistory(player!, v.currentTime, v.duration)
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    closePlayer()
+  }
 
   // reset per-torrent state
   useEffect(() => {
@@ -296,6 +347,7 @@ export function PlayerOverlay() {
   return (
     <AnimatePresence>
       <motion.div
+        ref={rootRef}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -304,21 +356,17 @@ export function PlayerOverlay() {
         aria-label={`Playing ${player.title}`}
       >
         {/* top bar */}
-        <div className="absolute top-0 inset-x-0 z-10 flex items-center gap-3 bg-gradient-to-b from-black/90 to-transparent p-4">
+        <div className="absolute top-0 inset-x-0 z-10 flex items-center gap-2 sm:gap-3 bg-gradient-to-b from-black/90 to-transparent p-4">
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => {
-              const v = videoRef.current
-              if (v && v.currentTime > 5) void saveHistory(player, v.currentTime, v.duration)
-              closePlayer()
-            }}
+            onClick={closeAndSave}
             className="rounded-full bg-white/10 text-white hover:bg-white/20"
             aria-label="Close player"
           >
             <X className="h-5 w-5" />
           </Button>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-white">{player.title}</p>
             {player.fileName ? <p className="truncate text-xs text-zinc-400">{player.fileName}</p> : null}
           </div>
@@ -327,14 +375,30 @@ export function PlayerOverlay() {
               <ShieldAlert className="h-3 w-3" /> HEVC
             </span>
           ) : null}
-          {player.quality ? <QualityBadge quality={player.quality} className="ml-auto shrink-0" /> : null}
+          {player.quality ? <QualityBadge quality={player.quality} className="shrink-0" /> : null}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleFullscreen}
+            className="rounded-full bg-white/10 text-white hover:bg-white/20 shrink-0"
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            title="Fullscreen (F or double-click the video)"
+          >
+            {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+          </Button>
         </div>
 
         {/* video — mounted only once the engine has resolved the torrent metadata,
             so it can never hit a 404/503 and die with MEDIA_ERR_SRC_NOT_SUPPORTED */}
-        <div className="relative flex-1 flex items-center justify-center min-h-0">
+        <div
+          className="relative flex-1 flex items-center justify-center min-h-0"
+          onDoubleClick={toggleFullscreen}
+        >
           {showDiagnostics ? (
-            <div className="absolute z-20 flex max-h-[85%] w-[min(92%,560px)] flex-col gap-3 overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950/95 p-5 text-zinc-200 shadow-2xl otama-scroll">
+            <div
+              className="absolute inset-0 z-20 m-auto flex max-h-[85%] w-[min(92%,560px)] flex-col gap-3 overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950/95 p-5 text-zinc-200 shadow-2xl otama-scroll"
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
               <div className="flex items-start gap-3">
                 <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
                 <div className="min-w-0">
@@ -424,7 +488,11 @@ export function PlayerOverlay() {
               </Button>
             </div>
           ) : !ready || waiting ? (
-            <div className="absolute z-10 flex flex-col items-center gap-3 text-zinc-300">
+            /* pointer-events-none is CRITICAL: this overlay used to swallow
+               every click while buffering — the video's native play &
+               fullscreen buttons underneath were unreachable ("can't make
+               the video full screen"). Now all clicks pass through. */
+            <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 pb-20 text-zinc-300">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
               <p className="text-sm" aria-live="polite">{stageLabel}</p>
               {ready && active ? (

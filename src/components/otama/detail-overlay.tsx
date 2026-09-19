@@ -1,17 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Star, Clock, Heart, CalendarDays } from 'lucide-react'
+import { X, Star, Clock, Heart, CalendarDays, Play, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 import { Poster } from '@/components/otama/media-card'
 import { TorrentList } from '@/components/otama/torrent-list'
+import { playableFirst, streamTorrentOption, isHevcName } from '@/lib/engine'
 import type { MetaItem, MovieDetail, SeriesDetail, TorrentOption } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
 
@@ -98,8 +98,13 @@ export function DetailOverlay() {
             >
               <X className="h-5 w-5" />
             </Button>
-            <ScrollArea className="h-full">
-              <div className="otama-scroll">
+            {/* Plain overflow-y-auto — Radix ScrollArea sizes its content wrapper
+                with display:table (shrink-to-fit), so one long `truncate` torrent
+                name forced the WHOLE sheet ~1036px wide and pushed the header
+                Play/heart + per-torrent Play buttons off-screen ("in some movies
+                we cannot see play button"). A block scroll container lets
+                truncate/min-w-0 do their job. */}
+            <div className="otama-scroll h-full overflow-y-auto">
                 {detail.directTorrents ? (
                   <AnimeDirectDetail detail={detail} />
                 ) : detail.kind === 'movie' && detail.imdbId ? (
@@ -115,8 +120,7 @@ export function DetailOverlay() {
                     <NoImdbFallback detail={detail} />
                   )
                 )}
-              </div>
-            </ScrollArea>
+            </div>
           </motion.div>
         </motion.div>
       )}
@@ -155,6 +159,14 @@ function MovieDetailBody({
         loading={isLoading}
         favorite={fav.fav}
         onToggleFavorite={fav.toggle}
+        action={
+          isLoading ? null : (
+            <PlayBestTorrentButton
+              torrents={data?.torrents || []}
+              meta={{ poster: meta?.poster || fallback.poster, refId: imdbId, kind: 'movie', title: meta?.title || fallback.title }}
+            />
+          )
+        }
       />
       <div className="space-y-3 p-5 md:p-8">
         <h3 className="text-base font-bold flex items-center gap-2">
@@ -171,6 +183,83 @@ function MovieDetailBody({
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Prominent header Play button — streams the best torrent for this movie
+ * (browser-friendly container/codec first, then most seeded) in one click.
+ * Previously the ONLY play affordances were the small per-torrent buttons
+ * below the fold, and movies whose providers returned nothing had no play
+ * button at all.
+ */
+function PlayBestTorrentButton({
+  torrents,
+  meta,
+}: {
+  torrents: TorrentOption[]
+  meta: { poster?: string; refId: string; kind: string; title: string }
+}) {
+  const openPlayer = useAppStore((s) => s.openPlayer)
+  const closeDetail = useAppStore((s) => s.closeDetail)
+  const [busy, setBusy] = useState(false)
+
+  const best = useMemo(() => {
+    const ranked = playableFirst(torrents.filter((t) => t.source))
+    return ranked.find((t) => !isHevcName(t.title) && t.codec !== 'hevc') || ranked[0] || null
+  }, [torrents])
+
+  if (torrents.length === 0) {
+    return (
+      <Button variant="secondary" size="sm" disabled className="min-h-[36px] text-xs" title="No streamable torrent was found for this title">
+        <Play className="h-3.5 w-3.5" /> No streams
+      </Button>
+    )
+  }
+
+  const play = async () => {
+    if (!best || busy) return
+    setBusy(true)
+    const startedAt = Date.now()
+    const ticker = setInterval(() => {
+      toast.loading(`Connecting to swarm… ${Math.round((Date.now() - startedAt) / 1000)}s — rare releases can take a minute`, { id: 'play-best' })
+    }, 5000)
+    try {
+      toast.loading('Connecting to swarm…', { id: 'play-best' })
+      const { torrent, file } = await streamTorrentOption(best, { poster: meta.poster, refId: meta.refId, kind: meta.kind })
+      toast.success('Streaming started', { id: 'play-best' })
+      closeDetail()
+      openPlayer({
+        infoHash: torrent.infoHash,
+        fileIndex: file.index,
+        title: meta.title,
+        poster: meta.poster || null,
+        refId: meta.refId,
+        kind: meta.kind,
+        quality: best.quality,
+        fileName: file.name,
+        alternatives: playableFirst(torrents.filter((t) => t.source && t.hash !== best.hash)).slice(0, 10),
+      })
+    } catch (err) {
+      toast.error((err as Error).message || 'Failed to start torrent', { id: 'play-best' })
+    } finally {
+      clearInterval(ticker)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Button
+      size="sm"
+      onClick={() => void play()}
+      disabled={busy}
+      className="bg-amber-500 text-black hover:bg-amber-400 font-bold min-h-[36px]"
+      aria-label={`Play ${meta.title} — best torrent`}
+      title={`Streams: ${best?.title ?? ''}`}
+    >
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-black" />}
+      <span className="ml-1">Play</span>
+    </Button>
   )
 }
 
@@ -399,11 +488,14 @@ function DetailHeader({
   loading,
   favorite,
   onToggleFavorite,
+  action,
 }: {
   item: Partial<MetaItem> & { title: string }
   loading?: boolean
   favorite: boolean
   onToggleFavorite: () => void
+  /** Extra header action (e.g. the prominent Play button) — rendered before the favorite heart. */
+  action?: ReactNode
 }) {
   return (
     <div className="relative">
@@ -452,15 +544,18 @@ function DetailHeader({
             </>
           )}
         </div>
-        <Button
-          variant={favorite ? 'default' : 'secondary'}
-          size="icon"
-          onClick={onToggleFavorite}
-          className={`shrink-0 ${favorite ? 'bg-amber-500 text-black hover:bg-amber-400' : ''}`}
-          aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
-        >
-          <Heart className={`h-4 w-4 ${favorite ? 'fill-black' : ''}`} />
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {action}
+          <Button
+            variant={favorite ? 'default' : 'secondary'}
+            size="icon"
+            onClick={onToggleFavorite}
+            className={favorite ? 'bg-amber-500 text-black hover:bg-amber-400' : ''}
+            aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
+          >
+            <Heart className={`h-4 w-4 ${favorite ? 'fill-black' : ''}`} />
+          </Button>
+        </div>
       </div>
       {item.summary ? (
         <div className="px-5 md:px-8 pb-2">

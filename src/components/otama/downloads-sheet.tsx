@@ -12,7 +12,6 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Poster } from '@/components/otama/media-card'
 import { useEngineState } from '@/hooks/use-engine-state'
 import { destroyTorrent, bestVideoFile, engineList, fmtSpeed, fmtEta, fmtBytes, streamUrl, guessPlayableExt } from '@/lib/engine'
@@ -85,7 +84,8 @@ export function DownloadsSheet() {
           </SheetTitle>
           <SheetDescription>Active torrents on this device. Files are stored temporarily.</SheetDescription>
         </SheetHeader>
-        <ScrollArea className="flex-1 px-5 pb-5">
+        {/* plain scroll container — Radix ScrollArea's display:table content wrapper lets long truncate names stretch the sheet horizontally */}
+        <div className="otama-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-5">
           {torrents.length === 0 ? (
             <div className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-zinc-400">
               No active torrents. Start something from Movies, TV or Pirate Bay!
@@ -142,7 +142,7 @@ export function DownloadsSheet() {
               ))}
             </ul>
           )}
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   )
