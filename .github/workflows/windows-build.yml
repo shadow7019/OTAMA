@@ -39,6 +39,23 @@ jobs:
         working-directory: desktop
         run: node scripts/prepare-engine.mjs
 
+      - name: Write TMDB credentials for the bundled renderer
+        working-directory: desktop
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TMDB_ACCESS_TOKEN: ${{ secrets.TMDB_ACCESS_TOKEN }}
+        shell: pwsh
+        run: |
+          $lines = @()
+          if ($env:TMDB_API_KEY) { $lines += "TMDB_API_KEY=$($env:TMDB_API_KEY)" }
+          if ($env:TMDB_ACCESS_TOKEN) { $lines += "TMDB_ACCESS_TOKEN=$($env:TMDB_ACCESS_TOKEN)" }
+          if ($lines.Count -gt 0) {
+            $lines -join "`n" | Set-Content -Path ../.env -Encoding utf8
+            Write-Host "wrote ../.env with $($lines.Count) TMDB line(s)"
+          } else {
+            Write-Host "No TMDB secrets configured — packaging without TMDB credentials (TMDB features will degrade)"
+          }
+
       - name: Build web UI into standalone renderer
         working-directory: desktop
         env:

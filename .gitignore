@@ -23,3 +23,6 @@ db/*.db-journal
 # misc
 .DS_Store
 *.pem
+
+# desktop packaging build output (OTAMA_PACK_BUILD)
+.next-pack/

@@ -526,3 +526,28 @@ Work Log:
 
 Stage Summary:
 - Anime is now first-class: every searched anime gets a series card with ALL seasons (latest season opens by default), per-episode torrents merge Torrentio with Nyaa absolute-episode fansub queries, and metadata-less anime titles self-resolve to full series. Home is a fully auto-updating dashboard (TMDB now_playing/airing_today/upcoming/trending + live Nyaa and Pirate Bay feeds) — new episodes, seasons and movies appear without any curation. Every streaming-link list is grouped and filterable by resolution (4K/1440p/1080p/720p/SD/Other) with playable-first ordering preserved inside each bucket.
+
+---
+Task ID: 24
+Agent: main (orchestrator)
+Task: Rebuild the Windows .exe so it carries Tasks 16-23 (TMDB, engine fixes, Pirate Bay, anime seasons/auto-update/quality chips) — and make local Windows cross-builds actually work from this Linux sandbox
+
+Work Log:
+- Context: the packaged .exe predated Tasks 16-23; GitHub Actions CI exists but the repo has no remote, so no .exe had ever been produced for the user. Decision: cross-build Windows targets locally (electron-builder on Linux), keep CI as the repeatable path.
+- PRISMA CROSS-PLATFORM: prisma/schema.prisma generator now sets binaryTargets = ["native","windows"]; prisma generate downloads query_engine-windows.dll.node alongside the Linux engine. next.config.ts adds outputFileTracingIncludes { "/**": ["./node_modules/.prisma/client/**"] } so BOTH engines land inside the standalone renderer (verified in the packaged tree).
+- ISOLATED PACK BUILD: next.config.ts honors OTAMA_PACK_BUILD=1 → distDir ".next-pack", so production builds never clobber the live dev server's .next. prepare-renderer.mjs builds with that flag, copies .next-pack/standalone + .next-pack/static (static must sit INSIDE .next-pack — the server reads distDir-relative paths) + public.
+- TMDB CREDENTIALS IN THE EXE (previously missing entirely): prepare-renderer.mjs writes renderer/.env containing ONLY the TMDB_* lines of the project .env (DATABASE_URL never leaks there); desktop main.mjs loadRendererTmdbEnv() additionally parses that file and forwards TMDB_* to the spawned standalone server (belt-and-braces, user-overridable). CI workflow gained a step writing ../.env from TMDB_API_KEY/TMDB_ACCESS_TOKEN secrets.
+- FIRST-RUN DATABASE: a fresh install used to 500 on favorites/history (P2021, tables missing). prepare-renderer.mjs now runs `prisma db push` to create resources/otama-template.db; main.mjs ensureDatabaseFile() copies it to <userData>/otama.db on first launch only (upgrades keep user data); packaged via its own extraResources entry. Verified: fresh DB → POST/GET favorites + POST history all 200.
+- WINE-FREE CROSS-BUILD (electron-builder 26.15.3, was 25):
+  1. Patch 1 (NsisTarget.js): Linux now uses the pure-JS UninstallerReader.exec() uninstaller extraction instead of executing the installer under wine (macOS Catalina branch widened; idempotent, CI on Windows unaffected).
+  2. Patch 2 (util/filter.js): dropped the hard "relative === node_modules → false" root rejection in createFilter so extraResources can bundle node_modules — REQUIRED because the Next standalone renderer and the torrent engine are self-contained and need their node_modules at runtime (electron-builder silently stripped them before; first build shipped a dead 94MB app).
+  3. "signExecutable": false skips Authenticode steps that need wine; resedit (JS) still embeds icon + version info. Artifacts are unsigned (SmartScreen warning on first run is expected).
+  - Both patches live in desktop/scripts/patch-builder.mjs (idempotent, wired as predist:dir/predist:win/predist:win:portable) — future local builds just run `npm run dist:win`.
+- VERSION BUMP: desktop 1.0.0 → 1.1.0.
+- ARTIFACTS (desktop/dist): OTAMA-Setup-1.1.0.exe (NSIS installer, 139MB) + OTAMA-1.1.0-portable.exe (139MB). win-unpacked verified: app.asar has src/main.mjs + src/preload.cjs; resources/renderer has server.js, .next-pack/static, .env (2 TMDB lines), otama-build-info.json, node_modules (next, @prisma/client, BOTH query engines); resources/engine has engine.mjs + 109 packages (torrent-stream, socket.io); resources/otama-template.db present.
+- PACKAGED RENDERER SMOKE TEST (ran the exact bundle via `node server.js`): / → 200; /api/catalog TMDB → live data (credentials work); fresh-template DB → favorites/history 200.
+- WEB APP REGRESSION: dev.log error-free; bun run lint clean after adding .next-pack/** to eslint ignores; gateway 200. agent-browser E2E: home renders (hero carousel, all nav incl. Pirate Bay, continue-watching rows); detail overlay (Batman: Knightfall) shows header Play + 22 play buttons + quality chips All(40)/4K(5)/1080p(24)/720p(7)/Other(4); clicking the 1080p chip filters the list; auto-updating anime fresh row renders live Nyaa entries. Test torrents wiped from engine (0 remaining).
+- OPS FINDING: background processes spawned with plain nohup/setsid die when a tool-call shell exits in this sandbox; a python double-fork daemon (fork → setsid → fork → exec) survives across calls. Dev server + engine relaunched that way and verified stable.
+
+Stage Summary:
+- OTAMA-Setup-1.1.0.exe and OTAMA-1.1.0-portable.exe now ship the FULL feature set: TMDB integration, all torrent sites incl. Pirate Bay, anime series with every season + per-episode Nyaa/Torrentio merging, auto-updating home dashboard, quality-grouped torrent lists, and all Task 21/22 streaming + player fixes. Packaging is reproducible locally from Linux (npm run dist:win, wine-free) and via GitHub Actions; TMDB creds and the schema-initialized first-run DB are handled inside the bundle. Web app regression-tested and browser-verified end-to-end.

@@ -198,6 +198,57 @@ function rendererDir() {
   return app.isPackaged ? path.join(process.resourcesPath, 'renderer') : path.join(DESKTOP_ROOT, 'resources', 'renderer')
 }
 
+/**
+ * TMDB credentials for the embedded renderer.
+ *
+ * prepare-renderer.mjs writes a renderer/.env containing the TMDB_* lines of
+ * the project .env. The standalone Next server usually picks that up itself;
+ * this explicit forward makes the credentials work even if @next/env's file
+ * loading changes, and lets users override by dropping their own renderer/.env
+ * (or setting TMDB_* in the environment they launch OTAMA from).
+ */
+function loadRendererTmdbEnv(dir) {
+  const envPath = path.join(dir, '.env')
+  const out = {}
+  try {
+    for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+      const m = /^\s*(TMDB_[A-Z_]+)\s*=\s*(.*)\s*$/.exec(line)
+      if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, '')
+    }
+  } catch {
+    /* no .env — TMDB features degrade gracefully */
+  }
+  for (const key of Object.keys(out)) {
+    if (!process.env[key]) process.env[key] = out[key]
+  }
+  return Object.keys(out)
+}
+
+/**
+ * First-run database bootstrap.
+ *
+ * Prisma does NOT create tables in an empty SQLite file, so packaging ships a
+ * schema-initialized template (prepare-renderer.mjs runs `prisma db push`)
+ * and we copy it into the user profile on first launch. Preserves a user's
+ * favorites/history across upgrades — only copied when the file is absent.
+ */
+function ensureDatabaseFile(dbPath) {
+  if (fs.existsSync(dbPath)) return
+  const template = app.isPackaged
+    ? path.join(process.resourcesPath, 'otama-template.db')
+    : path.join(DESKTOP_ROOT, 'resources', 'otama-template.db')
+  try {
+    if (fs.existsSync(template)) {
+      fs.copyFileSync(template, dbPath)
+      log(`database initialized from template → ${dbPath}`)
+      return
+    }
+  } catch (err) {
+    log('template database copy failed:', err)
+  }
+  log(`no template database — Prisma will create an empty file at ${dbPath}`)
+}
+
 async function startRendererServer() {
   const dir = rendererDir()
   const serverJs = path.join(dir, 'server.js')
@@ -208,6 +259,9 @@ async function startRendererServer() {
   const port = await findFreePort()
   // Writable SQLite database inside the user profile (Prisma DATABASE_URL).
   const dbPath = path.join(app.getPath('userData'), 'otama.db').replace(/\\/g, '/')
+  ensureDatabaseFile(dbPath)
+  const tmdbKeys = loadRendererTmdbEnv(dir)
+  if (tmdbKeys.length) log(`renderer TMDB credentials loaded: ${tmdbKeys.join(', ')}`)
 
   rendererChild = spawnAsNode(serverJs, {
     cwd: dir,

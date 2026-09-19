@@ -1,7 +1,7 @@
 {
   "name": "otama-desktop",
   "productName": "OTAMA",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "OTAMA — torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
   "main": "src/main.mjs",
   "author": "OTAMA Project",
@@ -12,15 +12,19 @@
     "prepare:renderer": "node scripts/prepare-renderer.mjs",
     "prepare:all": "npm run prepare:engine && npm run prepare:renderer",
     "make:icon": "node scripts/make-ico.mjs",
+    "patch:builder": "node scripts/patch-builder.mjs",
     "dev": "electron .",
     "start": "electron .",
+    "predist:dir": "node scripts/patch-builder.mjs",
     "dist:dir": "electron-builder --win --dir",
+    "predist:win": "node scripts/patch-builder.mjs",
     "dist:win": "npm run prepare:all && electron-builder --win",
+    "predist:win:portable": "node scripts/patch-builder.mjs",
     "dist:win:portable": "npm run prepare:all && electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "png-to-ico": "^3.0.2"
   },
   "build": {
@@ -36,6 +40,10 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "resources/otama-template.db",
+        "to": "otama-template.db"
+      },
       {
         "from": "resources/renderer",
         "to": "renderer",
@@ -59,6 +67,7 @@
     "win": {
       "icon": "build/icon.ico",
       "artifactName": "OTAMA-${version}-${arch}.${ext}",
+      "signExecutable": false,
       "target": [
         {
           "target": "nsis",
