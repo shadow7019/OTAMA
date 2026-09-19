@@ -642,3 +642,22 @@ Stage Summary:
 - User-side instant fix: xattr -cr /Applications/OTAMA.app (works for the v1.1.0 DMG already downloaded)
 - v1.1.1 DMG will be ad-hoc signed → Gatekeeper shows bypassable "cannot verify" dialog (right-click → Open) instead of "damaged"
 - Release: https://github.com/shadow7019/OTAMA/releases/tag/v1.1.1
+
+---
+Task ID: 28
+Agent: Z.ai Code (main)
+Task: Android APK "asking for localhost" — phone-to-desktop LAN streaming
+
+Work Log:
+- Root cause: Android app is a remote client (Node engine cannot run on Android); it asks for the OTAMA server address. Additionally, the web UI's engine transport ONLY had the Caddy-gateway path (?XTransformPort) — phones loading the desktop's LAN server could not reach the engine at all; desktop LAN mode used a random renderer port and never displayed the phone URL
+- engine.ts: added ensureEngineTransport() — probes gateway /health?XTransformPort=3003 vs direct http://<host>:3003/health once per load; engineUrl/engineSocketTarget honor the result (desktop→direct, phone-on-LAN→direct, sandbox preview→gateway)
+- use-engine-state.ts connects socket.io after detection; new <EngineTransportInit> mounts in root layout
+- main.mjs: LAN mode renderer prefers STABLE port 3000; lanAddress() via os.networkInterfaces; startup dialog + menu item show the exact phone URL
+- MainActivity: numbered setup steps; main-frame load error → native overlay (Try again / Edit server address) so a stale address can't brick the app; UA 1.1.2
+- Versions: desktop 1.1.2, android versionCode 3 / versionName 1.1.2
+- Verified: lint clean, node --check, agent-browser E2E (home render, detail play options, zero console errors)
+- Pushed main 3626ccd + tag v1.1.2 → CI rebuilds all 3 packages
+
+Stage Summary:
+- Phone flow: OTAMA on PC → Alt → "LAN access: ON" → dialog shows http://<pc-ip>:3000 → type into Android app → full streaming via engine's 206 range responses
+- Release: https://github.com/shadow7019/OTAMA/releases/tag/v1.1.2
