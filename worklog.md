@@ -197,3 +197,34 @@ Stage Summary:
 - TMDB fully integrated behind a bring-your-own-key design with graceful keyless fallback.
 - PENDING: real API key from the user -> then verify trending/popular/top-rated/genre catalogs,
   merged search and enhanced detail art live, and (optionally) bake it into .env / desktop build.
+
+---
+Task ID: 14
+Agent: main (orchestrator)
+Task: Bake user TMDB key in permanently (zero-config TMDB)
+
+Work Log:
+- User provided v3 key b3e1f1…c32 and asked for permanent integration, no external setup.
+- tmdb.ts: added BUILTIN_TMDB_API_KEY as final fallback in key resolution
+  (DB setting -> env TMDB_API_KEY/ACCESS_TOKEN -> builtin). KeyInfo.source + tmdbStatus
+  now report 'builtin'; Settings dialog badge shows "from built-in key".
+- BUG FIXED during verification: /api/catalog TMDB branch checked type==='series' but the UI
+  sends type='tv' -> TV catalogs silently used Cinemeta fallback. Condition now type!=='anime'
+  with 'tv'->'series' mapping. TV genre/sort via TMDB verified after fix.
+- LIVE verification (sandbox, key active):
+  * /api/tmdb -> {configured:true, mode:'v3', source:'builtin', valid:true}
+  * /api/catalog movie sort=trending source=tmdb -> TMDB posters/backdrops + imdb ids
+  * /api/catalog tv genre=Comedy sort=top source=tmdb -> TMDB results (post-fix)
+  * /api/search q=inception -> TMDB results merged first (provider:'tmdb', imdbId set)
+  * /api/meta/movie/tt1375666 -> TMDB backdrop upgrade + 24 torrents; tt35538033 (Resident
+    Evil 2026, no TPB releases yet) -> correct empty torrent list with full TMDB metadata
+  * Browser E2E: Movies view AUTO-selects TMDB/Trending (20/20 posters from image.tmdb.org),
+    clicked 'The Odyssey' -> detail overlay with TMDB art + 4 Play buttons (imdb enrichment ->
+    TPB pipeline works end to end); screenshot saved .cache/tmdb-e2e.png; 0 page errors
+  * lint 0 errors
+- Desktop impact: none needed — the key is compiled into the standalone server bundle, so the
+  packaged Windows .exe has TMDB out of the box; dialog/env remain as optional overrides.
+
+Stage Summary:
+- TMDB is now permanently active by default across web + desktop with zero configuration.
+- Catalogs (trending/popular/top/newest, genres), merged search and detail art all live-verified.

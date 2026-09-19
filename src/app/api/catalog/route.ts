@@ -28,10 +28,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items })
     }
 
-    if (source === 'tmdb' && (type === 'movie' || type === 'series')) {
+    if (source === 'tmdb' && type !== 'anime') {
+      // UI passes 'tv'; cinemeta/TMDB call it 'series'
+      const tmdbType = type === 'movie' ? 'movie' : 'series'
       const status = await tmdbStatus()
       if (status.configured && status.valid) {
-        const items = await tmdbCatalog(type, { sort, genre, page: page + 1 })
+        const items = await tmdbCatalog(tmdbType, { sort, genre, page: page + 1 })
         if (type === 'anime') items.forEach((i) => (i.kind = 'anime'))
         return NextResponse.json({ items, provider: 'tmdb' })
       }

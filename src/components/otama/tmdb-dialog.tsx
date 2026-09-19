@@ -81,10 +81,11 @@ export function TmdbDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const statusBadge = () => {
     if (busy === 'load' || !status) return <CircleDashed className="h-4 w-4 animate-spin text-zinc-500" />
     if (status.configured && status.valid) {
+      const srcLabel = status.source === 'db' ? 'app settings' : status.source === 'env' ? 'environment' : 'built-in key'
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300">
           <ShieldCheck className="h-3.5 w-3.5" />
-          Connected ({status.mode === 'v4' ? 'v4 token' : 'v3 key'}, from {status.source === 'db' ? 'app settings' : 'environment'})
+          Connected ({status.mode === 'v4' ? 'v4 token' : 'v3 key'}, from {srcLabel})
         </span>
       )
     }

@@ -1,12 +1,13 @@
 /**
- * TMDB (The Movie Database) provider — optional premium metadata layer.
+ * TMDB (The Movie Database) provider — richer metadata layer.
  *
- * TMDB needs an API key. Resolution order (first match wins):
+ * Key resolution order (first match wins):
  *   1. Database Setting `tmdb_api_key`  (set via the in-app Settings dialog)
  *   2. Environment `TMDB_API_KEY`       (v3 api key, 32 hex chars)
  *   3. Environment `TMDB_ACCESS_TOKEN`  (v4 read access token, "eyJ…")
+ *   4. Built-in default key below (ships with the app — web AND desktop)
  *
- * Without a key every tmdb* function throws TmdbDisabledError and callers
+ * If every step fails, tmdb* functions throw TmdbDisabledError and callers
  * fall back to the keyless providers (Cinemeta/TVMaze) — the app keeps working.
  *
  * Uses only official endpoints: /trending, /movie, /tv, /discover, /search/multi,
@@ -17,13 +18,16 @@ import { db } from '@/lib/db'
 import { cached } from '@/lib/server/providers'
 import type { MetaItem, MetaKind } from '@/lib/types'
 
+/** Built-in TMDB v3 key — bundled permanently so TMDB works out of the box. */
+const BUILTIN_TMDB_API_KEY = 'b3e1f1893c570b5d072bbb18e4c27c32'
+
 const TMDB = 'https://api.themoviedb.org/3'
 const IMG = 'https://image.tmdb.org/t/p'
 
 export class TmdbDisabledError extends Error {}
 export class TmdbError extends Error {}
 
-type KeyInfo = { key: string; mode: 'v3' | 'v4'; source: 'db' | 'env' }
+type KeyInfo = { key: string; mode: 'v3' | 'v4'; source: 'db' | 'env' | 'builtin' }
 
 /* ------------------------------ key resolution ------------------------------ */
 
@@ -46,6 +50,7 @@ async function resolveKey(): Promise<KeyInfo | null> {
     if (v4) info = { key: v4, mode: 'v4', source: 'env' }
     else if (v3) info = { key: v3, mode: 'v3', source: 'env' }
   }
+  if (!info) info = { key: BUILTIN_TMDB_API_KEY, mode: 'v3', source: 'builtin' }
   keyState.__otamaTmdbKey = { value: info, ts: Date.now() }
   return info
 }
@@ -55,7 +60,7 @@ export function invalidateTmdbKey() {
   keyState.__otamaTmdbKey = undefined
 }
 
-export async function tmdbStatus(): Promise<{ configured: boolean; mode?: 'v3' | 'v4'; source?: 'db' | 'env'; valid?: boolean }> {
+export async function tmdbStatus(): Promise<{ configured: boolean; mode?: 'v3' | 'v4'; source?: 'db' | 'env' | 'builtin'; valid?: boolean }> {
   const info = await resolveKey()
   if (!info) return { configured: false }
   let valid = false
