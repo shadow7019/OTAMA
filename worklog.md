@@ -434,3 +434,31 @@ Work Log:
 
 Stage Summary:
 - Pirate Bay is now impossible to miss: a "Pirate Bay" nav item, a "Fresh from Pirate Bay" playable row on the home screen, a zero-query browse mode (latest movies/HD/TV/3D chips) in the hub, and the existing search/detail/aggregate integration — while every other source (1337x, Solid, Torrentio, RARBG, LimeTorrents, TorrentDownloads, TorrentGalaxy, EZTV, Nyaa, YTS) remains untouched. Along the way two real placeholder-class bugs died: the apibay synthetic "No results returned" row is filtered server-side for all consumers, and apibay HTML-entity titles render human-readable. Fresh-torrent playback verified end-to-end on a 1-peer swarm.
+
+---
+Task ID: 21
+Agent: main (orchestrator)
+Task: "why is swarm player is dead while I am playing anything" — diagnose & fix the dead-looking player (cold resume / deep-seek stall)
+
+Work Log:
+- DIAGNOSIS (reproduced live): engine was HEALTHY and downloading (1.2 MB/s) while the player sat at readyState=0 / paused — "dead player". Root causes, in order of impact:
+  1. CUES CHICKEN-AND-EGG: MKV Cues (seek index) live at the END of multi-GB files; Chromium keeps readyState=0 until it parses them. The engine prioritised only the HEAD (first 8 MB) — the tail was fetched only when Chromium asked, then waited in the linear piece queue.
+  2. RANGE REQUESTS ONLY "CRITICAL": markRangeCritical() called critical() (hotswap permission) but NOT select(priority) — a deep seek into an un-downloaded region did NOT jump the download queue.
+  3. RESUME SEEK DETOUR: on resume the player mounted the video at offset 0, then seeked via loadedmetadata — an extra metadata round-trip before the correct range was even requested.
+  4. DEAD-LOOKING FEEDBACK: the waiting overlay showed a static "Buffering — streaming from the swarm…" with no progress, no downloaded MB, no speed in the label — a normal slow start LOOKED dead.
+  5. FAILOVER BLIND SPOT: auto-switch was suppressed whenever the swarm "looked alive" (peers+speed) — but alive swarm ≠ the needed pieces arriving (readyState can stay 0 for minutes).
+- ENGINE FIXES (mini-services/otama-engine/src/index.ts AND desktop/engine/engine.mjs, v1.2.0 → 1.3.0, both copies kept in sync):
+  * NEW prioritiseFileTail(): last 1.5 MB of every video file >50 MB gets priority select + critical (MKV Cues / tail-mounted MP4 moov). Called on metadata-ready pre-select, on file switch in streamFile, and re-ensured on every stream request.
+  * markRangeCritical() now ALSO eng.select(first, last, true) — range heads jump the download queue, seeks into fresh regions land in seconds.
+  * ActiveTorrent gains tailPriorityDone (one-shot per file, reset on file switch).
+- PLAYER FIXES (player-overlay.tsx):
+  * Resume via `#t=<seconds>` media fragment: history lookup now sets resumeAt state; the <video> src mounts with the fragment so the browser's FIRST range request lands at the resume offset (old loadedmetadata seek listener removed; toast kept).
+  * Live staged feedback (aria-live=polite): metadata stage shows peer count; buffering stage shows moving numbers — "Buffering — 6.6 MB / 2.4 GB (0%) at 934 KB/s"; no-peer variants announce trackers/DHT; added a thin overall-progress bar in the waiting overlay.
+  * NEW hard-stall failover: stuckAtZero tracked each second (readyState===0 && currentTime===0); after 45s the auto-switch fires EVEN when the swarm looks alive ("Still no picture after 45s — switching to a healthier torrent…", 2 attempts, H.264-only candidates as before).
+- VERIFICATION (agent-browser via gateway :81, ALL COLD — torrents wiped first):
+  * Cold resume (wipe → Continue Watching): first frame in ~15-20s end-to-end (was 60-90s+ dead): "Adding torrent…" → live buffering numbers → fragment seek to resume position → rs=4 playing. Avengers: Infinity War screenshot shows real frames + "Streaming · 11 peers · 746 KB/s · 61.3 MB / 2.4 GB · ETA 54m".
+  * Deep seek to 2400s (un-downloaded region of a 26.8%-downloaded torrent): readyState 1 at the target within one sample, playing (rs=4) within ~4-8s — was the multi-minute stall.
+  * Spider-Man cold resume identical. History positions restored to the user's real values afterwards (Spider-Man 1672s, Avengers 131.4s — a truncated-hash mishap during the restore was caught and fixed). Test torrents wiped; lint clean; dev.log clean; desktop engine.mjs node --check OK.
+
+Stage Summary:
+- "Swarm player is dead" was the demuxer waiting for the MKV seek index while the engine only prioritised the file head, compounded by a resume-seek detour, no-priority range fetches, and static feedback. The engine now prefetches head AND tail with priority, range requests jump the download queue, the player resumes via media fragment (first request = right offset), the waiting overlay streams live numbers, and a 45s readyState=0 watchdog triggers failover even on "alive" swarms. Cold resume to first frame: ~60-90s+ (or never) → ~15-20s; deep seeks: multi-minute → seconds.

@@ -13,6 +13,10 @@ import { useAppStore } from '@/store/app-store'
 import type { PlayerPayload, TorrentOption } from '@/lib/types'
 
 const STALL_HINT_AFTER_MS = 12_000
+/** readyState stuck at 0 (not even metadata) for this long = the demuxer is
+ *  waiting for a piece the swarm is slow to give (deep seek / index) — offer
+ *  the failover even when the swarm "looks alive" (data flows, wrong bytes). */
+const STALL_HARD_AFTER_MS = 45_000
 
 async function saveHistory(p: PlayerPayload, position: number, duration?: number) {
   if (!p.refId || position < 5) return
@@ -45,6 +49,12 @@ export function PlayerOverlay() {
   const [error, setError] = useState<string | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
   const [fetchedAlts, setFetchedAlts] = useState<TorrentOption[] | null>(null)
+  /** resume position (seconds) from watch history — applied as a `#t=` media
+   *  fragment so the browser's FIRST range request lands at the resume offset
+   *  instead of discovering it after a metadata round-trip. */
+  const [resumeAt, setResumeAt] = useState<number | null>(null)
+  /** true while the video element has metadata but readyState stays 0 */
+  const [stuckAtZero, setStuckAtZero] = useState(false)
   const lastSave = useRef(0)
   const retryCount = useRef(0)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -69,6 +79,8 @@ export function PlayerOverlay() {
     setWaitingSince(Date.now())
     setError(null)
     setFetchedAlts(null)
+    setResumeAt(null)
+    setStuckAtZero(false)
     retryCount.current = 0
     autoTried.current = 0
     autoInProgress.current = false
@@ -102,7 +114,7 @@ export function PlayerOverlay() {
     }
   }, [player, active])
 
-  // resume position lookup
+  // resume position lookup — feeds the `#t=` media fragment on the video src
   useEffect(() => {
     if (!player?.refId) return
     let cancelled = false
@@ -111,13 +123,8 @@ export function PlayerOverlay() {
       .then((d: { history: { refId: string; position: number; infoHash: string }[] }) => {
         if (cancelled) return
         const entry = d.history?.find((h) => h.refId === player.refId && h.infoHash === player.infoHash)
-        const v = videoRef.current
-        if (entry && entry.position > 30 && v) {
-          const seek = () => {
-            v.currentTime = Math.min(entry.position, (v.duration || Infinity) - 5)
-            v.removeEventListener('loadedmetadata', seek)
-          }
-          v.addEventListener('loadedmetadata', seek)
+        if (entry && entry.position > 30) {
+          setResumeAt(entry.position)
           toast.info(`Resuming from ${Math.floor(entry.position / 60)}m — press Escape to exit`)
         }
       })
@@ -150,6 +157,7 @@ export function PlayerOverlay() {
   useEffect(() => {
     if (!waiting) {
       setWaitingSince(null)
+      setStuckAtZero(false)
       return
     }
     if (waitingSince === null) setWaitingSince(Date.now())
@@ -157,6 +165,8 @@ export function PlayerOverlay() {
       if (!videoRef.current) return
       // if bytes are flowing but frames aren't decoding, that's a codec issue
       if (videoRef.current.readyState >= 3) setWaiting(false)
+      // stuck before metadata (index/seek region still downloading)?
+      setStuckAtZero(videoRef.current.readyState === 0 && videoRef.current.currentTime === 0)
     }, 1000)
     return () => clearInterval(iv)
   }, [waiting, waitingSince])
@@ -236,11 +246,16 @@ export function PlayerOverlay() {
   // AUTO-FAILOVER: when buffering never starts AND the swarm shows no real
   // data (dead torrent with a stale seed count — the classic "stuck on
   // buffering" case), automatically switch to the next best alternative.
-  // Max two attempts, H.264-only candidates, never while data is flowing.
+  // Also fires when readyState stays 0 for a long time EVEN with data flowing
+  // — the needed piece (deep seek / demuxer index) is not arriving. Max two
+  // attempts, H.264-only candidates, never while frames are decoding.
   const stalledLong = ready && waiting && waitingSince !== null && Date.now() - waitingSince > STALL_HINT_AFTER_MS
+  const stalledHard = ready && waiting && stuckAtZero && waitingSince !== null && Date.now() - waitingSince > STALL_HARD_AFTER_MS
   const swarmAlive = (active?.numPeers || 0) > 0 && (active?.downloadSpeed || 0) > 1024
   useEffect(() => {
-    if (!stalledLong || swarmAlive || switching || autoInProgress.current) return
+    if (!stalledLong && !stalledHard) return
+    if (swarmAlive && !stalledHard) return
+    if (switching || autoInProgress.current) return
     if (autoTried.current >= 2) return
     const candidates = playableFirst(
       allAlternatives.filter(
@@ -251,14 +266,16 @@ export function PlayerOverlay() {
     if (!next) return
     autoInProgress.current = true
     autoTried.current += 1
-    toast.info(`Swarm looks dead — switching to a healthier torrent (attempt ${autoTried.current}/2)…`, {
-      id: 'auto-switch',
-      duration: 8000,
-    })
+    toast.info(
+      stalledHard
+        ? `Still no picture after ${(STALL_HARD_AFTER_MS / 1000) | 0}s — switching to a healthier torrent (attempt ${autoTried.current}/2)…`
+        : `Swarm looks dead — switching to a healthier torrent (attempt ${autoTried.current}/2)…`,
+      { id: 'auto-switch', duration: 8000 },
+    )
     void switchTo(next).finally(() => {
       autoInProgress.current = false
     })
-  }, [stalledLong, swarmAlive, switching, allAlternatives.length])
+  }, [stalledLong, stalledHard, swarmAlive, switching, allAlternatives.length])
 
   if (!player) return null
 
@@ -269,8 +286,12 @@ export function PlayerOverlay() {
   const stageLabel = !active
     ? 'Adding torrent to the engine…'
     : !ready
-      ? 'Connecting to swarm — fetching metadata…'
-      : 'Buffering — streaming from the swarm…'
+      ? active.numPeers > 0
+        ? `Connecting to swarm — fetching metadata from ${active.numPeers} peer${active.numPeers === 1 ? '' : 's'}…`
+        : 'Connecting to swarm — announcing to trackers & DHT…'
+      : active.numPeers === 0
+        ? 'Buffering — no peers yet, re-announcing to trackers…'
+        : `Buffering — ${fmtBytes(active.downloaded)} / ${fmtBytes(active.length)} (${Math.round((active.progress || 0) * 100)}%) at ${fmtSpeed(active.downloadSpeed)}`
 
   return (
     <AnimatePresence>
@@ -405,7 +426,10 @@ export function PlayerOverlay() {
           ) : !ready || waiting ? (
             <div className="absolute z-10 flex flex-col items-center gap-3 text-zinc-300">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
-              <p className="text-sm">{stageLabel}</p>
+              <p className="text-sm" aria-live="polite">{stageLabel}</p>
+              {ready && active ? (
+                <Progress value={Math.min(100, (active.progress || 0) * 100)} className="w-56" aria-label="Overall torrent progress" />
+              ) : null}
               {!ready && retryCount.current > 0 ? (
                 <p className="text-xs text-amber-300/90">Reconnecting (attempt {retryCount.current + 1}/4)…</p>
               ) : null}
@@ -432,7 +456,7 @@ export function PlayerOverlay() {
           {ready ? (
             <video
               ref={videoRef}
-              src={streamUrl(player.infoHash, player.fileIndex)}
+              src={`${streamUrl(player.infoHash, player.fileIndex)}${resumeAt ? `#t=${Math.floor(resumeAt)}` : ''}`}
               controls
               autoPlay
               playsInline

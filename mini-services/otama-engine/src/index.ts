@@ -24,7 +24,7 @@ import torrentStream from 'torrent-stream'
 import type { Engine as TSEngine, EngineFile } from 'torrent-stream'
 
 const PORT = 3003
-const ENGINE_VERSION = '1.2.0'
+const ENGINE_VERSION = '1.3.0'
 const DOWNLOAD_ROOT = process.env.OTAMA_DOWNLOAD_DIR || '/tmp/otama-engine'
 /** How long we keep trying to fetch metadata before dropping the torrent. */
 const META_TIMEOUT_MS = 75_000
@@ -38,6 +38,12 @@ const MAX_CACHE_BYTES = (parseInt(process.env.OTAMA_MAX_CACHE_MB || '', 10) || 8
 /** Bytes of a video file's head pulled with priority after metadata is ready —
  *  guarantees the first moov/ftyp box lands fast so time-to-first-frame is low. */
 const HEAD_PRIORITY_BYTES = 8 * 1024 * 1024
+/** Bytes of a video file's TAIL pulled with priority — MKV Cues (seek index)
+ *  and tail-mounted MP4 moov boxes live here. Chromium refuses to raise
+ *  readyState above 0 until it has parsed them, which is the classic
+ *  "player looks dead on resume" stall: the swarm downloads the head while
+ *  the demuxer waits for the index at the very end of a multi-GB file. */
+const TAIL_PRIORITY_BYTES = 1536 * 1024
 /** Bytes at the start of every range request marked critical (hotswap-enabled) —
  *  makes seeks snappy by stealing blocks from slow peers for the new position. */
 const SEEK_CRITICAL_BYTES = 4 * 1024 * 1024
@@ -113,6 +119,7 @@ interface ActiveTorrent {
   streams: number
   /** piece range already given the priority head window (avoid duplicates) */
   headPriorityDone: boolean
+  tailPriorityDone: boolean
 }
 
 /** torrent-stream exposes these at runtime but not in its typings. */
@@ -249,7 +256,10 @@ function prioritiseFileHead(a: ActiveTorrent, fileIndex: number) {
   } catch { /* prioritisation is best-effort */ }
 }
 
-/** Mark the first SEEK_CRITICAL_BYTES of a byte range critical (hotswap boost for seeks). */
+/** Mark the first SEEK_CRITICAL_BYTES of a byte range critical AND give them a
+ *  priority selection. critical() alone only permits block hotswapping — it
+ *  does not jump the piece download queue. select(..., true) puts the region
+ *  at the front, which is what a seek into an un-downloaded area needs. */
 function markRangeCritical(a: ActiveTorrent, fileIndex: number, rangeStart: number) {
   try {
     const eng = a.engine as SelectableEngine
@@ -260,8 +270,35 @@ function markRangeCritical(a: ActiveTorrent, fileIndex: number, rangeStart: numb
     const absStart = (file.offset || 0) + rangeStart
     const first = Math.floor(absStart / t.pieceLength)
     const last = Math.floor((absStart + SEEK_CRITICAL_BYTES) / t.pieceLength)
+    if (eng.select) eng.select(first, last, true)
     for (let p = first; p <= last; p++) eng.critical(p, 1)
   } catch { /* best-effort */ }
+}
+
+/**
+ * Give the TAIL of a video file priority selection + critical status.
+ * MKV files store their Cues (seek index) at the end; MP4 files may carry the
+ * moov atom there. Chromium will not report metadata (readyState stays 0)
+ * until it has that index, so on a cold resume the player can sit "dead" for
+ * minutes while the swarm downloads from the front. Prefetching the tail the
+ * moment the file is selected removes that chicken-and-egg wait.
+ */
+function prioritiseFileTail(a: ActiveTorrent, fileIndex: number) {
+  try {
+    const eng = a.engine as SelectableEngine
+    if (!eng.select || !eng.critical || a.tailPriorityDone) return
+    const t = a.engine.torrent
+    const file = a.engine.files[fileIndex] as (EngineFile & { offset?: number }) | undefined
+    if (!t || !t.pieceLength || !file || file.length < 50 * 1024 * 1024) return
+    const offset = file.offset || 0
+    const tailStart = Math.max(0, file.length - TAIL_PRIORITY_BYTES)
+    const startPiece = Math.floor((offset + tailStart) / t.pieceLength)
+    const endPiece = Math.floor((offset + file.length - 1) / t.pieceLength)
+    if (endPiece < startPiece) return
+    eng.select(startPiece, endPiece, true)
+    for (let p = startPiece; p <= endPiece; p++) eng.critical(p, 1)
+    a.tailPriorityDone = true
+  } catch { /* prioritisation is best-effort */ }
 }
 
 function destroyTorrent(infoHash: string, wipe: boolean): Promise<void> {
@@ -326,6 +363,7 @@ function startAdd(source: string, meta: Meta): ActiveTorrent | null {
     selectedFile: null,
     streams: 0,
     headPriorityDone: false,
+    tailPriorityDone: false,
   }
   if (key) torrents.set(key, a)
   pendingAdds.add(key || magnet)
@@ -363,6 +401,9 @@ function startAdd(source: string, meta: Meta): ActiveTorrent | null {
       // Head-of-file absolute priority: first ~8 MB as a PRIORITY selection +
       // critical pieces — first frame lands even before the browser connects.
       prioritiseFileHead(a, a.selectedFile)
+      // Tail (MKV Cues / MP4 moov) priority — the demuxer index downloads in
+      // parallel with the head so Chromium never stalls on a missing index.
+      prioritiseFileTail(a, a.selectedFile)
     }
   })
   engine.on('error', () => { clearTimeout(timeout); settle(false) })
@@ -468,9 +509,14 @@ async function streamFile(
     file.select()
     a.selectedFile = fileIndex
     a.headPriorityDone = false
+    a.tailPriorityDone = false
     prioritiseFileHead(a, fileIndex)
+    prioritiseFileTail(a, fileIndex)
   } else if (file.length < 10 * 1024 * 1024) {
     file.select()
+  } else {
+    // same file as before — still make sure the index region is prioritised
+    prioritiseFileTail(a, fileIndex)
   }
 
   const size = file.length
