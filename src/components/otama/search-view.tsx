@@ -14,6 +14,7 @@ interface SearchResults {
   movies: MetaItem[]
   series: MetaItem[]
   anime: TorrentOption[]
+  animeSeries: MetaItem[]
   tpb: TpbItem[]
   leetx: TorrentOption[]
   solid: TorrentOption[]
@@ -80,7 +81,7 @@ export function SearchView({ query }: { query: string }) {
           <TabsList className="bg-white/5 max-w-full overflow-x-auto no-scrollbar">
             <TabsTrigger value="movies">Movies ({data?.movies.length ?? 0})</TabsTrigger>
             <TabsTrigger value="series">TV ({data?.series.length ?? 0})</TabsTrigger>
-            <TabsTrigger value="anime">Anime ({data?.anime.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="anime">Anime ({(data?.anime.length ?? 0) + (data?.animeSeries.length ?? 0)})</TabsTrigger>
             <TabsTrigger value="tpb">Pirate Bay ({data?.tpb.length ?? 0})</TabsTrigger>
             <TabsTrigger value="leetx">1337x ({data?.leetx.length ?? 0})</TabsTrigger>
             <TabsTrigger value="solid">Solid ({data?.solid.length ?? 0})</TabsTrigger>
@@ -108,7 +109,22 @@ export function SearchView({ query }: { query: string }) {
               </div>
             )}
           </TabsContent>
-          <TabsContent value="anime" className="pt-4 max-w-3xl">
+          <TabsContent value="anime" className="pt-4">
+            {/* Anime SERIES cards first — every match opens with the full
+                season/episode browser (per-episode Nyaa + Torrentio), instead
+                of a flat torrent wall where whole seasons go missing. */}
+            {(data?.animeSeries?.length ?? 0) > 0 ? (
+              <div className="mb-6">
+                <h3 className="mb-2 text-sm font-bold text-zinc-300">
+                  Anime series <span className="font-normal text-zinc-500">— open for all seasons &amp; episodes</span>
+                </h3>
+                <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+                  {data!.animeSeries.map((s) => (
+                    <MediaCard key={`${s.refId}-${s.title}`} item={{ ...s, kind: 'anime' }} onClick={() => openFor({ ...s, kind: 'anime' })} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {(data?.anime.length ?? 0) === 0 ? (
               <p className="py-8 text-center text-sm text-zinc-400">No anime torrents found.</p>
             ) : (

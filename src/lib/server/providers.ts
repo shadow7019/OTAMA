@@ -19,6 +19,7 @@
  * back to the remaining sources so the app keeps working.
  */
 import type { MetaItem, MetaKind, TorrentOption, EpisodeInfo, TpbItem } from '@/lib/types'
+import { detectResolution } from '@/lib/quality'
 
 export const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -214,14 +215,19 @@ export function humanSize(bytes?: number | string): string {
   return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
 }
 
-const QUALITY_RE = /\b(2160p|1440p|1080p|1080i|720p|576p|480p|4k|uhd|web[ .-]?dl|web[ .-]?rip|brrip|bluray|bdrip|hdrip|dvdrip|hdtv|cam|ts)\b/i
+const SOURCE_TAG_RE = /\b(web[ .-]?dl|web[ .-]?rip|brrip|bluray|bdrip|remux|hdrip|dvdrip|hdtv|hc|cam|ts)\b/i
 
+/**
+ * Quality tag for a release name. RESOLUTION always wins (2160p/1080p/720p…),
+ * because that is what users filter by; source tags (WEB-DL, BluRay, HDRip…)
+ * are only used when the name carries no resolution at all.
+ */
 export function detectQuality(name: string): string | undefined {
-  const m = QUALITY_RE.exec(name)
+  const res = detectResolution(name || '')
+  if (res) return res
+  const m = SOURCE_TAG_RE.exec(name || '')
   if (!m) return undefined
-  const q = m[1].toUpperCase()
-  if (q === '4K' || q === 'UHD') return '2160p'
-  return q.replace(/\s/g, '')
+  return m[1].toUpperCase().replace(/[ .-]/g, '')
 }
 
 /**
@@ -576,13 +582,7 @@ export function parseNyaaRss(xml: string): NyaaItem[] {
   return items
 }
 
-export async function nyaaSearch(
-  q: string,
-  opts: { sort?: 'seeders' | 'date' } = {},
-): Promise<TorrentOption[]> {
-  const sort = opts.sort === 'date' ? 's=id&o=desc' : 's=seeders&o=desc'
-  const url = `${NYAA}/?page=rss&q=${encodeURIComponent(q)}&c=1_2&f=0&${sort}`
-  const xml = await fetchText(url, 12_000)
+function nyaaXmlToOptions(xml: string): TorrentOption[] {
   return parseNyaaRss(xml).map((r) => ({
     hash: r.hash,
     title: r.title,
@@ -594,6 +594,79 @@ export async function nyaaSearch(
     source: r.hash,
     date: r.date ? new Date(r.date).toISOString() : undefined,
   }))
+}
+
+export async function nyaaSearch(
+  q: string,
+  opts: { sort?: 'seeders' | 'date' } = {},
+): Promise<TorrentOption[]> {
+  const sort = opts.sort === 'date' ? 's=id&o=desc' : 's=seeders&o=desc'
+  const url = `${NYAA}/?page=rss&q=${encodeURIComponent(q)}&c=1_2&f=0&${sort}`
+  const xml = await fetchText(url, 12_000)
+  return nyaaXmlToOptions(xml)
+}
+
+/**
+ * Newest anime uploads on Nyaa (sorted by id desc = upload time) — the live
+ * "new episode" feed for the home screen. Every search on Nyaa also covers
+ * only English-translated anime (c=1_2); the raw feed updates continuously
+ * as fansubs are released, so the row is always current.
+ */
+export async function nyaaLatest(): Promise<TorrentOption[]> {
+  return cached('nyaa-latest', 5 * 60_000, async () => {
+    const xml = await fetchText(`${NYAA}/?page=rss&q=&c=1_2&f=0&s=id&o=desc`, 12_000)
+    return nyaaXmlToOptions(xml)
+  })
+}
+
+/**
+ * Episode-level Nyaa lookup for anime series. Anime naming does not follow
+ * SxxEyy conventions — most fansubs use ABSOLUTE episode numbers
+ * ("Jujutsu Kaisen - 47 [1080p]"), so we try the absolute number first
+ * (computed by the client from the season/episode list), then SxxEyy.
+ */
+async function nyaaEpisodeTorrents(
+  title: string,
+  season?: number,
+  episode?: number,
+  absoluteEpisode?: number,
+): Promise<TorrentOption[]> {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const queries: string[] = []
+  if (absoluteEpisode) {
+    queries.push(`${title} - ${absoluteEpisode}`)
+    queries.push(`${title} ${absoluteEpisode}`)
+  }
+  if (season && episode) {
+    queries.push(`${title} ${pad(season)}x${pad(episode)}`)
+    queries.push(`${title} S${pad(season)}E${pad(episode)}`)
+  }
+  const seen = new Set<string>()
+  const results: TorrentOption[] = []
+  for (const q of queries.slice(0, 3)) {
+    try {
+      const xml = await fetchText(`${NYAA}/?page=rss&q=${encodeURIComponent(q)}&c=1_2&f=0&s=seeders&o=desc`, 8_000)
+      for (const t of nyaaXmlToOptions(xml)) {
+        if (seen.has(t.hash)) continue
+        seen.add(t.hash)
+        results.push(t)
+      }
+      if (results.length >= 5) break
+    } catch { /* try next variant */ }
+  }
+  // season packs too — whole-season torrents play any episode via file pick
+  if (results.length === 0 && season) {
+    try {
+      const xml = await fetchText(`${NYAA}/?page=rss&q=${encodeURIComponent(`${title} ${pad(season)} `)}&c=1_2&f=0&s=seeders&o=desc`, 8_000)
+      for (const t of nyaaXmlToOptions(xml)) {
+        if (!seen.has(t.hash)) {
+          seen.add(t.hash)
+          results.push(t)
+        }
+      }
+    } catch { /* give up */ }
+  }
+  return results
 }
 
 /* ------------------------------ tvmaze ------------------------------ */
@@ -710,8 +783,31 @@ export async function seriesDetail(imdbId: string): Promise<{ item: MetaItem & {
   return { item, seasons }
 }
 
-/** Episode torrents: Torrentio (multi-site, file-exact) + EZTV + TPB + 1337x + SolidTorrents. */
+/**
+ * Episode torrents: Torrentio (multi-site, file-exact) + EZTV + TPB + 1337x +
+ * SolidTorrents + RARBG + LimeTorrents + TorrentGalaxy, and for ANIME a
+ * Nyaa layer with absolute-episode query variants merged in.
+ */
 export async function findEpisodeTorrents(
+  imdbId?: string,
+  title?: string,
+  season?: number,
+  episode?: number,
+  opts: { anime?: boolean; absoluteEpisode?: number } = {},
+): Promise<TorrentOption[]> {
+  const primary = await findEpisodeTorrentsBase(imdbId, title, season, episode)
+  if (!opts.anime || !title) return primary
+  // Anime fansubs live on Nyaa and use absolute numbering — merge them in
+  // even when the mainstream trackers already returned something, so the
+  // user always sees the anime-native (usually best-seeded) options.
+  const nyaa = await nyaaEpisodeTorrents(title, season, episode, opts.absoluteEpisode).catch(() => [])
+  if (nyaa.length === 0) return primary
+  const seen = new Set(primary.map((t) => (t.hash || '').toLowerCase()))
+  const merged = [...primary, ...nyaa.filter((t) => !seen.has(t.hash.toLowerCase()))]
+  return sortTorrentsPlayableFirst(merged).slice(0, 18)
+}
+
+async function findEpisodeTorrentsBase(
   imdbId?: string,
   title?: string,
   season?: number,

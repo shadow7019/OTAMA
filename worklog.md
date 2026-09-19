@@ -495,3 +495,34 @@ Work Log:
 
 Stage Summary:
 - "Can't see the play button" had two real roots: Radix ScrollArea's display:table wrapper letting one long torrent name shove every Play button off-screen (fixed by plain scroll containers in detail overlay, downloads sheet and sites dialog), plus movies with zero torrents having no play affordance (fixed by the prominent header Play + actionable empty state). "Can't make the video fullscreen" died with pointer-events-none on the buffering overlay, plus a dedicated always-visible fullscreen toggle, double-click/F shortcuts, and an Escape guard so exiting fullscreen no longer kills the player.
+
+---
+Task ID: 23
+Agent: main (orchestrator)
+Task: "some of the anime season are not even there — we want everything to be auto updated like the new ep new season and new movies with working links, and categorize the streaming links by resolution/quality (1080p, 720p…)"
+
+Work Log:
+- ANIME SEASONS (root causes + fixes):
+  * The Anime search tab was ONLY raw Nyaa torrents (flat list, no metadata) — whole seasons invisible; anime detail without an IMDb id never unlocked a season browser. The series detail body always defaulted to Season 1 (furthest from the new episodes); episode lookup had NO Nyaa path at all, so anime fansubs (which use ABSOLUTE numbering, not SxxEyy) were missed.
+  * NEW tmdbResolveTitle(q, media) in tmdb.ts + /api/resolve?q=<title>&type=tv: free-text title → best TMDB/IMDb match (returns imdbId+title+poster+year). AnimeDirectDetail now resolves the title FIRST and swaps itself for the full SeriesDetailBody season browser (falls back to the Nyaa list only when no match).
+  * /api/search now returns animeSeries (TMDB Animation TV cards) — the Anime tab opens with a "Anime series — open for all seasons & episodes" card grid (each card = full season browser), then the raw Nyaa torrents below.
+  * SeriesDetailBody: defaults to the LATEST season (where new episodes are); new anime prop threads through DetailOverlay/EpisodeList/EpisodeTorrents.
+  * findEpisodeTorrents gains { anime, absoluteEpisode }: anime requests merge Nyaa results (query variants "Title - <abs>", "Title <abs>", "Title SxxEyy", season-pack fallback) into the Torrentio/EZTV/TPB chain (deduped, playable-first, 18 cap). Verified live on Demon Slayer S3E5: 17 links = Torrentio + [Yameii] S04E10 + [KaiDubs] absolute-numbered Nyaa entries.
+  * NEW tmdbAnimeCatalog + /api/catalog?type=anime&source=tmdb: TMDB discover (Animation genre + original_language ja) — every season of every anime incl. currently-airing; Anime view auto-picks TMDB (Cinemeta fallback) with sort options; verified Doraemon opens at Season 22 of 22.
+- AUTO-UPDATING CONTENT:
+  * tmdbCatalog adds live feeds: now_playing (/movie/now_playing), upcoming (/movie/upcoming), airing_today (/tv/airing_today), on_the_air (/tv/on_the_air) with media-safe pairing; catalog-view sort menu gains "In theaters / Airing today / On the air / Upcoming" (type-filtered).
+  * HOME is now a live dashboard: Trending, NEW "New episodes (airing today)", NEW "New in theaters", Top series, Popular anime, NEW AnimeFreshRow ("Latest anime episodes" — Nyaa newest-upload feed, 5-min cache + 10-min refetchInterval, one-click Play like the PB row), Fresh from Pirate Bay, NEW "Coming soon". All rows openDetail via imdb or on-the-fly /api/resolve?tmdbId=.
+- QUALITY CATEGORIZATION:
+  * NEW src/lib/quality.ts (shared client+server): detectResolution (2160p/1440p/1080p+1080i/720p/576/540/480/360p/4k/uhd/qhd/fhd + 1920x1080-style WxH), 6 buckets with labels+tones (4K violet, 1440p fuchsia, 1080p emerald, 720p teal, SD amber, Other zinc), bucketOf(), groupTorrentsByQuality().
+  * providers detectQuality rewritten: resolution ALWAYS wins; WEB-DL/BluRay/etc. source tags only when no resolution present.
+  * TorrentList rebuilt: quality chip row (All + non-empty buckets with counts), grouped sections (label + count + tone badge) in All view, flat filtered list when a chip is active, per-section 6-row cap with "Show all N <quality> torrents" expand, per-row provider/codec/container badges unchanged.
+- VERIFIED (agent-browser via gateway :81):
+  * Home: 9 rows render; new rows carry live data (airing today: "Men on a Mission…", theaters: "Coyote vs. Acme", anime fresh: [SubsPlease] Iruma-kun S4 - 23 (uploaded today), coming soon: "Resident Evil").
+  * Search "demon slayer" → Anime tab: series card + quality chips All(75)/4K(5)/1080p(53)/720p(3)/Other(14). Series card → detail: Seasons 1-5 all present, S5 default, 8 episodes; S3E5 torrents: chips All(17)/4K(1)/1080p(11)/720p(3)/Other(2), grouped sections with Torrentio+Nyaa providers, chip filter → flat 11-row list with 11 Play buttons.
+  * Movie detail (Batman Knightfall 2026): All(40)/4K(5)/1080p(24)/720p(7)/Other(4), 6-row caps + "Show all 24 1080p torrents" present.
+  * END-TO-END PLAY from the 1080p group: staged buffering → first frame ~20s, readyState 4, currentTime 7→82s+; stats bar 17 peers · 2.2 MB/s · 276 MB / 3.0 GB · ETA 20m51s; 1080p badge in player top bar. Screenshot confirmed real frames.
+  * Mobile 390px: page scrollWidth exactly 390, all rows render, Doraemon detail fits with Season 22 default. Test torrents wiped (engine 0 remaining); lint clean; dev.log error-free.
+- NOTE for desktop: all of this is in the web app; the packaged .exe predates Tasks 16-23 and needs a rebuild to carry it.
+
+Stage Summary:
+- Anime is now first-class: every searched anime gets a series card with ALL seasons (latest season opens by default), per-episode torrents merge Torrentio with Nyaa absolute-episode fansub queries, and metadata-less anime titles self-resolve to full series. Home is a fully auto-updating dashboard (TMDB now_playing/airing_today/upcoming/trending + live Nyaa and Pirate Bay feeds) — new episodes, seasons and movies appear without any curation. Every streaming-link list is grouped and filterable by resolution (4K/1440p/1080p/720p/SD/Other) with playable-first ordering preserved inside each bucket.

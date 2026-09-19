@@ -185,25 +185,55 @@ async function enrichImdb(media: 'movie' | 'tv', rows: TmdbListRow[]): Promise<M
 
 /* ------------------------------ catalog ------------------------------ */
 
-export type TmdbSort = 'trending' | 'popular' | 'top' | 'imdbRating' | 'year'
+export type TmdbSort =
+  | 'trending'
+  | 'popular'
+  | 'top'
+  | 'imdbRating'
+  | 'year'
+  | 'now_playing'
+  | 'airing_today'
+  | 'on_the_air'
+  | 'upcoming'
 
 /**
  * TMDB catalog browse with IMDB enrichment.
- *  - trending  → /trending/{media}/week          (no genre filter support upstream)
- *  - popular   → /{media}/popular
+ *  - trending     → /trending/{media}/week          (no genre filter support upstream)
+ *  - popular      → /{media}/popular
  *  - top|imdbRating → /{media}/top_rated
- *  - year      → discover sorted by release date
- *  - any genre → /discover with sort_by (top uses vote_average + vote_count floor)
+ *  - year         → discover sorted by release date
+ *  - now_playing  → /movie/now_playing   (auto-updating: in theaters)
+ *  - upcoming     → /movie/upcoming      (auto-updating: coming soon)
+ *  - airing_today → /tv/airing_today     (auto-updating: new episodes today)
+ *  - on_the_air   → /tv/on_the_air       (auto-updating: shows airing this week)
+ *  - any genre    → /discover with sort_by (top uses vote_average + vote_count floor)
  */
+const LIVE_FEEDS: TmdbSort[] = ['now_playing', 'airing_today', 'on_the_air', 'upcoming']
+
+/** Live feeds are media-specific — a wrong pairing maps to the closest equivalent, never trending. */
+function LIVE_FEED_PAIRING(sortRaw: string, media: 'movie' | 'tv'): TmdbSort {
+  if (sortRaw === 'imdbRating') return 'top'
+  if (!['trending', 'popular', 'top', 'imdbRating', 'year', ...LIVE_FEEDS].includes(sortRaw)) return 'trending'
+  const sort = sortRaw as TmdbSort
+  if (!LIVE_FEEDS.includes(sort)) return sort
+  const valid =
+    (sort === 'now_playing' || sort === 'upcoming') === (media === 'movie') &&
+    (sort === 'airing_today' || sort === 'on_the_air') === (media === 'tv')
+  if (valid) return sort
+  const fixed: Record<string, TmdbSort> =
+    media === 'movie'
+      ? { airing_today: 'now_playing', on_the_air: 'now_playing' }
+      : { now_playing: 'airing_today', upcoming: 'on_the_air' }
+  return fixed[sort] ?? 'trending'
+}
+
 export async function tmdbCatalog(
   type: 'movie' | 'series',
   opts: { sort?: string; genre?: string; page?: number } = {},
 ): Promise<MetaItem[]> {
   const media = type === 'movie' ? 'movie' : 'tv'
   const sortRaw = opts.sort || 'trending'
-  const sort: TmdbSort = ['trending', 'popular', 'top', 'imdbRating', 'year'].includes(sortRaw)
-    ? (sortRaw === 'imdbRating' ? 'top' : (sortRaw as TmdbSort))
-    : 'trending'
+  const sort: TmdbSort = LIVE_FEED_PAIRING(sortRaw, media)
   const page = Math.max(1, opts.page || 1)
   const gid = genreId(media, opts.genre)
 
@@ -239,6 +269,18 @@ export async function tmdbCatalog(
   } else if (sort === 'top') {
     params = { page }
     path = `/${media}/top_rated`
+  } else if (sort === 'now_playing') {
+    params = { page }
+    path = '/movie/now_playing'
+  } else if (sort === 'upcoming') {
+    params = { page }
+    path = '/movie/upcoming'
+  } else if (sort === 'airing_today') {
+    params = { page }
+    path = '/tv/airing_today'
+  } else if (sort === 'on_the_air') {
+    params = { page }
+    path = '/tv/on_the_air'
   } else {
     // year / newest
     params = {
@@ -254,6 +296,40 @@ export async function tmdbCatalog(
   const data = await tmdbGet<{ results?: TmdbListRow[] }>(path, params, 10 * 60_000)
   const rows = (data.results || []).filter((r) => (r.title || r.name) && (r.poster_path || r.backdrop_path))
   return enrichImdb(media, rows)
+}
+
+/* ------------------------------ anime catalog ------------------------------ */
+
+/**
+ * TMDB ANIME catalog — Japanese-animation TV shows. TMDB's anime coverage is
+ * dramatically deeper than Cinemeta's "Anime" genre slice (every season of
+ * every long-running show, currently-airing episodes included), so the Anime
+ * view gets a TMDB source of its own.
+ *  - popular/trending → discover by popularity
+ *  - top              → discover by vote_average (vote floor to avoid stubs)
+ *  - year             → new anime from the last 6 months
+ */
+export async function tmdbAnimeCatalog(
+  opts: { sort?: string; page?: number } = {},
+): Promise<MetaItem[]> {
+  const page = Math.max(1, opts.page || 1)
+  const sort = ['popular', 'trending', 'top', 'year'].includes(opts.sort || '') ? opts.sort : 'popular'
+  const d = new Date()
+  d.setMonth(d.getMonth() - 6)
+  const sixMonthsAgo = d.toISOString().slice(0, 10)
+
+  const params: Record<string, string | number | boolean | undefined> =
+    sort === 'year'
+      ? { with_genres: 16, with_original_language: 'ja', sort_by: 'first_air_date.desc', 'first_air_date.gte': sixMonthsAgo, include_adult: false, page }
+      : sort === 'top'
+        ? { with_genres: 16, with_original_language: 'ja', sort_by: 'vote_average.desc', 'vote_count.gte': 50, include_adult: false, page }
+        : { with_genres: 16, with_original_language: 'ja', sort_by: 'popularity.desc', include_adult: false, page }
+
+  const data = await tmdbGet<{ results?: TmdbListRow[] }>('/discover/tv', params, 10 * 60_000)
+  const rows = (data.results || []).filter((r) => r.name && (r.poster_path || r.backdrop_path))
+  const items = await enrichImdb('tv', rows)
+  items.forEach((i) => (i.kind = 'anime'))
+  return items
 }
 
 /* ------------------------------ search ------------------------------ */
@@ -275,6 +351,30 @@ export async function tmdbSearchMulti(q: string): Promise<{ movies: MetaItem[]; 
 }
 
 /* ------------------------------ detail enhancement ------------------------------ */
+
+/**
+ * Resolve a free-text title to its best TMDB/IMDb match for one media type.
+ * Used to give metadata-less items (e.g. anime opened from a raw Nyaa search)
+ * a real identity so the full season/episode browser unlocks.
+ */
+export async function tmdbResolveTitle(
+  q: string,
+  media: 'movie' | 'tv',
+): Promise<{ imdbId: string | null; tmdbId?: number; title?: string; poster?: string; year?: number }> {
+  const { movies, series } = await tmdbSearchMulti(q)
+  const list = media === 'tv' ? series : movies
+  const hit = list.find((r) => r.imdbId) || list[0]
+  if (!hit) return { imdbId: null }
+  if (hit.imdbId) {
+    return { imdbId: hit.imdbId, tmdbId: hit.tmdbId, title: hit.title, poster: hit.poster, year: hit.year }
+  }
+  if (hit.tmdbId) {
+    const imdbId = await tmdbImdbFromTmdbId(media, hit.tmdbId)
+    return { imdbId, tmdbId: hit.tmdbId, title: hit.title, poster: hit.poster, year: hit.year }
+  }
+  return { imdbId: null }
+}
+
 
 /** Resolve a TMDB id → IMDb id (24h cache) so TMDB-only cards open in the detail overlay. */
 export async function tmdbImdbFromTmdbId(media: 'movie' | 'tv', tmdbId: number): Promise<string | null> {

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get('q') || '').trim()
   if (!q) {
-    return NextResponse.json({ movies: [], series: [], anime: [], tpb: [], leetx: [], solid: [], more: [] })
+    return NextResponse.json({ movies: [], series: [], anime: [], animeSeries: [], tpb: [], leetx: [], solid: [], more: [] })
   }
 
   const safe = async <T>(p: Promise<T>, fallback: T): Promise<T> => {
@@ -76,6 +76,13 @@ export async function GET(req: NextRequest) {
   const moviesMerged = mergeTmdb(tmdbMovies, movies)
   const seriesMerged = mergeTmdb(tmdbSeries, series)
 
+  // ANIME SERIES cards for the Anime tab — TMDB Animation TV matches give
+  // every searched anime a full season/episode browser (raw Nyaa results are
+  // flat torrents and often miss whole seasons). Falls back to any TMDB TV
+  // hit when the animation filter leaves nothing (TMDB anime tags vary).
+  let animeSeries = tmdbSeries.filter((s) => s.genres?.includes('Animation')).slice(0, 16)
+  if (animeSeries.length === 0) animeSeries = tmdbSeries.slice(0, 8)
+
   // merge TVMaze results into series (dedupe by title)
   const seen = new Set(seriesMerged.map((s) => s.title.toLowerCase()))
   for (const alt of tvAlt.slice(0, 8)) {
@@ -94,9 +101,10 @@ export async function GET(req: NextRequest) {
 
   // strip broken poster URLs (metahub HTML placeholders) so cards show the
   // branded fallback instead of a failed image load
-  const [moviesClean, seriesClean] = await Promise.all([
+  const [moviesClean, seriesClean, animeSeriesClean] = await Promise.all([
     stripBrokenPosters(moviesMerged).catch(() => moviesMerged),
     stripBrokenPosters(seriesMerged).catch(() => seriesMerged),
+    stripBrokenPosters(animeSeries).catch(() => animeSeries),
   ])
 
   // new-site fan-out merged into one "More torrent sites" tab (deduped by hash)
@@ -114,6 +122,7 @@ export async function GET(req: NextRequest) {
     movies: moviesClean.slice(0, 40),
     series: seriesClean,
     anime,
+    animeSeries: animeSeriesClean,
     tpb: tpb.slice(0, 30),
     leetx: leetx.slice(0, 20),
     solid: solid.slice(0, 20),

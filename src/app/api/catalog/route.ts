@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cineCatalog, tvmazeBrowse } from '@/lib/server/providers'
 import { ytsBrowse, ytsBrowseHtml } from '@/lib/server/yts'
-import { tmdbCatalog, tmdbStatus } from '@/lib/server/tmdb'
+import { tmdbCatalog, tmdbAnimeCatalog, tmdbStatus } from '@/lib/server/tmdb'
 import type { MetaItem } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const type = (searchParams.get('type') || 'movie') as 'movie' | 'series' | 'anime'
+  const type = (searchParams.get('type') || 'movie') as 'movie' | 'series' | 'anime' | 'tv'
   const genre = searchParams.get('genre') || undefined
   const skip = parseInt(searchParams.get('skip') || '0', 10) || 0
   const sort = searchParams.get('sort') || 'top'
@@ -39,6 +39,16 @@ export async function GET(req: NextRequest) {
       const items = await ytsBrowseHtml({ page, genre, sort })
       if (items.length) return NextResponse.json({ items, provider: 'yts' })
       return NextResponse.json({ items, provider: 'yts' })
+    }
+
+    if (source === 'tmdb' && type === 'anime') {
+      // TMDB discover (Animation + original_language ja) — every season of
+      // every anime, including currently-airing ones. Falls back to Cinemeta.
+      const status = await tmdbStatus()
+      if (status.configured && status.valid) {
+        const items = await tmdbAnimeCatalog({ sort, page: page + 1 })
+        return NextResponse.json({ items, provider: 'tmdb' })
+      }
     }
 
     if (source === 'tmdb' && type !== 'anime') {

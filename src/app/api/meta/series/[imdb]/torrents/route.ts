@@ -4,9 +4,10 @@ import { findEpisodeTorrents } from '@/lib/server/providers'
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/meta/series/:imdb/torrents?title=&season=&episode=
+ * GET /api/meta/series/:imdb/torrents?title=&season=&episode=&anime=1&absolute=N
  * Torrent options for an episode (or whole season / show when season omitted).
- * EZTV first, automatic TPB fallback.
+ * EZTV first, automatic TPB fallback; `anime=1` merges Nyaa results with
+ * absolute-episode query variants (anime fansubs rarely use SxxEyy naming).
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ imdb: string }> }) {
   const { imdb } = await params
@@ -14,8 +15,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ imdb
   const title = searchParams.get('title') || undefined
   const season = parseInt(searchParams.get('season') || '', 10) || undefined
   const episode = parseInt(searchParams.get('episode') || '', 10) || undefined
+  const anime = searchParams.get('anime') === '1'
+  const absoluteEpisode = parseInt(searchParams.get('absolute') || '', 10) || undefined
   try {
-    const torrents = await findEpisodeTorrents(imdb, title, season, episode)
+    const torrents = await findEpisodeTorrents(imdb, title, season, episode, { anime, absoluteEpisode })
     return NextResponse.json({ torrents })
   } catch (err) {
     return NextResponse.json({ torrents: [], error: (err as Error).message }, { status: 200 })

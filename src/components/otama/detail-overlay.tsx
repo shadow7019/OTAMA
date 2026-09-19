@@ -110,10 +110,11 @@ export function DetailOverlay() {
                 ) : detail.kind === 'movie' && detail.imdbId ? (
                   <MovieDetailBody imdbId={detail.imdbId} fallback={{ title: detail.title, poster: detail.poster, year: detail.year }} />
                 ) : detail.imdbId ? (
-                  <SeriesDetailBody imdbId={detail.imdbId} fallback={{ title: detail.title, poster: detail.poster, year: detail.year }} />
+                  <SeriesDetailBody imdbId={detail.imdbId} anime={detail.kind === 'anime'} fallback={{ title: detail.title, poster: detail.poster, year: detail.year }} />
                 ) : (
                   /* No IMDb id and no direct torrents — never render a blank sheet:
-                     offer a live Nyaa search for anime, or an actionable notice. */
+                     resolve the anime title to a real series (TMDB) so the full
+                     season browser unlocks, or fall back to a live Nyaa search. */
                   detail.kind === 'anime' ? (
                     <AnimeDirectDetail detail={detail} />
                   ) : (
@@ -267,9 +268,12 @@ function PlayBestTorrentButton({
 
 function SeriesDetailBody({
   imdbId,
+  anime,
   fallback,
 }: {
   imdbId: string
+  /** anime — episode torrent lookups also query Nyaa with absolute numbering */
+  anime?: boolean
   fallback: { title: string; poster?: string; year?: number }
 }) {
   const { data, isLoading, error } = useQuery({
@@ -279,11 +283,17 @@ function SeriesDetailBody({
   })
   const seasons = data?.seasons || []
   const [seasonOverride, setSeasonOverride] = useState<string | null>(null)
-  // first available season by default, or user's explicit choice
-  const season = seasonOverride ?? (seasons.length ? String(seasons[0].season) : '')
+  // LATEST season by default (where the new episodes are), or user's explicit choice
+  const season = seasonOverride ?? (seasons.length ? String(seasons[seasons.length - 1].season) : '')
   const episodes = useMemo(() => seasons.find((s) => String(s.season) === season)?.episodes || [], [seasons, season])
+  // absolute episode number for anime fansub naming ("Jujutsu Kaisen - 47"):
+  // count every episode released in earlier seasons + this episode's number
+  const absoluteOffset = useMemo(
+    () => seasons.filter((s) => s.season < parseInt(season, 10)).reduce((acc, s) => acc + s.episodes.length, 0),
+    [seasons, season],
+  )
   const fav = useFavorite({
-    kind: 'tv',
+    kind: anime ? 'anime' : 'tv',
     refId: imdbId,
     title: data?.item?.title || fallback.title,
     poster: data?.item?.poster || fallback.poster,
@@ -294,7 +304,7 @@ function SeriesDetailBody({
   return (
     <div>
       <DetailHeader
-        item={data?.item || { refId: imdbId, kind: 'tv', title: fallback.title, poster: fallback.poster, year: fallback.year, provider: 'cinemeta' }}
+        item={data?.item || { refId: imdbId, kind: anime ? 'anime' : 'tv', title: fallback.title, poster: fallback.poster, year: fallback.year, provider: 'cinemeta' }}
         loading={isLoading}
         favorite={fav.fav}
         onToggleFavorite={fav.toggle}
@@ -319,7 +329,14 @@ function SeriesDetailBody({
         {isLoading ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)
         ) : (
-          <EpisodeList imdbId={imdbId} title={data?.item?.title || fallback.title} poster={data?.item?.poster || fallback.poster} episodes={episodes} />
+          <EpisodeList
+            imdbId={imdbId}
+            title={data?.item?.title || fallback.title}
+            poster={data?.item?.poster || fallback.poster}
+            episodes={episodes}
+            anime={anime}
+            absoluteOffset={absoluteOffset}
+          />
         )}
       </div>
     </div>
@@ -331,11 +348,15 @@ function EpisodeList({
   title,
   poster,
   episodes,
+  anime,
+  absoluteOffset,
 }: {
   imdbId: string
   title: string
   poster?: string
   episodes: { season: number; episode: number; title?: string; overview?: string; airDate?: string }[]
+  anime?: boolean
+  absoluteOffset?: number
 }) {
   const [openEp, setOpenEp] = useState<string | null>(null)
   if (episodes.length === 0) {
@@ -368,7 +389,15 @@ function EpisodeList({
             </button>
             {open ? (
               <div className="border-t border-white/5 p-3 bg-background/50">
-                <EpisodeTorrents imdbId={imdbId} title={title} poster={poster} season={ep.season} episode={ep.episode} />
+                <EpisodeTorrents
+                  imdbId={imdbId}
+                  title={title}
+                  poster={poster}
+                  season={ep.season}
+                  episode={ep.episode}
+                  anime={anime}
+                  absolute={absoluteOffset ? absoluteOffset + ep.episode : undefined}
+                />
               </div>
             ) : null}
           </li>
@@ -384,18 +413,24 @@ function EpisodeTorrents({
   poster,
   season,
   episode,
+  anime,
+  absolute,
 }: {
   imdbId: string
   title: string
   poster?: string
   season: number
   episode: number
+  anime?: boolean
+  absolute?: number
 }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['ep-torrents', imdbId, season, episode],
+    queryKey: ['ep-torrents', imdbId, season, episode, anime, absolute],
     queryFn: () =>
       fetchJson<{ torrents: TorrentOption[] }>(
-        `/api/meta/series/${imdbId}/torrents?title=${encodeURIComponent(title)}&season=${season}&episode=${episode}`,
+        `/api/meta/series/${imdbId}/torrents?title=${encodeURIComponent(title)}&season=${season}&episode=${episode}` +
+          (anime ? '&anime=1' : '') +
+          (absolute ? `&absolute=${absolute}` : ''),
       ),
     staleTime: 5 * 60_000,
   })
@@ -403,7 +438,7 @@ function EpisodeTorrents({
   return (
     <TorrentList
       torrents={data?.torrents || []}
-      meta={{ poster, refId: `${imdbId}:${season}:${episode}`, kind: 'tv', title: `${title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}` }}
+      meta={{ poster, refId: `${imdbId}:${season}:${episode}`, kind: anime ? 'anime' : 'tv', title: `${title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}` }}
       compact
     />
   )
@@ -411,17 +446,44 @@ function EpisodeTorrents({
 
 /* ------------------------------ anime direct ------------------------------ */
 
-function AnimeDirectDetail({ detail }: { detail: { title: string; poster?: string; directTorrents?: TorrentOption[] } }) {
+function AnimeDirectDetail({ detail }: { detail: { title: string; poster?: string; year?: number; directTorrents?: TorrentOption[] } }) {
   // Anime items opened without IMDb ids still get LIVE torrents: query Nyaa
   // (and RARBG/Lime as secondary) by title when directTorrents is empty.
   const shouldFetch = !detail.directTorrents || detail.directTorrents.length === 0
-  const { data, isLoading } = useQuery({
+  // AND try to resolve the title to a real series first — once matched, the
+  // full season/episode browser (every season, per-episode Nyaa+Torrentio)
+  // replaces the flat torrent list. This is what makes "missing seasons"
+  // reachable: the flat Nyaa search only sees what fansubs named that day.
+  const resolve = useQuery({
+    queryKey: ['anime-resolve', detail.title],
+    queryFn: () =>
+      fetchJson<{ imdbId?: string | null; title?: string; poster?: string; year?: number }>(
+        `/api/resolve?q=${encodeURIComponent(detail.title)}&type=tv`,
+      ),
+    staleTime: 10 * 60_000,
+    enabled: shouldFetch,
+  })
+  const resolvedImdb = resolve.data?.imdbId || undefined
+  const hasDirect = !!detail.directTorrents?.length
+
+  const nyaaQuery = useQuery({
     queryKey: ['anime-direct', detail.title],
     queryFn: () => fetchJson<{ items: TorrentOption[] }>(`/api/nyaa?q=${encodeURIComponent(detail.title)}`),
     staleTime: 5 * 60_000,
-    enabled: shouldFetch,
+    enabled: shouldFetch && !resolvedImdb,
   })
-  const torrents = detail.directTorrents?.length ? detail.directTorrents : data?.items || []
+
+  if (resolvedImdb) {
+    return (
+      <SeriesDetailBody
+        imdbId={resolvedImdb}
+        anime
+        fallback={{ title: resolve.data?.title || detail.title, poster: detail.poster || resolve.data?.poster, year: detail.year || resolve.data?.year }}
+      />
+    )
+  }
+
+  const list = hasDirect ? detail.directTorrents! : nyaaQuery.data?.items || []
   return (
     <div>
       <div className="relative">
@@ -435,12 +497,12 @@ function AnimeDirectDetail({ detail }: { detail: { title: string; poster?: strin
       </div>
       <div className="space-y-3 p-5 md:p-8 pt-0">
         <h3 className="text-base font-bold">Torrents</h3>
-        {shouldFetch && isLoading ? (
+        {shouldFetch && (nyaaQuery.isLoading || resolve.isLoading) ? (
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
           </div>
         ) : (
-          <TorrentList torrents={torrents} meta={{ poster: detail.poster, kind: 'anime', title: detail.title }} />
+          <TorrentList torrents={list} meta={{ poster: detail.poster, kind: 'anime', title: detail.title }} />
         )}
       </div>
     </div>

@@ -23,6 +23,10 @@ async function fetchJson<T>(url: string): Promise<T> {
 const TMDB_SORTS = [
   { value: 'trending', label: 'Trending' },
   { value: 'popular', label: 'Popular' },
+  { value: 'now_playing', label: 'In theaters', movieOnly: true },
+  { value: 'airing_today', label: 'Airing today', tvOnly: true },
+  { value: 'on_the_air', label: 'On the air', tvOnly: true },
+  { value: 'upcoming', label: 'Upcoming', movieOnly: true },
   { value: 'top', label: 'Top rated' },
   { value: 'year', label: 'Newest' },
 ]
@@ -50,9 +54,8 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
   const [page, setPage] = useState(0)
   const [loadingMore, setLoadingMore] = useState(false)
 
-  // Prefer TMDB automatically when the user connected a key.
+  // Prefer TMDB automatically when the user connected a key (movies, TV AND anime).
   useEffect(() => {
-    if (type === 'anime') return
     let cancelled = false
     fetch('/api/tmdb', { cache: 'no-store' })
       .then((r) => r.json())
@@ -77,6 +80,9 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
       } else if (source === 'yts') {
         if (genre !== 'all') params.set('genre', genre)
         params.set('page', '0')
+      } else if (type === 'anime') {
+        // TMDB anime discover is page-based; Cinemeta anime uses skip
+        if (source === 'tmdb') params.set('page', '0')
       } else {
         if (genre !== 'all') params.set('genre', genre)
       }
@@ -101,6 +107,9 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
       } else if (source === 'yts') {
         if (genre !== 'all') params.set('genre', genre)
         params.set('page', String(next))
+      } else if (type === 'anime') {
+        if (source === 'tmdb') params.set('page', String(next))
+        else params.set('skip', String(next * 100))
       } else if (source === 'tmdb') {
         if (genre !== 'all') params.set('genre', genre)
         params.set('page', String(next))
@@ -128,7 +137,7 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
     // TMDB-only item (its imdb enrichment failed at list time) — resolve now
     const tmdbId = item.tmdbId || (item.refId.startsWith('tmdb:') ? parseInt(item.refId.slice(5), 10) : NaN)
     if (tmdbId) {
-      fetch<{ imdbId?: string | null }>(`/api/resolve?tmdbId=${tmdbId}&type=${item.kind === 'tv' ? 'tv' : 'movie'}`)
+      fetch(`/api/resolve?tmdbId=${tmdbId}&type=${item.kind === 'tv' ? 'tv' : 'movie'}`)
         .then((r) => r.json())
         .then((r) => {
           if (r.imdbId) {
@@ -167,31 +176,29 @@ export function CatalogView({ type }: { type: 'movie' | 'tv' | 'anime' }) {
               </SelectContent>
             </Select>
           ) : null}
-          {type !== 'anime' ? (
-            <Select value={sort} onValueChange={(v) => { setSort(v); refetch() }}>
-              <SelectTrigger className="w-[150px]" aria-label="Sort order">
-                <SelectValue placeholder="Sort" />
-              </SelectTrigger>
-              <SelectContent>
-                {sortOptions.map((s) => (
+          <Select value={sort} onValueChange={(v) => { setSort(v); refetch() }}>
+            <SelectTrigger className="w-[150px]" aria-label="Sort order">
+              <SelectValue placeholder="Sort" />
+            </SelectTrigger>
+            <SelectContent>
+              {sortOptions
+                .filter((s) => (type === 'movie' ? !('tvOnly' in s && s.tvOnly) : !('movieOnly' in s && s.movieOnly)))
+                .map((s) => (
                   <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-          {type !== 'anime' ? (
-            <Select value={source} onValueChange={(v) => { const src = v as CatalogSource; setSource(src); setSort(src === 'tmdb' ? 'trending' : src === 'yts' ? 'popular' : 'top'); refetch() }}>
-              <SelectTrigger className="w-[150px]" aria-label="Catalog source">
-                <SelectValue placeholder="Source" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="tmdb">TMDB</SelectItem>
-                <SelectItem value="cinemeta">Cinemeta</SelectItem>
-                {type === 'tv' ? <SelectItem value="tvmaze">TVmaze</SelectItem> : null}
-                {type === 'movie' ? <SelectItem value="yts">YTS Movies</SelectItem> : null}
-              </SelectContent>
-            </Select>
-          ) : null}
+            </SelectContent>
+          </Select>
+          <Select value={source} onValueChange={(v) => { const src = v as CatalogSource; setSource(src); setSort(src === 'tmdb' ? 'trending' : src === 'yts' ? 'popular' : 'top'); refetch() }}>
+            <SelectTrigger className="w-[150px]" aria-label="Catalog source">
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tmdb">TMDB</SelectItem>
+              <SelectItem value="cinemeta">Cinemeta</SelectItem>
+              {type === 'tv' ? <SelectItem value="tvmaze">TVmaze</SelectItem> : null}
+              {type === 'movie' ? <SelectItem value="yts">YTS Movies</SelectItem> : null}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
