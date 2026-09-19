@@ -599,3 +599,26 @@ Stage Summary:
 - GitHub repo live: https://github.com/shadow7019/OTAMA (main @ 0abaec6, forced over placeholder initial commit)
 - Deploy key (ed25519, fingerprint SHA256:hrtcXvKeqAjBXkCF8WGDKHwhVUe0n/2L/AX0JxywSPE) active in ~/.ssh/id_ed25519 for future pushes
 - TMDB v4 token protected: .env untracked; CI workflows expect TMDB_API_KEY / TMDB_ACCESS_TOKEN from GitHub Secrets
+
+---
+Task ID: 26
+Agent: Z.ai Code (main)
+Task: Build distribution packages — Android APK, Windows EXE, macOS Apple Silicon DMG
+
+Work Log:
+- APKs already built (android/dist/OTAMA-1.1.0.apk + debug) and EXEs already built (desktop/dist/OTAMA-Setup-1.1.0.exe + portable) from prior tasks
+- Added darwin-arm64 prisma binaryTarget; regenerated client (libquery_engine-darwin-arm64.dylib.node)
+- Analyzed electron-builder 26 dmg path: vendored dmgbuild bundle is Mach-O (python3.14 CF FA ED FE) → real DMG impossible on Linux; adopted zip-locally + native-DMG-via-CI strategy
+- desktop/package.json: mac target dir→zip (arm64), added predist:mac/dist:mac scripts
+- Ran prepare:all with services stopped (RAM freed to 3.4GB): renderer rebuilt with darwin engine bundled + TMDB .env + fresh template DB
+- electron-builder --mac --arm64: Electron 33.4.11 darwin-arm64 downloaded, OTAMA.app packaged, signing skipped (Linux), OTAMA-1.1.0-arm64.zip built (379MB)
+- Verified .app: Mach-O arm64 binary, LSMinimumSystemVersion 11.0, renderer/.next-pack+static, darwin prisma engine inside node_modules/.prisma, engine 109 pkgs, otama-template.db; zip 3859 entries zero corruption
+- Restarted web (:3000) + engine (:3003) via double-fork daemon (both 200)
+- New .github/workflows/macos-build.yml: macos-14 Apple Silicon runner → npx electron-builder --mac dmg --arm64 → OTAMA-*-arm64.dmg
+- Fixed all 3 workflows: added permissions:contents:write (public repo GITHUB_TOKEN defaults read-only → release upload would 403); android APK renamed OTAMA-<ver>.apk; mac release body carries per-platform install instructions
+- Pushed main (f9d4662) + tag v1.1.0 → all 3 CI pipelines triggered
+
+Stage Summary:
+- Local artifacts: android/dist/OTAMA-1.1.0.apk (81KB), desktop/dist/OTAMA-Setup-1.1.0.exe (146MB), OTAMA-1.1.0-portable.exe (146MB), desktop/dist/OTAMA-1.1.0-arm64.zip (379MB, macOS arm64)
+- CI will attach native DMG + fresh EXE + APK to https://github.com/shadow7019/OTAMA/releases/tag/v1.1.0
+- DMG needs TMDB_API_KEY/TMDB_ACCESS_TOKEN repo secrets for full metadata in CI builds (local builds already have TMDB baked in)
