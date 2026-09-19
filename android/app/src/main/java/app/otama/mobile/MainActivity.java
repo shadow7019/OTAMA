@@ -44,8 +44,10 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private FrameLayout root;
     private LinearLayout setupView;
+    private LinearLayout errorOverlay;
     private WebView webView;
     private EditText urlInput;
+    private String connectedUrl = "";
 
     // fullscreen <video> support
     private View customView;
@@ -106,7 +108,6 @@ public class MainActivity extends Activity {
         label.setTextColor(0xFFFAFAFA);
         label.setPadding(0, 0, 0, dp(8));
         setupView.addView(label);
-
         urlInput = new EditText(this);
         urlInput.setHint("http://192.168.1.50:3000");
         urlInput.setText(prefs.getString("last_server_url", ""));
@@ -137,13 +138,16 @@ public class MainActivity extends Activity {
         setupView.addView(connect, bp);
 
         TextView help = new TextView(this);
-        help.setText("Runs against an OTAMA server — start the OTAMA desktop app\n"
-                + "on your computer (app menu → LAN access) or host the web app,\n"
-                + "then enter its address here. Your server keeps favorites,\n"
-                + "history and does all torrent downloading.");
+        help.setText("OTAMA streams from a server running on your computer —\n"
+                + "the phone app is a remote control + player.\n\n"
+                + "1.  Open OTAMA on your computer (Windows / macOS)\n"
+                + "2.  Press Alt in OTAMA → click \"LAN access: ON\"\n"
+                + "      → OTAMA restarts and shows an address like\n"
+                + "      http://192.168.1.50:3000\n"
+                + "3.  Type that address here (same Wi-Fi on both devices)");
         help.setTextSize(12);
         help.setTextColor(ZINC_400);
-        help.setPadding(0, dp(28), 0, 0);
+        help.setPadding(0, dp(24), 0, 0);
         help.setGravity(Gravity.CENTER);
         setupView.addView(help);
 
@@ -198,7 +202,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.1.0");
+        s.setUserAgentString(ua + " OTAMA-Android/1.1.2");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -224,6 +228,13 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 return false;
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
+                if (request.isForMainFrame()) {
+                    runOnUiThread(() -> showErrorOverlay());
+                }
             }
         });
 
@@ -265,14 +276,85 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             serverHost = "";
         }
+        connectedUrl = url;
+        hideErrorOverlay();
         setupView.setVisibility(View.GONE);
         webView.setVisibility(View.VISIBLE);
         webView.loadUrl(url);
     }
 
     private void showSetup() {
+        hideErrorOverlay();
         webView.setVisibility(View.GONE);
         setupView.setVisibility(View.VISIBLE);
+    }
+
+    /* --------------------------- connection error --------------------------- */
+
+    /** Shown when the saved/entered server cannot be reached — without this,
+     *  a stale address (DHCP change, server off) would brick the app on an
+     *  error page with no way back to the address form. */
+    private void showErrorOverlay() {
+        if (errorOverlay != null) return;
+        errorOverlay = new LinearLayout(this);
+        errorOverlay.setOrientation(LinearLayout.VERTICAL);
+        errorOverlay.setBackgroundColor(BG);
+        errorOverlay.setGravity(Gravity.CENTER);
+        errorOverlay.setPadding(dp(28), dp(28), dp(28), dp(28));
+
+        TextView title = new TextView(this);
+        title.setText("Can't reach the OTAMA server");
+        title.setTextSize(18);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(0xFFFAFAFA);
+        title.setGravity(Gravity.CENTER);
+        errorOverlay.addView(title);
+
+        TextView detail = new TextView(this);
+        detail.setText(connectedUrl + "\n\nMake sure OTAMA is running on your computer\n"
+                + "with LAN access ON (Alt in OTAMA → \"LAN access\")\n"
+                + "and that both devices are on the same Wi-Fi.");
+        detail.setTextSize(13);
+        detail.setTextColor(ZINC_400);
+        detail.setGravity(Gravity.CENTER);
+        detail.setPadding(0, dp(14), 0, 0);
+        errorOverlay.addView(detail);
+
+        Button retry = new Button(this);
+        retry.setText("Try again");
+        retry.setTextColor(0xFF09090B);
+        retry.getBackground().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
+        retry.setOnClickListener(v -> {
+            hideErrorOverlay();
+            webView.reload();
+        });
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        rp.topMargin = dp(28);
+        errorOverlay.addView(retry, rp);
+
+        Button edit = new Button(this);
+        edit.setText("Edit server address");
+        edit.setTextColor(0xFFFAFAFA);
+        edit.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
+        edit.setOnClickListener(v -> {
+            prefs.edit().remove("server_url").apply();
+            showSetup();
+        });
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        ep.topMargin = dp(10);
+        errorOverlay.addView(edit, ep);
+
+        root.addView(errorOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void hideErrorOverlay() {
+        if (errorOverlay != null) {
+            root.removeView(errorOverlay);
+            errorOverlay = null;
+        }
     }
 
     /* ----------------------------- lifecycle ----------------------------- */

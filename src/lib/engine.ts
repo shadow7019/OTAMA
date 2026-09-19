@@ -17,17 +17,74 @@ export function desktopEnginePort(): number {
   return typeof p === 'number' && p > 0 ? p : ENGINE_PORT
 }
 
+/* ------------------------------ transport ------------------------------
+ * The web UI can be served from:
+ *  1. A gateway deployment (sandbox / self-hosted Caddy) — the engine is
+ *     reachable ONLY through relative `?XTransformPort=3003` routes.
+ *  2. The desktop app's LAN server (phone browser → http://<pc>:3000) —
+ *     NO gateway exists there; the engine answers directly on <pc>:3003
+ *     with permissive CORS (engine cors origin: '*').
+ *
+ * Probe both transports once per page load: whichever /health answers wins.
+ * Desktop (Electron) always uses the direct embedded engine.
+ * --------------------------------------------------------------------- */
+
+export type EngineTransport = 'direct' | 'gateway'
+
+let transport: EngineTransport | null = null
+let detectPromise: Promise<EngineTransport> | null = null
+
+/** Current transport — null until detection has completed (assumes gateway). */
+export function engineTransport(): EngineTransport | null {
+  return transport
+}
+
+/** Resolve the engine transport once; subsequent calls return the cached result. */
+export function ensureEngineTransport(): Promise<EngineTransport> {
+  if (typeof window === 'undefined') return Promise.resolve('gateway')
+  if (isDesktop()) {
+    transport = 'direct'
+    return Promise.resolve('direct')
+  }
+  if (detectPromise) return detectPromise
+  detectPromise = (async () => {
+    const host = window.location.hostname || '127.0.0.1'
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 2500)
+    try {
+      const probes = await Promise.allSettled([
+        fetch(`/health?XTransformPort=${ENGINE_PORT}`, { cache: 'no-store', signal: ctrl.signal }),
+        fetch(`http://${host}:${ENGINE_PORT}/health`, { cache: 'no-store', signal: ctrl.signal }),
+      ])
+      const ok = (p: PromiseSettledResult<Response>) => p.status === 'fulfilled' && p.value.ok
+      const gatewayOk = ok(probes[0])
+      const directOk = ok(probes[1])
+      // Gateway wins ties (established path when both happen to be exposed).
+      transport = directOk && !gatewayOk ? 'direct' : 'gateway'
+    } catch {
+      transport = 'gateway'
+    } finally {
+      clearTimeout(timer)
+    }
+    return transport
+  })()
+  return detectPromise
+}
+
+function preferDirect(): boolean {
+  return isDesktop() || transport === 'direct'
+}
+
 /**
  * Build an engine URL.
- *  - Web mode:   relative path + XTransformPort query (Caddy gateway routing).
- *  - Desktop:    absolute http://<window host>:<enginePort> — the engine runs
- *                embedded in the Electron app, no gateway exists there. The
- *                window host is 127.0.0.1 on the desktop itself, but becomes
- *                the desktop's LAN IP when a phone loads the app in LAN mode,
- *                so REST + streaming reach the right machine from any device.
+ *  - Direct (desktop shell / LAN phone): absolute http://<window host>:<port>.
+ *    The window host is 127.0.0.1 in the Electron app itself, but becomes the
+ *    desktop's LAN IP when a phone loads the app in LAN mode, so REST + video
+ *    range-streaming reach the right machine from any device.
+ *  - Gateway (web deployment): relative path + XTransformPort query.
  */
 export function engineUrl(path: string, params?: Record<string, string>): string {
-  if (isDesktop()) {
+  if (preferDirect()) {
     const search = new URLSearchParams(params || {})
     const qs = search.toString()
     const host = window.location.hostname || '127.0.0.1'
@@ -35,6 +92,15 @@ export function engineUrl(path: string, params?: Record<string, string>): string
   }
   const search = new URLSearchParams({ ...(params || {}), XTransformPort: String(ENGINE_PORT) })
   return `${path}?${search.toString()}`
+}
+
+/** Socket.io target matching the detected transport (see use-engine-state). */
+export function engineSocketTarget(): { url: string; path: string } {
+  if (preferDirect()) {
+    const host = window.location.hostname || '127.0.0.1'
+    return { url: `http://${host}:${desktopEnginePort()}`, path: '/socket.io' }
+  }
+  return { url: `/?XTransformPort=${ENGINE_PORT}`, path: '/socket.io' }
 }
 
 export const streamUrl = (infoHash: string, fileIndex: number) =>

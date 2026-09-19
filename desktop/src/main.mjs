@@ -23,6 +23,7 @@ import { app, BrowserWindow, Menu, dialog, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { createServer, get } from 'node:http'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -40,6 +41,7 @@ let rendererChild = null
 let quitting = false
 let engineRestarts = 0
 let rendererUrl = ''
+let rendererPortNum = 0
 let lanMode = false
 
 /* ------------------------------ small utils ------------------------------ */
@@ -99,8 +101,20 @@ async function waitUntilReady(url, timeoutMs) {
   return false
 }
 
-/** Ask the OS for a free TCP port. */
-function findFreePort() {
+/** Ask the OS for a free TCP port. In LAN mode a STABLE port matters — the
+ *  user types the address into their phone, so prefer the well-known 3000
+ *  and only fall back to a random port when it is taken. */
+function portAvailable(port, host = '0.0.0.0') {
+  return new Promise((resolve) => {
+    const srv = createServer()
+    srv.unref()
+    srv.once('error', () => resolve(false))
+    srv.listen({ port, host }, () => srv.close(() => resolve(true)))
+  })
+}
+
+async function findFreePort(preferred) {
+  if (preferred && (await portAvailable(preferred))) return preferred
   return new Promise((resolve, reject) => {
     const srv = createServer()
     srv.unref()
@@ -110,6 +124,17 @@ function findFreePort() {
       srv.close(() => resolve(port))
     })
   })
+}
+
+/** First non-internal IPv4 address — the address phones should connect to. */
+function lanAddress() {
+  const ifaces = os.networkInterfaces()
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address
+    }
+  }
+  return null
 }
 
 /** Run a plain-node script through Electron's bundled Node runtime. */
@@ -286,7 +311,8 @@ async function startRendererServer() {
     throw new Error(`Renderer server missing: ${serverJs} (run "npm run prepare:renderer" first)`)
   }
 
-  const port = await findFreePort()
+  const port = await findFreePort(lanMode ? 3000 : undefined)
+  rendererPortNum = port
   // Writable SQLite database inside the user profile (Prisma DATABASE_URL).
   const dbPath = path.join(app.getPath('userData'), 'otama.db').replace(/\\/g, '/')
   ensureDatabaseFile(dbPath)
@@ -340,7 +366,7 @@ const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
   <h1>OTAMA</h1><p>starting torrent engine…</p><div class="spin"></div>
 </body></html>`
 
-function buildMenu() {
+function buildMenu(lanAddr) {
   const template = [
     {
       label: 'OTAMA',
@@ -349,10 +375,14 @@ function buildMenu() {
         { type: 'separator' },
         {
           label: lanMode
-            ? 'LAN access: ON — click to turn off (restarts)'
+            ? `LAN access: ON${lanAddr ? ` — phones connect to ${lanAddr}` : ''}`
             : 'LAN access: OFF — click to allow phones (restarts)',
-          click: toggleLanMode,
+          enabled: !lanMode,
+          click: lanMode ? undefined : toggleLanMode,
         },
+        ...(lanMode
+          ? [{ label: 'Turn LAN access off (restarts OTAMA)', click: toggleLanMode }]
+          : []),
         { type: 'separator' },
         { role: 'minimize' },
         { role: 'quit', label: 'Quit OTAMA' },
@@ -465,6 +495,30 @@ if (!app.requestSingleInstanceLock()) {
         createWindow()
         await mainWindow.loadURL(rendererUrl)
         log('window loaded — OTAMA is ready')
+      }
+
+      if (lanMode && !DEV_URL) {
+        const lan = lanAddress()
+        const phoneUrl = lan ? `http://${lan}:${rendererPortNum}` : null
+        buildMenu(phoneUrl || 'LAN')
+        if (phoneUrl) {
+          log(`LAN mode — phones connect to ${phoneUrl}`)
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'OTAMA — LAN access is ON',
+            message: 'Phones on your Wi-Fi can now use OTAMA.',
+            detail:
+              `Open the OTAMA Android app and enter:\n\n${phoneUrl}\n\n` +
+              'Both devices must be on the same Wi-Fi network.\n' +
+              'If Windows Firewall asks, allow OTAMA on private networks.',
+            buttons: ['OK'],
+          })
+        } else {
+          buildMenu()
+          log('LAN mode — no LAN IPv4 address found (offline?)')
+        }
+      } else {
+        buildMenu()
       }
     } catch (err) {
       log('startup failed:', err)
