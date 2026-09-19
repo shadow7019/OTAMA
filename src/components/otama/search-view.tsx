@@ -9,6 +9,7 @@ import { TpbResultList } from '@/components/otama/tpb-result-list'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { MetaItem, TorrentOption, TpbItem } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
+import { fetchJson } from '@/lib/fetch-json'
 
 interface SearchResults {
   movies: MetaItem[]
@@ -19,13 +20,6 @@ interface SearchResults {
   leetx: TorrentOption[]
   solid: TorrentOption[]
   more: TorrentOption[]
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
-  return data as T
 }
 
 export function SearchView({ query }: { query: string }) {

@@ -5,8 +5,14 @@ export const dynamic = 'force-dynamic'
 
 /** GET /api/history — watch history ordered by recency */
 export async function GET() {
-  const history = await db.watchHistory.findMany({ orderBy: { updatedAt: 'desc' }, take: 40 })
-  return NextResponse.json({ history })
+  try {
+    const history = await db.watchHistory.findMany({ orderBy: { updatedAt: 'desc' }, take: 40 })
+    return NextResponse.json({ history })
+  } catch (err) {
+    // ALWAYS answer JSON — an uncaught error here becomes a plain-text 500,
+    // which the client surfaces as the cryptic "Unexpected token" message.
+    return NextResponse.json({ history: [], error: (err as Error).message }, { status: 500 })
+  }
 }
 
 /** POST /api/history — upsert playback position */
@@ -49,7 +55,11 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const refId = searchParams.get('refId')
   if (!refId) return NextResponse.json({ error: 'refId required' }, { status: 400 })
-  if (refId === 'all') await db.watchHistory.deleteMany({})
-  else await db.watchHistory.deleteMany({ where: { refId } })
-  return NextResponse.json({ ok: true })
+  try {
+    if (refId === 'all') await db.watchHistory.deleteMany({})
+    else await db.watchHistory.deleteMany({ where: { refId } })
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
 }

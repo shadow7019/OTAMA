@@ -13,6 +13,7 @@ import { TorrendsSitesDialog } from '@/components/otama/torrends-sites-dialog'
 import { addTorrent, bestVideoFile, guessPlayableExt } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 import type { MetaItem, TpbItem, TorrentOption } from '@/lib/types'
+import { fetchJson } from '@/lib/fetch-json'
 
 const TPB_CATEGORIES = [
   { value: 'all', label: 'All video' },
@@ -98,13 +99,6 @@ const LIME_CATEGORIES = [
   { value: 'apps', label: 'Apps' },
   { value: 'other', label: 'Other' },
 ]
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
-  return data as T
-}
 
 /** Torrents hub: ThePirateBay + 1337x + SolidTorrents + Torrentio + the Torrends.to site directory. */
 export function TpbView() {

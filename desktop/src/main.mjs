@@ -452,6 +452,34 @@ function createWindow() {
 
 /* ------------------------------ lifecycle ------------------------------ */
 
+/**
+ * Post-start API self-check. The phone UI speaks JSON to this embedded
+ * server; if the API layer is broken (e.g. a packaging problem on this
+ * machine), the desktop window still opens but every catalog/metadata call
+ * fails with cryptic client errors. Surface it HERE, on the PC, in plain
+ * words. Provider outages do NOT trigger this — those stay JSON (502).
+ */
+async function apiSmokeCheck(base) {
+  const smoke = await httpGet(`${base}/api/catalog?type=movie&skip=0`, 25_000)
+  const looksJson = (smoke.body || '').trimStart().startsWith('{')
+  if (smoke.ok && looksJson) {
+    log('API self-check ok (JSON)')
+    return
+  }
+  const bodyStart = (smoke.body || '').slice(0, 100).replace(/\s+/g, ' ')
+  log(`API self-check FAILED — status=${smoke.status} body="${bodyStart}"`)
+  dialog.showMessageBox({
+    type: 'warning',
+    title: 'OTAMA — self-check',
+    message: 'OTAMA started, but its local API answered unexpectedly.',
+    detail:
+      `HTTP ${smoke.status} (expected JSON)${bodyStart ? ` — got: ${bodyStart}` : ''}\n\n` +
+      'Phones connecting over LAN will not be able to browse metadata.\n' +
+      'Try restarting OTAMA once; if it keeps happening, reinstall the app.',
+    buttons: ['OK'],
+  })
+}
+
 function killChildren() {
   for (const child of [engineChild, rendererChild]) {
     if (child && !child.killed) {
@@ -495,6 +523,7 @@ if (!app.requestSingleInstanceLock()) {
         createWindow()
         await mainWindow.loadURL(rendererUrl)
         log('window loaded — OTAMA is ready')
+        void apiSmokeCheck(rendererUrl)
       }
 
       if (lanMode && !DEV_URL) {

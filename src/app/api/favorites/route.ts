@@ -5,8 +5,14 @@ export const dynamic = 'force-dynamic'
 
 /** GET /api/favorites — list all favorites */
 export async function GET() {
-  const favorites = await db.favorite.findMany({ orderBy: { createdAt: 'desc' } })
-  return NextResponse.json({ favorites })
+  try {
+    const favorites = await db.favorite.findMany({ orderBy: { createdAt: 'desc' } })
+    return NextResponse.json({ favorites })
+  } catch (err) {
+    // ALWAYS answer JSON — an uncaught error here becomes a plain-text 500,
+    // which the client surfaces as the cryptic "Unexpected token" message.
+    return NextResponse.json({ favorites: [], error: (err as Error).message }, { status: 500 })
+  }
 }
 
 /** POST /api/favorites — add or update a favorite */
@@ -47,6 +53,10 @@ export async function DELETE(req: NextRequest) {
   const kind = searchParams.get('kind')
   const refId = searchParams.get('refId')
   if (!kind || !refId) return NextResponse.json({ error: 'kind, refId required' }, { status: 400 })
-  await db.favorite.deleteMany({ where: { kind, refId } })
-  return NextResponse.json({ ok: true })
+  try {
+    await db.favorite.deleteMany({ where: { kind, refId } })
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
 }

@@ -27,7 +27,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 
 /**
  * OTAMA for Android — a focused WebView shell that connects to a running
@@ -47,7 +52,12 @@ public class MainActivity extends Activity {
     private LinearLayout errorOverlay;
     private WebView webView;
     private EditText urlInput;
+    private TextView testStatus;
+    private Button connectBtn;
+    private Button anywayBtn;
     private String connectedUrl = "";
+    private String pendingUrl = "";
+    private boolean testing = false;
 
     // fullscreen <video> support
     private View customView;
@@ -132,10 +142,38 @@ public class MainActivity extends Activity {
         connect.setTextColor(0xFF09090B);
         connect.getBackground().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
         connect.setOnClickListener(v -> connect());
+        connectBtn = connect;
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
         bp.topMargin = dp(16);
         setupView.addView(connect, bp);
+
+        // Diagnosis shown when the pre-connect test does not find a healthy
+        // OTAMA server at the address ("unexpected token"-style confusion
+        // should never reach the web UI).
+        testStatus = new TextView(this);
+        testStatus.setTextSize(12);
+        testStatus.setTextColor(0xFFF87171);
+        testStatus.setPadding(dp(4), dp(14), dp(4), 0);
+        testStatus.setVisibility(View.GONE);
+        setupView.addView(testStatus, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        anywayBtn = new Button(this);
+        anywayBtn.setText("Connect anyway");
+        anywayBtn.setTextSize(14);
+        anywayBtn.setTextColor(0xFFFAFAFA);
+        anywayBtn.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
+        anywayBtn.setVisibility(View.GONE);
+        anywayBtn.setOnClickListener(v -> {
+            if (pendingUrl.isEmpty()) return;
+            prefs.edit().putString("server_url", pendingUrl).putString("last_server_url", pendingUrl).apply();
+            enterWebView(pendingUrl);
+        });
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        ap.topMargin = dp(10);
+        setupView.addView(anywayBtn, ap);
 
         TextView help = new TextView(this);
         help.setText("OTAMA streams from a server running on your computer —\n"
@@ -155,6 +193,7 @@ public class MainActivity extends Activity {
     }
 
     private void connect() {
+        if (testing) return;
         String raw = urlInput.getText().toString().trim();
         if (raw.isEmpty()) {
             toast("Enter your OTAMA server address");
@@ -175,8 +214,100 @@ public class MainActivity extends Activity {
             return;
         }
         if (!raw.endsWith("/")) raw += "/";
-        prefs.edit().putString("server_url", raw).putString("last_server_url", raw).apply();
-        enterWebView(raw);
+        final String candidate = raw;
+
+        // Pre-flight check: prove the OTAMA API actually answers here before
+        // dropping the user into a half-broken WebView session.
+        testing = true;
+        connectBtn.setText("Testing…");
+        connectBtn.setEnabled(false);
+        testStatus.setVisibility(View.GONE);
+        anywayBtn.setVisibility(View.GONE);
+        new Thread(() -> {
+            final String verdict = testOtamaServer(candidate); // null = healthy OTAMA
+            runOnUiThread(() -> {
+                testing = false;
+                connectBtn.setText("Connect");
+                connectBtn.setEnabled(true);
+                if (verdict == null) {
+                    prefs.edit().putString("server_url", candidate).putString("last_server_url", candidate).apply();
+                    enterWebView(candidate);
+                } else {
+                    pendingUrl = candidate;
+                    testStatus.setText(verdict);
+                    testStatus.setVisibility(View.VISIBLE);
+                    anywayBtn.setVisibility(View.VISIBLE);
+                }
+            });
+        }, "otama-connect-test").start();
+    }
+
+    /**
+     * GET <base>api/catalog — a JSON answer proves the OTAMA API is live at
+     * this address (even a provider-failure JSON 502 is proof enough). Returns
+     * null when healthy, otherwise a human diagnosis of what went wrong.
+     */
+    private static String testOtamaServer(String base) {
+        HttpURLConnection conn = null;
+        try {
+            URL u = new URL(base + "api/catalog?type=movie&skip=0&sort=top");
+            conn = (HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(12000);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("User-Agent", "OTAMA-Android");
+            int code = conn.getResponseCode();
+            String ctype = conn.getContentType() == null ? "" : conn.getContentType().toLowerCase();
+
+            if (ctype.contains("json")) return null; // it IS OTAMA
+
+            if (code == 200 && ctype.contains("html")) {
+                return "That address serves a web page, but not the OTAMA API.\n"
+                        + "Wrong port? The OTAMA desktop app shows the exact\n"
+                        + "address to type (menu: OTAMA → LAN access).";
+            }
+            if (code == 404) {
+                return "A server answered but it has no OTAMA API (HTTP 404).\n"
+                        + "Is the OTAMA desktop app (v1.1.2 or newer) running there?";
+            }
+            if (code >= 500) {
+                return "The server answered with HTTP " + code + " — OTAMA may still\n"
+                        + "be starting up. Try again in a few seconds.";
+            }
+            if (looksLikeOtama(base)) return null; // very old build — allow
+            return "Unexpected answer (HTTP " + code + ", "
+                    + (ctype.isEmpty() ? "unknown type" : ctype) + ").";
+        } catch (SocketTimeoutException | ConnectException e) {
+            return "Nothing answered at that address (timed out).\n"
+                    + "• Is OTAMA running on the computer with LAN access ON (Alt → \"LAN access\")?\n"
+                    + "• Both devices on the same Wi-Fi?\n"
+                    + "• Windows Firewall: allow OTAMA on Private networks.";
+        } catch (Exception e) {
+            return "Could not connect (" + e.getClass().getSimpleName() + "). Check the address.";
+        } finally {
+            if (conn != null) try { conn.disconnect(); } catch (Exception ignored) { }
+        }
+    }
+
+    /** Fallback: does the root page at least mention OTAMA somewhere? */
+    private static boolean looksLikeOtama(String base) {
+        HttpURLConnection c = null;
+        try {
+            URL u = new URL(base);
+            c = (HttpURLConnection) u.openConnection();
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(12000);
+            InputStream is = c.getInputStream();
+            byte[] buf = new byte[8192];
+            int n = is.read(buf);
+            try { is.close(); } catch (Exception ignored) { }
+            String head = n > 0 ? new String(buf, 0, n, "UTF-8") : "";
+            return head.toLowerCase().contains("otama");
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
+        }
     }
 
     private static boolean isIpLike(String h) {
@@ -202,7 +333,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.1.2");
+        s.setUserAgentString(ua + " OTAMA-Android/1.1.3");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);

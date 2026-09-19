@@ -661,3 +661,25 @@ Work Log:
 Stage Summary:
 - Phone flow: OTAMA on PC → Alt → "LAN access: ON" → dialog shows http://<pc-ip>:3000 → type into Android app → full streaming via engine's 206 range responses
 - Release: https://github.com/shadow7019/OTAMA/releases/tag/v1.1.2
+
+---
+Task ID: 29
+Agent: Z.ai Code (main)
+Task: "Couldn't reach metadata / unexpected token" after opening the app (Android LAN client)
+
+Work Log:
+- Diagnosed: the error text maps to home-view "Could not reach the metadata provider ({msg})"; "Unexpected token" = client res.json() parsing a NON-JSON body (Next plain-text 500 / HTML 404), not a provider outage (catalog route already answers JSON 502 on provider errors)
+- Reproduced the PACKAGED build locally (OTAMA_PACK_BUILD=1 npx next build → standalone on :3100): /api/catalog 200 JSON + TMDB builtin key valid → server code healthy; failure class is server-instance-specific
+- Found REAL bug class: /api/favorites GET (and DELETE, history GET/DELETE) had NO try/catch — a DB error (P2021 empty SQLite, e.g. failed template copy) escaped as uncaught → non-JSON 500 → "Unexpected token" in UI; verified live: /api/favorites on table-less DB returned HTTP 500 with EMPTY content-type
+- Fixed: wrapped favorites/history GET+DELETE (JSON-guaranteed); /api/catalog route already fully guarded
+- src/lib/db.ts rewritten as LAZY Proxy — PrismaClient construction deferred to first query, so any engine/env problem degrades to per-route caught JSON errors instead of a module-load crash (which 500s every route touching it as plain text)
+- New src/lib/fetch-json.ts (FetchJsonError + isUnreachableError): checks content-type BEFORE parsing, maps network failure / HTML / 404 / 5xx to human actionable messages; refactored 7 components off their identical unsafe local fetchJson (home-view, detail-overlay, catalog-view, search-view, tpb-view, anime-fresh-row, tpb-fresh-row); home-view error card now self-explanatory
+- Android MainActivity: pre-connect TEST — GET <address>api/catalog in background thread; JSON → connect; HTML/404/timeout → red diagnosis on setup screen (wrong port / server off / firewall / not OTAMA) + "Connect anyway" escape hatch; UA 1.1.3
+- Desktop main.mjs: post-start apiSmokeCheck() — GET /api/catalog; non-JSON → warning dialog ON THE PC with HTTP status + body head (surfaces broken packaging/userData issues where they can be acted on)
+- Verification: rebuilt pack → /api/favorites on EMPTY db now 500+application/json; catalog 200; / 200; lint clean; dev server restarted with DATABASE_URL (was missing env → favorites JSON-500 in sandbox only); engine :3003 healthy
+- Versions: desktop 1.1.3, android versionCode 4 / versionName 1.1.3 → tag v1.1.3
+
+Stage Summary:
+- Every OTAMA API route now answers JSON in all failure modes; client never shows "Unexpected token" again — instead names the actual problem (server unreachable / HTML from wrong app / internal error + status)
+- Android setup screen self-diagnoses the address before entering the WebView; desktop EXE self-checks its embedded API at launch
+- User guidance: phone must use the exact address from OTAMA's LAN dialog (http://<pc-ip>:3000), same Wi-Fi, Windows Firewall allow on Private networks; PC's own window shows the same metadata errors if the PC install is broken

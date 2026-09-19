@@ -9,16 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { MediaCard } from '@/components/otama/media-card'
 import { useAppStore } from '@/store/app-store'
 import type { MetaItem } from '@/lib/types'
+import { fetchJson } from '@/lib/fetch-json'
 
 const MOVIE_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
 const TV_GENRES = ['Action & Adventure', 'Animation', 'Comedy', 'Crime', 'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Reality', 'Romance', 'Sci-Fi & Fantasy', 'Thriller', 'War', 'Western']
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
-  return data as T
-}
 
 const TMDB_SORTS = [
   { value: 'trending', label: 'Trending' },

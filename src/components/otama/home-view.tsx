@@ -9,13 +9,7 @@ import { PirateBayFreshRow } from '@/components/otama/tpb-fresh-row'
 import { AnimeFreshRow } from '@/components/otama/anime-fresh-row'
 import { useAppStore } from '@/store/app-store'
 import type { MetaItem } from '@/lib/types'
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
-  return data as T
-}
+import { fetchJson } from '@/lib/fetch-json'
 
 export function HomeView() {
   const openDetail = useAppStore((s) => s.openDetail)
@@ -91,9 +85,10 @@ export function HomeView() {
         <PirateBayFreshRow />
         <MediaRow title="Coming" accent="soon" items={(upcoming.data?.items || []).slice(0, 20)} loading={upcoming.isLoading} onSelect={openFor} />
         {movies.error ? (
-          <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
-            Could not reach the metadata provider ({(movies.error as Error).message}). Check your connection and refresh.
-          </p>
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+            <p className="font-medium">Metadata is unavailable right now.</p>
+            <p className="mt-1 opacity-90">{(movies.error as Error).message}</p>
+          </div>
         ) : null}
       </div>
     </div>

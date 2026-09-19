@@ -9,13 +9,7 @@ import { QualityBadge, Seeds } from '@/components/otama/media-card'
 import { addTorrent, bestVideoFile, guessPlayableExt } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 import type { TpbItem } from '@/lib/types'
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
-  return data as T
-}
+import { fetchJson } from '@/lib/fetch-json'
 
 /**
  * "Fresh from Pirate Bay" — live, seed-sorted latest uploads straight on the

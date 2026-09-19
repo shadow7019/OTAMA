@@ -14,13 +14,7 @@ import { TorrentList } from '@/components/otama/torrent-list'
 import { playableFirst, streamTorrentOption, isHevcName } from '@/lib/engine'
 import type { MetaItem, MovieDetail, SeriesDetail, TorrentOption } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
-  return data as T
-}
+import { fetchJson } from '@/lib/fetch-json'
 
 function useFavorite(detail: { kind: string; refId?: string; title: string; poster?: string; year?: number; rating?: number }) {
   const [fav, setFav] = useState(false)
