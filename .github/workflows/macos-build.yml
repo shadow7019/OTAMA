@@ -93,7 +93,7 @@ jobs:
             |---|---|---|
             | 🪟 Windows | `OTAMA-Setup-*.exe` | Run installer (SmartScreen may warn — unsigned build, click "More info → Run anyway") |
             | 🪟 Windows portable | `OTAMA-*-portable.exe` | Single file, no install |
-            | 🍎 macOS (Apple Silicon M1/M2/M3/M4) | `OTAMA-*-arm64.dmg` | Open DMG, drag OTAMA to Applications, then right-click → Open once (unsigned build) |
+            | 🍎 macOS (Apple Silicon M1/M2/M3/M4) | `OTAMA-*-arm64.dmg` | Open DMG, drag OTAMA to Applications. App is ad-hoc signed — if macOS still complains, right-click OTAMA → Open, or run `xattr -cr /Applications/OTAMA.app` once |
             | 🤖 Android | `OTAMA-*.apk` | Allow "install unknown apps", open APK |
 
             OTAMA is self-contained: embedded torrent-stream engine + Next.js renderer + template database.
