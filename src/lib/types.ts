@@ -29,13 +29,17 @@ export interface TorrentOption {
   sizeBytes?: number
   seeds?: number
   leechers?: number
-  provider: 'tpb' | 'eztv' | 'nyaa' | 'yts' | '1337x' | 'torrends'
+  provider: 'tpb' | 'eztv' | 'nyaa' | 'yts' | '1337x' | 'torrends' | 'torrentio' | 'solidtorrents'
   /** magnet uri or raw info hash for the engine */
   source: string
   season?: number
   episode?: number
   date?: string
   status?: 'vip' | 'trusted' | string
+  /** authoritative video-file index (Torrentio fileIdx) — preferred over auto-pick */
+  fileIndex?: number
+  /** origin site of an aggregated torrent (e.g. 'ThePirateBay', 'TorrentGalaxy') */
+  sourceSite?: string
   /** web page of this torrent (used for "open on site" fallbacks) */
   detailUrl?: string
 }

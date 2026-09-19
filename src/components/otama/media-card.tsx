@@ -1,12 +1,17 @@
 'use client'
 
 import { useState } from 'react'
-import { Star, Play } from 'lucide-react'
+import { Star, Play, Film } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { MetaItem } from '@/lib/types'
 
-/** Poster image with graceful gradient fallback. */
+/**
+ * Poster image with a branded no-artwork fallback. When the poster URL is
+ * missing/broken (Cinemeta's metahub serves an HTML error page for titles
+ * without artwork), we render an intentional OTAMA-style card — film icon +
+ * the title — instead of a grey "initials" placeholder.
+ */
 export function Poster({
   src,
   alt,
@@ -19,14 +24,8 @@ export function Poster({
   ratio?: string
 }) {
   const [failed, setFailed] = useState(false)
-  const initials = alt
-    .split(' ')
-    .map((w) => w[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase()
   return (
-    <div className={cn('relative overflow-hidden bg-zinc-800/80', ratio, className)}>
+    <div className={cn('relative overflow-hidden', ratio, className)}>
       {src && !failed ? (
         <img
           src={src}
@@ -36,8 +35,15 @@ export function Poster({
           onError={() => setFailed(true)}
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-800 via-zinc-900 to-amber-950/60">
-          <span className="text-2xl font-black text-amber-200/70">{initials || 'OT'}</span>
+        <div
+          className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-800 via-zinc-900 to-amber-950/70 p-3 text-center"
+          role="img"
+          aria-label={`${alt} — no artwork available`}
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/30 bg-amber-500/10">
+            <Film className="h-5 w-5 text-amber-300/80" aria-hidden />
+          </span>
+          <span className="line-clamp-4 text-xs font-semibold leading-snug text-zinc-300">{alt}</span>
         </div>
       )}
     </div>

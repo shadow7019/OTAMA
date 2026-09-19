@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cineCatalog, nyaaSearch, apibaySearch, tvmazeSearch } from '@/lib/server/providers'
+import { cineCatalog, nyaaSearch, apibaySearch, tvmazeSearch, stripBrokenPosters } from '@/lib/server/providers'
 import { ytsSearch } from '@/lib/server/yts'
 import { leetxSearch } from '@/lib/server/leetx'
+import { solidSearch } from '@/lib/server/solidtorrents'
 import { tmdbSearchMulti, tmdbStatus } from '@/lib/server/tmdb'
 import type { MetaItem, TorrentOption, TpbItem } from '@/lib/types'
 
@@ -16,7 +17,9 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get('q') || '').trim()
-  if (!q) return NextResponse.json({ movies: [], series: [], anime: [], tpb: [], leetx: [] })
+  if (!q) {
+    return NextResponse.json({ movies: [], series: [], anime: [], tpb: [], leetx: [], solid: [] })
+  }
 
   const safe = async <T>(p: Promise<T>, fallback: T): Promise<T> => {
     try { return await p } catch { return fallback }
@@ -34,7 +37,7 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* TMDB optional */ }
 
-  const [movies, series, tvAlt, anime, tpb, ytsMovies, leetx] = await Promise.all([
+  const [movies, series, tvAlt, anime, tpb, ytsMovies, leetx, solid] = await Promise.all([
     safe(cineCatalog('movie', { search: q, sort: 'top' }), [] as MetaItem[]),
     safe(cineCatalog('series', { search: q, sort: 'top' }), [] as MetaItem[]),
     safe(tvmazeSearch(q), [] as MetaItem[]),
@@ -42,6 +45,7 @@ export async function GET(req: NextRequest) {
     safe(apibaySearch(q), [] as TpbItem[]),
     safe(ytsSearch(q), [] as MetaItem[]),
     safe(leetxSearch(q, { resolve: 10 }), [] as TorrentOption[]),
+    safe(solidSearch(q), [] as TorrentOption[]),
   ])
 
   // merge TMDB results first (best metadata), dedupe by imdb id then title
@@ -80,11 +84,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // strip broken poster URLs (metahub HTML placeholders) so cards show the
+  // branded fallback instead of a failed image load
+  const [moviesClean, seriesClean] = await Promise.all([
+    stripBrokenPosters(moviesMerged).catch(() => moviesMerged),
+    stripBrokenPosters(seriesMerged).catch(() => seriesMerged),
+  ])
+
   return NextResponse.json({
-    movies: moviesMerged.slice(0, 40),
-    series: seriesMerged,
+    movies: moviesClean.slice(0, 40),
+    series: seriesClean,
     anime,
     tpb: tpb.slice(0, 30),
     leetx: leetx.slice(0, 20),
+    solid: solid.slice(0, 20),
   })
 }

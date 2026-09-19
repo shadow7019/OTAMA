@@ -82,7 +82,7 @@ export async function cfGetText(url: string, timeoutMs = 12_000): Promise<string
     const out = await new Promise<string>((resolve, reject) => {
       execFile(
         'curl',
-        ['-s', '--compressed', '--max-time', String(maxTime), '-A', UA, '-H', 'Accept: */*', url],
+        ['-s', '-L', '--compressed', '--max-time', String(maxTime), '-A', UA, '-H', 'Accept: */*', url],
         { timeout: (maxTime + 2) * 1000, maxBuffer: 8 * 1024 * 1024 },
         (err, stdout) => (err ? reject(err) : resolve(stdout)),
       )
@@ -299,11 +299,13 @@ export function apibayToTorrentOption(item: TpbItem): TorrentOption {
   }
 }
 
-/** Find movie torrents: TPB (imdb-keyed) + YTS (imdb-keyed) + 1337x, merged by seed count. */
+/** Find movie torrents: Torrentio (multi-site, file-exact) + TPB + YTS + 1337x + SolidTorrents. */
 export async function findMovieTorrents(imdbId?: string, title?: string, year?: number): Promise<TorrentOption[]> {
   return cached(`movtorrent:${imdbId || '-'}|${title || '-'}|${year || '-'}`, 10 * 60_000, async () => {
     const { ytsMovieTorrents } = await import('./yts')
     const { leetxSearch } = await import('./leetx')
+    const { torrentioStreams } = await import('./torrentio')
+    const { solidSearch } = await import('./solidtorrents')
 
     const tpbTask = (async () => {
       let rows: TpbItem[] = []
@@ -324,24 +326,75 @@ export async function findMovieTorrents(imdbId?: string, title?: string, year?: 
         .map(apibayToTorrentOption)
     })()
 
-    const [tpb, yts, leetx] = await Promise.all([
+    const [torrentio, tpb, yts, leetx, solid] = await Promise.all([
+      imdbId
+        ? torrentioStreams('movie', imdbId).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
       tpbTask,
       ytsMovieTorrents(imdbId, title, year).catch(() => [] as TorrentOption[]),
       title
         ? leetxSearch(`${title}${year ? ` ${year}` : ''}`, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[])
         : Promise.resolve([] as TorrentOption[]),
+      title
+        ? solidSearch(`${title}${year ? ` ${year}` : ''}`, { videoOnly: true }).catch(() => [] as TorrentOption[])
+        : Promise.resolve([] as TorrentOption[]),
     ])
 
     const seen = new Set<string>()
     const merged: TorrentOption[] = []
-    for (const t of [...tpb, ...yts, ...leetx]) {
-      if (!t.source || seen.has(t.source)) continue
-      seen.add(t.source)
+    for (const t of [...torrentio, ...tpb, ...yts, ...leetx, ...solid]) {
+      const key = (t.source || t.hash || '').toLowerCase()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
       merged.push(t)
     }
     // Browser-playable (H.264/x264, MP4/MKV) releases first, seeds second.
-    return sortTorrentsPlayableFirst(merged).slice(0, 30)
+    return sortTorrentsPlayableFirst(merged).slice(0, 40)
   })
+}
+
+/* ------------------------------ poster validation ------------------------------ */
+
+const posterCheckCache = globalThis as unknown as { __otamaPosterCache?: Map<string, boolean> }
+const posterCache: Map<string, boolean> = posterCheckCache.__otamaPosterCache ?? new Map()
+posterCheckCache.__otamaPosterCache = posterCache
+
+/**
+ * Does a poster URL actually resolve to an image? Cinemeta's metahub serves a
+ * small HTML error page (content-type text/html) for titles without artwork,
+ * which used to render as an ugly grey "initials" placeholder card.
+ */
+export async function posterWorks(url: string): Promise<boolean> {
+  if (!url) return false
+  if (!/^https?:\/\//.test(url)) return true
+  const hit = posterCache.get(url)
+  if (hit !== undefined) return hit
+  let ok = true
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(6_000),
+      headers: { 'User-Agent': UA },
+    })
+    const ct = (res.headers.get('content-type') || '').toLowerCase()
+    if (!res.ok || !ct.startsWith('image/')) ok = false
+  } catch {
+    // network hiccup — give the poster the benefit of the doubt
+    ok = true
+  }
+  if (posterCache.size < 5000) posterCache.set(url, ok)
+  return ok
+}
+
+/** Drop broken poster URLs from a list (poster falls back to branded card). */
+export async function stripBrokenPosters<T extends { poster?: string }>(items: T[]): Promise<T[]> {
+  return Promise.all(
+    items.map(async (it) => {
+      if (!it.poster) return it
+      const ok = await posterWorks(it.poster)
+      return ok ? it : { ...it, poster: undefined }
+    }),
+  )
 }
 
 /* ------------------------------ eztv (best-effort) ------------------------------ */
@@ -573,13 +626,33 @@ export async function seriesDetail(imdbId: string): Promise<{ item: MetaItem & {
   return { item, seasons }
 }
 
-/** Episode torrents: EZTV first, TPB fallback. */
+/** Episode torrents: Torrentio (multi-site, file-exact) + EZTV + TPB + 1337x + SolidTorrents. */
 export async function findEpisodeTorrents(
   imdbId?: string,
   title?: string,
   season?: number,
   episode?: number,
 ): Promise<TorrentOption[]> {
+  // Torrentio first — aggregates EZTV/TPB/1337x/TGX/RARBG/KAT and returns the
+  // exact video file index for the episode (fast + fewest dead torrents).
+  if (imdbId && /^tt\d+$/.test(imdbId)) {
+    try {
+      const { torrentioStreams } = await import('./torrentio')
+      const tor = await cached(
+        `torrentio:ep:${imdbId}:${season ?? ''}:${episode ?? ''}`,
+        5 * 60_000,
+        () => torrentioStreams('series', imdbId, season, episode),
+      )
+      if (season && episode) {
+        const exact = sortTorrentsPlayableFirst(tor.filter((t) => t.season == null || t.season === season)).slice(0, 15)
+        if (exact.length) return exact
+      } else {
+        const sorted = sortTorrentsPlayableFirst(tor).slice(0, 24)
+        if (sorted.length) return sorted
+      }
+    } catch { /* Torrentio unavailable -> EZTV */ }
+  }
+
   // whole-show EZTV lookup (cached)
   if (imdbId && /^\d+$/.test(imdbId.replace(/^tt/, ''))) {
     try {
@@ -624,6 +697,15 @@ export async function findEpisodeTorrents(
       const { leetxSearch } = await import('./leetx')
       const opts = await leetxSearch(`${title} S${pad(season)}E${pad(episode)}`, { category: 'tv', resolve: 8 })
       if (opts.length) return opts.slice(0, 12)
+    } catch { /* next fallback */ }
+  }
+  // SolidTorrents fallback (DHT index, reachable when trackers are blocked)
+  if (season && episode) {
+    try {
+      const { solidSearch } = await import('./solidtorrents')
+      const opts = await solidSearch(`${title} S${pad(season)}E${pad(episode)}`, { videoOnly: true })
+      const sorted = sortTorrentsPlayableFirst(opts).slice(0, 12)
+      if (sorted.length) return sorted
     } catch { /* give up */ }
   }
   return []

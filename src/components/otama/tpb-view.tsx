@@ -12,7 +12,7 @@ import { Seeds, QualityBadge } from '@/components/otama/media-card'
 import { TorrendsSitesDialog } from '@/components/otama/torrends-sites-dialog'
 import { addTorrent, bestVideoFile, guessPlayableExt } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
-import type { TpbItem, TorrentOption } from '@/lib/types'
+import type { MetaItem, TpbItem, TorrentOption } from '@/lib/types'
 
 const TPB_CATEGORIES = [
   { value: 'all', label: 'All video' },
@@ -34,7 +34,30 @@ const LEETX_CATEGORIES = [
   { value: 'other', label: 'Other' },
 ]
 
-type Source = 'tpb' | 'leetx'
+type Source = 'tpb' | 'leetx' | 'solid' | 'torrentio'
+
+const SOURCE_META: Record<Source, { heading: React.ReactNode; hint: string; label: string }> = {
+  tpb: {
+    heading: (<>Pirate <span className="text-amber-400">Bay</span></>),
+    hint: 'Search ThePirateBay directly — leave the box empty for the latest uploads.',
+    label: 'Pirate Bay',
+  },
+  leetx: {
+    heading: (<>1337<span className="text-amber-400">x</span></>),
+    hint: 'Search 1337x across its mirror network — mirrors are picked automatically.',
+    label: '1337x',
+  },
+  solid: {
+    heading: (<>Solid <span className="text-amber-400">Torrents</span></>),
+    hint: 'SolidTorrents — DHT index search that works even when trackers are blocked.',
+    label: 'Solid Torrents',
+  },
+  torrentio: {
+    heading: (<>Torrent<span className="text-amber-400">io</span></>),
+    hint: 'Torrentio — one search across YTS, EZTV, RARBG, 1337x, Pirate Bay, Kickass, TorrentGalaxy, MagnetDL and more (keyed by IMDb).',
+    label: 'Torrentio',
+  },
+}
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
@@ -43,7 +66,7 @@ async function fetchJson<T>(url: string): Promise<T> {
   return data as T
 }
 
-/** Torrents hub: ThePirateBay + 1337x + the Torrends.to site directory. */
+/** Torrents hub: ThePirateBay + 1337x + SolidTorrents + Torrentio + the Torrends.to site directory. */
 export function TpbView() {
   const openDetail = useAppStore((s) => s.openDetail)
   const [source, setSource] = useState<Source>('tpb')
@@ -69,6 +92,20 @@ export function TpbView() {
     queryFn: () => fetchJson<{ items: TorrentOption[]; error?: string }>(`/api/1337x?q=${encodeURIComponent(q)}&cat=${leetxCat}&page=${page}`),
     staleTime: 2 * 60_000,
     enabled: source === 'leetx' && q.length > 0,
+  })
+
+  const solidQuery = useQuery({
+    queryKey: ['solid', q, page],
+    queryFn: () => fetchJson<{ items: TorrentOption[]; error?: string }>(`/api/solid?q=${encodeURIComponent(q)}&page=${page}`),
+    staleTime: 2 * 60_000,
+    enabled: source === 'solid' && q.length > 0,
+  })
+
+  const torrentioQuery = useQuery({
+    queryKey: ['torrentio', q],
+    queryFn: () => fetchJson<{ item?: MetaItem; torrents: TorrentOption[]; error?: string }>(`/api/torrentio?q=${encodeURIComponent(q)}`),
+    staleTime: 2 * 60_000,
+    enabled: source === 'torrentio' && q.length > 0,
   })
 
   const submit = (e?: React.FormEvent) => {
@@ -101,50 +138,49 @@ export function TpbView() {
   }
 
   const isTpb = source === 'tpb'
-  const items = (isTpb ? tpbQuery.data?.items : leetxQuery.data?.items) || []
-  const serverError = (isTpb ? tpbQuery.data?.error : leetxQuery.data?.error)
-    || ((isTpb ? tpbQuery.error : leetxQuery.error) as Error | null | undefined)?.message
+  const activeQuery = isTpb ? tpbQuery : source === 'leetx' ? leetxQuery : source === 'solid' ? solidQuery : torrentioQuery
+  const torrentItems: TorrentOption[] =
+    source === 'leetx'
+      ? leetxQuery.data?.items || []
+      : source === 'solid'
+        ? solidQuery.data?.items || []
+        : source === 'torrentio'
+          ? torrentioQuery.data?.torrents || []
+          : []
+  const tpbItems: TpbItem[] = isTpb ? tpbQuery.data?.items || [] : []
+  const items: (TpbItem | TorrentOption)[] = isTpb ? tpbItems : torrentItems
+  const matchedItem = source === 'torrentio' ? torrentioQuery.data?.item : undefined
+  const serverError = (activeQuery.data as { error?: string } | undefined)?.error
+    || (activeQuery.error as Error | null | undefined)?.message
     || null
-  const loading = isTpb ? tpbQuery.isLoading || tpbQuery.isFetching : leetxQuery.isLoading || leetxQuery.isFetching
+  const loading = activeQuery.isLoading || activeQuery.isFetching
+  const meta = SOURCE_META[source]
+  const canPaginate = source === 'leetx' || source === 'solid'
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8">
       <div className="space-y-1">
-        <h1 className="text-2xl font-black tracking-tight">
-          {isTpb ? (
-            <>Pirate <span className="text-amber-400">Bay</span></>
-          ) : (
-            <>1337<span className="text-amber-400">x</span></>
-          )}
-        </h1>
-        <p className="text-sm text-zinc-400">
-          {isTpb
-            ? 'Search ThePirateBay directly — leave the box empty for the latest uploads.'
-            : 'Search 1337x across its mirror network — mirrors are picked automatically.'}
-        </p>
+        <h1 className="text-2xl font-black tracking-tight">{meta.heading}</h1>
+        <p className="text-sm text-zinc-400">{meta.hint}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Torrent source">
-        <Button
-          variant={isTpb ? 'secondary' : 'ghost'}
-          size="sm"
-          onClick={() => setSource('tpb')}
-          className={isTpb ? 'bg-amber-500/15 text-amber-300 border border-amber-400/30' : 'text-zinc-400'}
-          role="tab"
-          aria-selected={isTpb}
-        >
-          Pirate Bay
-        </Button>
-        <Button
-          variant={!isTpb ? 'secondary' : 'ghost'}
-          size="sm"
-          onClick={() => setSource('leetx')}
-          className={!isTpb ? 'bg-amber-500/15 text-amber-300 border border-amber-400/30' : 'text-zinc-400'}
-          role="tab"
-          aria-selected={!isTpb}
-        >
-          1337x
-        </Button>
+        {(['tpb', 'leetx', 'solid', 'torrentio'] as Source[]).map((s) => {
+          const active = source === s
+          return (
+            <Button
+              key={s}
+              variant={active ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setSource(s)}
+              className={active ? 'bg-amber-500/15 text-amber-300 border border-amber-400/30' : 'text-zinc-400'}
+              role="tab"
+              aria-selected={active}
+            >
+              {SOURCE_META[s].label}
+            </Button>
+          )
+        })}
         <span className="mx-1 hidden h-5 w-px bg-white/10 sm:block" aria-hidden />
         <Button variant="ghost" size="sm" className="text-zinc-400" onClick={() => setSitesOpen(true)}>
           <Globe className="mr-1.5 h-4 w-4" aria-hidden />
@@ -158,21 +194,23 @@ export function TpbView() {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Search torrents…"
+            placeholder={source === 'torrentio' ? 'Search a movie or series title…' : 'Search torrents…'}
             className="pl-9 min-h-[44px]"
-            aria-label={isTpb ? 'Search ThePirateBay' : 'Search 1337x'}
+            aria-label={`Search ${meta.label}`}
           />
         </div>
-        <Select value={isTpb ? tpbCat : leetxCat} onValueChange={(v) => (isTpb ? setTpbCat(v) : setLeetxCat(v))}>
-          <SelectTrigger className="w-[160px] min-h-[44px]" aria-label="Category">
-            <SelectValue placeholder="Category" />
-          </SelectTrigger>
-          <SelectContent>
-            {(isTpb ? TPB_CATEGORIES : LEETX_CATEGORIES).map((c) => (
-              <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {source === 'tpb' || source === 'leetx' ? (
+          <Select value={isTpb ? tpbCat : leetxCat} onValueChange={(v) => (isTpb ? setTpbCat(v) : setLeetxCat(v))}>
+            <SelectTrigger className="w-[160px] min-h-[44px]" aria-label="Category">
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              {(isTpb ? TPB_CATEGORIES : LEETX_CATEGORIES).map((c) => (
+                <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
         <Button type="submit" className="bg-amber-500 font-bold text-black hover:bg-amber-400 min-h-[44px] px-6">
           Search
         </Button>
@@ -181,16 +219,18 @@ export function TpbView() {
       {serverError ? (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
           {isTpb
-            ? `ThePirateBay API is unavailable right now (${serverError}). It usually recovers shortly — try again or switch to 1337x.`
-            : `1337x is unreachable right now (${serverError}). Its mirror network is checked automatically — try again shortly.`}
+            ? `ThePirateBay API is unavailable right now (${serverError}). It usually recovers shortly — try again or switch sources.`
+            : `${meta.label} is unreachable right now (${serverError}). Try again shortly or pick another source.`}
         </div>
       ) : null}
 
       {!q && !serverError ? (
         <p className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-400">
-          {isTpb
+          {source === 'tpb'
             ? 'Tip: leave the query empty and press Search to browse the latest uploads.'
-            : 'Type a query and press Search — results resolve magnets automatically; open the detail page with the link button when a mirror is slow.'}
+            : source === 'torrentio'
+              ? 'Type a movie or show title — Torrentio resolves it to IMDb and returns every indexed torrent with the exact video file pre-picked.'
+              : 'Type a query and press Search — results resolve magnets automatically.'}
         </p>
       ) : null}
 
@@ -245,27 +285,36 @@ export function TpbView() {
         </div>
       ) : (
         <>
+          {matchedItem ? (
+            <p className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-zinc-300">
+              Matched: <span className="font-semibold">{matchedItem.title}</span>
+              {matchedItem.year ? ` (${matchedItem.year})` : ''} — every indexed torrent across the source sites below.
+            </p>
+          ) : null}
           <div className="overflow-hidden rounded-xl border border-white/5">
-            <div className="hidden md:grid grid-cols-[1fr_100px_100px_120px_80px] gap-3 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-              <span>Name</span><span>Category</span><span>Size</span><span>Seeds</span><span className="text-right">Actions</span>
+            <div className="hidden md:grid grid-cols-[1fr_130px_100px_120px_80px] gap-3 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              <span>Name</span><span>Source</span><span>Size</span><span>Seeds</span><span className="text-right">Actions</span>
             </div>
             <ul className="divide-y divide-white/5">
               {(items as TorrentOption[]).map((item, idx) => (
-                <li key={`${item.hash}-${idx}`} className="grid grid-cols-1 md:grid-cols-[1fr_100px_100px_120px_80px] gap-2 px-4 py-3 text-sm hover:bg-white/[0.03] transition-colors">
+                <li key={`${item.hash}-${idx}`} className="grid grid-cols-1 md:grid-cols-[1fr_130px_100px_120px_80px] gap-2 px-4 py-3 text-sm hover:bg-white/[0.03] transition-colors">
                   <div className="min-w-0">
                     <p className="truncate font-medium" title={item.title}>{item.title}</p>
                     <div className="mt-1 flex md:hidden flex-wrap items-center gap-2 text-xs text-zinc-400">
                       <QualityBadge quality={item.quality} />
                       <span>{item.size}</span>
                       <Seeds count={item.seeds} leechers={item.leechers} />
+                      <span>{SOURCE_META[source].label}</span>
                     </div>
                   </div>
-                  <span className="hidden md:block text-xs text-zinc-400 self-center">1337x · {leetxCat}</span>
+                  <span className="hidden md:block text-xs text-zinc-400 self-center truncate" title={item.sourceSite ? `${SOURCE_META[source].label} · via ${item.sourceSite}` : SOURCE_META[source].label}>
+                    {SOURCE_META[source].label}{item.sourceSite ? ` · ${item.sourceSite}` : ''}
+                  </span>
                   <span className="hidden md:block text-xs text-zinc-400 self-center">{item.size || '—'}</span>
                   <span className="hidden md:flex self-center"><Seeds count={item.seeds} leechers={item.leechers} /></span>
                   <div className="flex md:justify-end gap-1 self-center">
                     {item.source ? (
-                      <Button size="sm" className="h-8 bg-amber-500 font-bold text-black hover:bg-amber-400" onClick={() => play({ source: item.source, title: item.title, quality: item.quality, key: `lx-${item.hash}` })} aria-label={`Play ${item.title}`}>
+                      <Button size="sm" className="h-8 bg-amber-500 font-bold text-black hover:bg-amber-400" onClick={() => play({ source: item.source, title: item.title, quality: item.quality, refId: matchedItem?.imdbId, key: `hub-${item.hash}` })} aria-label={`Play ${item.title}`}>
                         <Play className="h-3.5 w-3.5 fill-black" />
                       </Button>
                     ) : null}
@@ -275,7 +324,7 @@ export function TpbView() {
                         variant="ghost"
                         className="h-8"
                         onClick={() => window.open(item.detailUrl, '_blank', 'noopener,noreferrer')}
-                        aria-label={`Open ${item.title} on 1337x`}
+                        aria-label={`Open ${item.title} on ${SOURCE_META[source].label}`}
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>
@@ -285,7 +334,7 @@ export function TpbView() {
               ))}
             </ul>
           </div>
-          {q ? (
+          {q && canPaginate ? (
             <div className="flex items-center justify-center gap-3">
               <Button variant="secondary" size="sm" disabled={page === 0 || loading} onClick={() => setPage((p) => Math.max(0, p - 1))}>
                 <ChevronLeft className="h-4 w-4" aria-hidden /> Prev

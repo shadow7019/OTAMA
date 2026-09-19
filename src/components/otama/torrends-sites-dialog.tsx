@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ExternalLink, Globe, Loader2, Search } from 'lucide-react'
+import { ExternalLink, Globe, Loader2, PlayCircle, Search } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useAppStore } from '@/store/app-store'
 
 interface TorrendsEntry {
   name: string
@@ -15,6 +16,22 @@ interface TorrendsEntry {
   url: string
   searchTemplate: string | null
   proxies: string[]
+}
+
+/**
+ * Expand a directory search template.
+ *  @@s@@ -> url-encoded query            (most sites)
+ *  @@m@@ -> lowercase, dash-separated    (magnetdl style)
+ *  @F@   -> first letter/dir segment     (magnetdl style)
+ */
+function applyTemplate(template: string, term: string): string {
+  const q = term.trim()
+  const slug = q.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'search'
+  const first = /^[a-z]/i.test(q) ? q[0].toLowerCase() : /^[0-9]/.test(q) ? q[0] : '0'
+  return template
+    .replace('@F@', first)
+    .replace('@@m@@', slug)
+    .replace('@@s@@', encodeURIComponent(q))
 }
 
 /**
@@ -30,6 +47,7 @@ export function TorrendsSitesDialog({
   onOpenChange: (v: boolean) => void
   query?: string
 }) {
+  const setQuery = useAppStore((s) => s.setQuery)
   const [q, setQ] = useState(query)
 
   // keep the query box in sync with the parent search while the dialog opens
@@ -61,10 +79,21 @@ export function TorrendsSitesDialog({
   const openSite = (site: TorrendsEntry) => {
     const term = q.trim()
     let url = site.url
-    if (site.searchTemplate) {
-      url = site.searchTemplate.replace('@@s@@', encodeURIComponent(term))
+    if (site.searchTemplate && term) {
+      url = applyTemplate(site.searchTemplate, term)
+    } else if (site.searchTemplate) {
+      url = applyTemplate(site.searchTemplate, 'popular')
     }
     window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  /** Run the query through OTAMA's own integrated providers (TPB, 1337x,
+   *  SolidTorrents, Torrentio, Nyaa — see the search view torrent tabs). */
+  const searchInApp = () => {
+    const term = q.trim()
+    if (!term) return
+    onOpenChange(false)
+    setQuery(term)
   }
 
   const sites = data?.sites || []
@@ -83,19 +112,33 @@ export function TorrendsSitesDialog({
             More torrent sites <span className="text-sm font-normal text-zinc-400">via Torrends.to</span>
           </DialogTitle>
           <DialogDescription>
-            {sites.length} curated sites with live proxies. Searching opens the site in a new tab with your query prefilled.
+            {sites.length} curated sites with live proxies, plus OTAMA's own integrated search across every provider.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" aria-hidden />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search all sites for…"
-            className="pl-9"
-            aria-label="Query used when opening sites"
-          />
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" aria-hidden />
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search all sites for…"
+              className="pl-9"
+              aria-label="Query used when opening sites"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') searchInApp()
+              }}
+            />
+          </div>
+          <Button
+            onClick={searchInApp}
+            disabled={!q.trim()}
+            className="bg-amber-500 font-bold text-black hover:bg-amber-400 shrink-0"
+            title="Search OTAMA's integrated providers in-app"
+          >
+            <PlayCircle className="mr-1 h-4 w-4" aria-hidden />
+            Search in OTAMA
+          </Button>
         </div>
 
         {isLoading ? (
@@ -119,8 +162,15 @@ export function TorrendsSitesDialog({
                     <Globe className="h-4 w-4 shrink-0 text-zinc-500 group-hover:text-amber-400" aria-hidden />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{s.title}</span>
-                      <span className="block truncate text-xs text-zinc-500">{host(s.url)}</span>
+                      <span className="block truncate text-xs text-zinc-500">
+                        {host(s.url)}{s.searchTemplate ? '' : ' · homepage only'}
+                      </span>
                     </span>
+                    {s.searchTemplate ? (
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">
+                        search
+                      </Badge>
+                    ) : null}
                     {s.proxies.length > 1 ? (
                       <Badge variant="secondary" className="shrink-0 text-[10px]">
                         {s.proxies.length} mirrors

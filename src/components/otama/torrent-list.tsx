@@ -16,6 +16,8 @@ const PROVIDER_LABEL: Record<string, string> = {
   yts: 'YTS',
   '1337x': '1337X',
   torrends: 'Torrends',
+  torrentio: 'Torrentio',
+  solidtorrents: 'Solid Torrents',
 }
 
 export function TorrentList({
@@ -100,6 +102,11 @@ export function TorrentList({
               <span className="rounded bg-white/5 px-1.5 py-0.5 uppercase text-[10px] tracking-wide text-zinc-400">
                 {PROVIDER_LABEL[t.provider] || t.provider}
               </span>
+              {t.sourceSite ? (
+                <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-400" title={`Indexed from ${t.sourceSite}`}>
+                  via {t.sourceSite}
+                </span>
+              ) : null}
               {t.status === 'vip' || t.status === 'trusted' ? (
                 <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300 uppercase">
                   {t.status}

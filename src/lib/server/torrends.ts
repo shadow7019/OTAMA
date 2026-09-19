@@ -120,6 +120,36 @@ const CURATED_ORDER = [
   'yourbittorrent', 'glotorrents', 'snowfl', 'magnetdl', 'toorgle',
 ]
 
+/**
+ * Fallback search-URL templates for directory sites whose Torrends entry lacks
+ * a `search_url`. Tokens: @@s@@ = encoded query, @@m@@ = lowercase-dash query
+ * (magnetdl style), @F@ = first letter/dir segment (magnetdl style).
+ */
+const FALLBACK_SEARCH: Record<string, string> = {
+  'pirate-bay-search': 'search/@@s@@/0/99/0',
+  yts: 'browse-movies/@@s@@/all/all/desc/latest',
+  torrentgalaxy: 'torrents.php?search=@@s@@',
+  limetorrents: 'search/@@s@@/seeders/1/',
+  eztv: 'search/@@s@@',
+  rarbg: 'torrents.php?search=@@s@@',
+  'kickass-torrents': 'usearch/@@s@@/',
+  torrentproject: '?t=@@s@@',
+  idope: 'torrent-list/@@s@@/',
+  bt4g: 'search?q=@@s@@',
+  solidtorrents: 'search?q=@@s@@',
+  btdig: 'search?q=@@s@@',
+  'nyaa-si': '?f=0&c=0_0&q=@@s@@',
+  torlock: '@@s@@-torrents.html',
+  torrentfunk: '@@s@@-torrents.html',
+  zoogle: 'search?q=@@s@@',
+  monova: 'search?q=@@s@@',
+  yourbittorrent: '?q=@@s@@',
+  glotorrents: 'search/@@s@@/seeders/1/',
+  snowfl: '?q=@@s@@',
+  toorgle: 'search.php?q=@@s@@',
+  magnetdl: '@F@/@@m@@/',
+}
+
 export async function torrendsDirectory(q?: string, limit = 48): Promise<TorrendsDirectoryEntry[]> {
   const sites = await torrendsSites()
   const rank = (name: string) => {
@@ -131,10 +161,12 @@ export async function torrendsDirectory(q?: string, limit = 48): Promise<Torrend
     .filter((s) => s.name && (s.url || s.proxies?.some((p) => p.url)) && s.private_tracker !== '1' && (s as { private_tracker?: string | boolean }).private_tracker !== true)
     .map((s) => {
       const base = s.url || s.url_alt || s.proxies?.find((p) => p.url)?.url || ''
-      const template =
-        s.search_url && s.search_url.includes('@@s@@')
-          ? `${normalizeBase(base)}/${s.search_url.replace(/^\/+/, '')}`
-          : null
+      let template: string | null = null
+      if (s.search_url && s.search_url.includes('@@s@@')) {
+        template = `${normalizeBase(base)}/${s.search_url.replace(/^\/+/, '')}`
+      } else if (FALLBACK_SEARCH[s.name]) {
+        template = `${normalizeBase(base)}/${FALLBACK_SEARCH[s.name]}`
+      }
       return {
         name: s.name,
         title: s.title || s.name,

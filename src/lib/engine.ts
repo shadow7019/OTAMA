@@ -203,7 +203,13 @@ export async function streamTorrentOption(
     current = found
   }
   if (!current.ready) throw new Error('Timed out connecting to the swarm (no peers answered) — try another torrent')
-  const file = bestVideoFile(current)
+  // Prefer the provider-supplied file index (Torrentio fileIdx) when valid —
+  // it points at the exact video file instead of the largest one.
+  const hinted =
+    option.fileIndex != null && current.files?.[option.fileIndex]?.isVideo
+      ? current.files[option.fileIndex]
+      : null
+  const file = hinted || bestVideoFile(current)
   if (!file) throw new Error('No video file found in this torrent')
   return { torrent: current, file }
 }

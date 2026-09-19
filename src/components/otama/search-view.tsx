@@ -15,6 +15,7 @@ interface SearchResults {
   anime: TorrentOption[]
   tpb: TpbItem[]
   leetx: TorrentOption[]
+  solid: TorrentOption[]
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -60,6 +61,7 @@ export function SearchView({ query }: { query: string }) {
             <TabsTrigger value="anime">Anime ({data?.anime.length ?? 0})</TabsTrigger>
             <TabsTrigger value="tpb">Pirate Bay ({data?.tpb.length ?? 0})</TabsTrigger>
             <TabsTrigger value="leetx">1337x ({data?.leetx.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="solid">Solid ({data?.solid.length ?? 0})</TabsTrigger>
           </TabsList>
           <TabsContent value="movies" className="pt-4">
             {(data?.movies.length ?? 0) === 0 ? (
@@ -98,6 +100,13 @@ export function SearchView({ query }: { query: string }) {
               <p className="py-8 text-center text-sm text-zinc-400">No 1337x results (or 1337x is unreachable right now).</p>
             ) : (
               <TorrentList torrents={data!.leetx} compact />
+            )}
+          </TabsContent>
+          <TabsContent value="solid" className="pt-4 max-w-3xl">
+            {(data?.solid.length ?? 0) === 0 ? (
+              <p className="py-8 text-center text-sm text-zinc-400">No SolidTorrents results (or the index is unreachable right now).</p>
+            ) : (
+              <TorrentList torrents={data!.solid} compact />
             )}
           </TabsContent>
         </Tabs>

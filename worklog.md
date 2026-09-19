@@ -373,3 +373,27 @@ Stage Summary:
   self-heal through unconditional retries, and the diagnostics card is never a dead end:
   alternatives are auto-fetched per title (with season/episode for series) and switching
   torrents from the player waits for the swarm properly.
+
+---
+Task ID: 18
+Agent: main (orchestrator)
+Task: Integrate all torrent sites with working links + fix the placeholder
+
+Work Log:
+- Probed every major torrent site from the sandbox: Torrentio (200, movies+series), SolidTorrents (200, real JSON API via redirect-following), YTS mirrors yts.lt/yts.bz (200), apibay/eztv/nyaa (200). Knaben/TorrentGalaxy/MagnetDL/TorLock/BTDig/iDope unreachable directly (covered via Torrentio aggregation instead).
+- NEW provider src/lib/server/torrentio.ts — Torrentio Stremio aggregator (YTS, EZTV, RARBG archive, 1337x, ThePirateBay, Kickass, TorrentGalaxy, MagnetDL, TorrentDB, NyaaSi): movie/series/episode streams keyed by IMDb, each with infoHash + exact fileIdx + seeds/size/source-site. Adds sizeToBytes/parseSeeds parsers, SxxEyy annotation for whole-show results, torrentioSearch() free-text resolver (query -> Cinemeta IMDb -> streams).
+- NEW provider src/lib/server/solidtorrents.ts — SolidTorrents DHT-index JSON API (infohash-ready results, video-category filter, pagination).
+- providers.ts: cfGetText now follows redirects (curl -L); findMovieTorrents merges Torrentio+TPB+YTS+1337x+SolidTorrents (deduped by hash, playable-first, top 40); findEpisodeTorrents tries Torrentio first (exact s:e or whole-show), EZTV/TPB/1337x/SolidTorrents as fallbacks; added posterWorks()/stripBrokenPosters() (HEAD + content-type check, cached) to detect metahub HTML "placeholder" posters.
+- types.ts: TorrentOption gains provider 'torrentio'|'solidtorrents', fileIndex, sourceSite.
+- NEW routes /api/solid (paginated search) and /api/torrentio (q-resolve or imdb direct); /api/search adds solid results and strips broken poster URLs for movies/series.
+- engine.ts streamTorrentOption: prefers option.fileIndex (Torrentio fileIdx) over largest-file auto-pick.
+- Torrents hub (tpb-view): 4 tabs now — Pirate Bay | 1337x | Solid Torrents | Torrentio (+ More sites); Torrentio tab resolves title->IMDb->all indexed torrents with "Matched:" banner and source-site column; per-source headings/hints; pagination for 1337x+Solid.
+- search-view: new "Solid (N)" tab.
+- torrent-list: provider labels (Torrentio, Solid Torrents) + "via <site>" badge.
+- torrends.ts: FALLBACK_SEARCH map gives every directory site a prefilled search URL (incl. magnetdl @@m@@/@F@ token style); dialog renders "search" badges, an "Search in OTAMA" button (routes query into the in-app multi-provider search) and token-aware applyTemplate.
+- PLACEHOLDER FIX: metahub serves text/html error pages for missing posters which rendered as ugly grey "S2" initials cards. Server strips those poster URLs (search + series/movie meta paths); media-card Poster fallback redesigned into a branded card (amber film icon + full title + aria-label) instead of initials.
+- detail-overlay caption updated to list all torrent sources.
+- VERIFIED (agent-browser through gateway :81): search "spider man" shows Solid (20) tab + branded fallback cards; Torrents hub Solid Torrents + Torrentio tabs return real seeded results (Torrentio: 51 torrents for Spider-Man with via ThePirateBay/1337x/TorrentGalaxy/RARBG labels); detail overlay shows merged torrents with provider+via badges; PLAYED Spider-Man 2002 PROPER MULTi 1080p end-to-end (17 peers, 1.1 MB/s, currentTime advancing, readyState 4); More sites dialog: all sites have search links + Search in OTAMA flow works (interstellar -> full results). lint clean; dev.log free of runtime errors; test torrent wiped.
+
+Stage Summary:
+- OTAMA now aggregates Torrentio (12+ sites incl. dead RARBG archive), SolidTorrents, ThePirateBay, 1337x, EZTV, Nyaa, YTS with real playable links everywhere: Torrents hub tabs, global search tabs, and detail overlay (movies + episodes with exact file indices). Spider-Man 2002 — the original broken-link report — streams end-to-end. Broken metahub poster placeholders replaced by branded no-artwork cards. TMDB key still pending from user.
