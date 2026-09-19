@@ -1,0 +1,100 @@
+name: Build macOS DMG (Apple Silicon)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Bun (lockfile install for the web UI)
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install web UI dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Install desktop dependencies (electron + electron-builder)
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          # npm's install-script policy can block electron's postinstall — ensure the binary lands
+          if [ ! -f "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" ]; then
+            node node_modules/electron/install.js
+          fi
+
+      - name: Prepare embedded engine
+        working-directory: desktop
+        run: node scripts/prepare-engine.mjs
+
+      - name: Write TMDB credentials for the bundled renderer
+        working-directory: desktop
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TMDB_ACCESS_TOKEN: ${{ secrets.TMDB_ACCESS_TOKEN }}
+        run: |
+          lines=""
+          if [ -n "$TMDB_API_KEY" ]; then lines="${lines}TMDB_API_KEY=${TMDB_API_KEY}"$'\n'; fi
+          if [ -n "$TMDB_ACCESS_TOKEN" ]; then lines="${lines}TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN}"$'\n'; fi
+          if [ -n "$lines" ]; then
+            printf '%s' "$lines" > ../.env
+            echo "wrote ../.env with TMDB credentials"
+          else
+            echo "No TMDB secrets configured — packaging without TMDB credentials (TMDB features will degrade)"
+          fi
+
+      - name: Build web UI into standalone renderer
+        working-directory: desktop
+        env:
+          DATABASE_URL: file:./db/build-placeholder.db
+        run: node scripts/prepare-renderer.mjs
+
+      - name: Patch electron-builder for self-contained extraResources
+        working-directory: desktop
+        run: node scripts/patch-builder.mjs
+
+      - name: Build macOS DMG (arm64 — native Apple Silicon runner)
+        working-directory: desktop
+        run: npx electron-builder --mac dmg --arm64 --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OTAMA-macos-dmg
+          path: desktop/dist/OTAMA-*-arm64.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach to GitHub release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body: |
+            ## OTAMA ${{ github.ref_name }} — Downloads
+
+            | Platform | File | Install |
+            |---|---|---|
+            | 🪟 Windows | `OTAMA-Setup-*.exe` | Run installer (SmartScreen may warn — unsigned build, click "More info → Run anyway") |
+            | 🪟 Windows portable | `OTAMA-*-portable.exe` | Single file, no install |
+            | 🍎 macOS (Apple Silicon M1/M2/M3/M4) | `OTAMA-*-arm64.dmg` | Open DMG, drag OTAMA to Applications, then right-click → Open once (unsigned build) |
+            | 🤖 Android | `OTAMA-*.apk` | Allow "install unknown apps", open APK |
+
+            OTAMA is self-contained: embedded torrent-stream engine + Next.js renderer + template database.
+          files: desktop/dist/OTAMA-*-arm64.dmg

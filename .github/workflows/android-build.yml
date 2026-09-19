@@ -5,6 +5,9 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: write
+
 jobs:
   build-android:
     runs-on: ubuntu-latest
@@ -27,11 +30,15 @@ jobs:
         working-directory: android
         run: gradle assembleRelease --no-daemon
 
+      - name: Rename APK for release
+        working-directory: android/app/build/outputs/apk/release
+        run: cp app-release.apk "OTAMA-${GITHUB_REF_NAME#v}.apk"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: OTAMA-android-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/OTAMA-*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -39,4 +46,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/release/app-release.apk
+          files: android/app/build/outputs/apk/release/OTAMA-*.apk

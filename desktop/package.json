@@ -20,7 +20,9 @@
     "predist:win": "node scripts/patch-builder.mjs",
     "dist:win": "npm run prepare:all && electron-builder --win",
     "predist:win:portable": "node scripts/patch-builder.mjs",
-    "dist:win:portable": "npm run prepare:all && electron-builder --win portable"
+    "dist:win:portable": "npm run prepare:all && electron-builder --win portable",
+    "predist:mac": "node scripts/patch-builder.mjs",
+    "dist:mac": "npm run prepare:all && electron-builder --mac --arm64"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -86,7 +88,7 @@
       "category": "public.app-category.entertainment",
       "target": [
         {
-          "target": "dir",
+          "target": "zip",
           "arch": ["arm64"]
         }
       ]
