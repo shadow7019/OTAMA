@@ -118,6 +118,9 @@ export interface PlayerPayload {
   /** quality label of the chosen torrent */
   quality?: string
   fileName?: string
+  /** season/episode for series — lets the player refetch episode alternatives */
+  season?: number
+  episode?: number
   /** other torrent options for the same title — enables in-player switching */
   alternatives?: TorrentOption[]
 }

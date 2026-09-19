@@ -330,3 +330,46 @@ Stage Summary:
   error retries, container-aware ranking (mp4 > mkv > avi/ts > hevc) with badges, and
   clearer diagnostics. Spider-Man (and any cold/rare/dead-ish torrent) now plays end-to-end,
   recovers from engine loss mid-stream, and resumes correctly.
+
+---
+Task ID: 17
+Agent: main (orchestrator)
+Task: Fix Downloads "Open" -> "No video file in this torrent" + "Playback problem / No alternative torrents" on most movies
+
+Work Log:
+- ROOT CAUSE 1 (Downloads "Open", 100% repro): the engine's periodic socket.io broadcast
+  (broadcastState) sent a REDUCED projection of each torrent WITHOUT files/refId/kind.
+  DownloadsSheet.play() picked bestVideoFile() straight from that socket payload ->
+  files always missing -> toast "No video file in this torrent" on every click
+  (the initial connection emission carried full stats, so it "worked" only in the
+  first 1.5s after a page load).
+  FIX (both engines): broadcastState now emits full torrentStats (files, refId, kind,
+  name, magnet). Belt-and-braces on the client: DownloadsSheet falls back to a REST
+  engineList() fetch when the socket snapshot has no files, shows a distinct
+  "still fetching metadata" toast for pending torrents, passes refId/kind into
+  openPlayer (history + alternatives now work from Downloads opens), and gets a
+  spinner on the Open button.
+- ROOT CAUSE 2 ("Playback problem … could not decode" + "No alternative torrents were
+  loaded"): (a) the previous onError retry logic SKIPPED retries whenever the torrent
+  had downloaded >2MB (dataFlowing) — any transient failure (slow tail-range piece
+  fetch for MKV Cues, engine hiccup) instantly surfaced the fatal error card on
+  partially-downloaded torrents, i.e. "most movies"; (b) players opened from
+  Downloads or resumed from history carry NO alternatives, so the card offered no way out.
+  FIX: onError now ALWAYS auto-retries 3x (1.5/4/8s backoff) before the card;
+  PlayerPayload gains season/episode; torrent-list passes them; the player refetches
+  alternatives live when missing (movie: /api/meta/movie/:refId, series:
+  /api/meta/series/:refId/torrents?season&episode — verified shape), merges +
+  dedupes them into the card ("Looking for other torrents…" spinner while fetching),
+  and switchTo() was migrated to streamTorrentOption() so switching to an alternative
+  waits for metadata instead of failing with "No video file found" on a pending add.
+- VERIFICATION (agent-browser through gateway): Downloads -> Open on the Spider-Man DKS
+  mkv -> player opens with the right file, resumes saved position, readyState 4, no error;
+  detail-page play of a DIFFERENT torrent (HQ Pre.Multi) -> plays (ct advancing, rs 4);
+  lint 0 errors; engine /torrents REST + socket payload both include files/refId.
+
+Stage Summary:
+- Downloads "Open" now always resolves a playable file (socket carries files; REST
+  fallback; pending-state handled). Playback failures on partially-downloaded torrents
+  self-heal through unconditional retries, and the diagnostics card is never a dead end:
+  alternatives are auto-fetched per title (with season/episode for series) and switching
+  torrents from the player waits for the swarm properly.

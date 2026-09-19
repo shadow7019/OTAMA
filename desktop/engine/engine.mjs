@@ -583,23 +583,9 @@ const io = new Server(server, {
 })
 
 function broadcastState() {
-  const list = [...torrents.entries()].map(([h, a]) => {
-    const s = torrentStats(a, h)
-    return {
-      infoHash: s.infoHash,
-      title: s.title,
-      poster: s.poster,
-      progress: s.progress,
-      downloadSpeed: s.downloadSpeed,
-      uploadSpeed: s.uploadSpeed,
-      numPeers: s.numPeers,
-      ready: s.ready,
-      done: s.done,
-      timeRemaining: s.timeRemaining,
-      activeStreams: s.activeStreams,
-      length: s.length,
-    }
-  })
+  // Full stats INCLUDING files/refId/kind — the Downloads sheet picks the video
+  // file straight from this payload, so it must not be a reduced projection.
+  const list = [...torrents.entries()].map(([h, a]) => torrentStats(a, h))
   io.emit('state', { ts: Date.now(), torrents: list })
 }
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { Play, Trash2, StopCircle, Loader2 } from 'lucide-react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import {
   Sheet,
@@ -14,7 +15,7 @@ import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Poster } from '@/components/otama/media-card'
 import { useEngineState } from '@/hooks/use-engine-state'
-import { destroyTorrent, bestVideoFile, fmtSpeed, fmtEta, fmtBytes, streamUrl, guessPlayableExt } from '@/lib/engine'
+import { destroyTorrent, bestVideoFile, engineList, fmtSpeed, fmtEta, fmtBytes, streamUrl, guessPlayableExt } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 
 export function DownloadsSheet() {
@@ -22,19 +23,45 @@ export function DownloadsSheet() {
   const setOpen = useAppStore((s) => s.setDownloadsOpen)
   const openPlayer = useAppStore((s) => s.openPlayer)
   const { torrents, connected } = useEngineState()
+  const [opening, setOpening] = useState<string | null>(null)
 
-  const play = (infoHash: string, title: string, poster?: string | null) => {
-    const t = torrents.find((x) => x.infoHash === infoHash)
-    const file = bestVideoFile(t)
-    if (!t || !file) {
-      toast.error('No video file in this torrent')
-      return
+  /**
+   * Open a download in the player. The socket payload normally carries the
+   * file list; if it does not (older snapshot), fall back to the REST list
+   * before giving up — "Open" must never fail with a false "no video file".
+   */
+  const play = async (infoHash: string, title: string, poster?: string | null, refId?: string | null, kind?: string | null) => {
+    if (opening) return
+    setOpening(infoHash)
+    try {
+      let t = torrents.find((x) => x.infoHash === infoHash)
+      if (!t || !t.files?.length) {
+        const list = await engineList()
+        const fresh = list.find((x) => x.infoHash.toLowerCase() === infoHash.toLowerCase())
+        if (fresh) t = fresh
+      }
+      const file = bestVideoFile(t)
+      if (!t || !file) {
+        toast.error(t && !t.ready ? 'Still fetching metadata — try again in a few seconds.' : 'No video file in this torrent')
+        return
+      }
+      if (guessPlayableExt(file.name) === 'unsupported') {
+        toast.warning('This format may not play in browsers.')
+      }
+      setOpen(false)
+      openPlayer({
+        infoHash,
+        fileIndex: file.index,
+        title,
+        poster,
+        refId: t.refId || undefined,
+        kind: t.kind || undefined,
+        quality: undefined,
+        fileName: file.name,
+      })
+    } finally {
+      setOpening(null)
     }
-    if (guessPlayableExt(file.name) === 'unsupported') {
-      toast.warning('This format may not play in browsers.')
-    }
-    setOpen(false)
-    openPlayer({ infoHash, fileIndex: file.index, title, poster, quality: undefined, fileName: file.name })
   }
 
   const stop = async (infoHash: string) => {
@@ -94,8 +121,14 @@ export function DownloadsSheet() {
                       </span>
                     </div>
                     <div className="mt-2 flex gap-1.5">
-                      <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => play(t.infoHash, t.title, t.poster)} disabled={!t.ready}>
-                        <Play className="h-3 w-3 mr-1" /> Open
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 text-xs"
+                        onClick={() => void play(t.infoHash, t.title, t.poster, t.refId, t.kind)}
+                        disabled={!t.ready || opening !== null}
+                      >
+                        {opening === t.infoHash ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3 mr-1" />} Open
                       </Button>
                       <Button size="sm" variant="ghost" className="h-7 text-xs text-zinc-400 hover:text-red-400" onClick={() => stop(t.infoHash)} aria-label={`Stop ${t.title}`}>
                         <StopCircle className="h-3.5 w-3.5" />

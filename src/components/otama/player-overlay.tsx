@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Users, ArrowDownToLine, Signal, RefreshCw, ShieldAlert, WifiOff } from 'lucide-react'
+import { X, Users, ArrowDownToLine, Signal, RefreshCw, ShieldAlert, WifiOff, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { QualityBadge } from '@/components/otama/media-card'
 import { useEngineState } from '@/hooks/use-engine-state'
-import { streamUrl, fmtSpeed, fmtEta, fmtBytes, guessPlayableExt, ensureTorrent, isHevcName, addTorrent, bestVideoFile } from '@/lib/engine'
+import { streamUrl, fmtSpeed, fmtEta, fmtBytes, guessPlayableExt, ensureTorrent, isHevcName, streamTorrentOption, playableFirst } from '@/lib/engine'
 import { useAppStore } from '@/store/app-store'
 import type { PlayerPayload, TorrentOption } from '@/lib/types'
 
@@ -44,6 +44,7 @@ export function PlayerOverlay() {
   const [waitingSince, setWaitingSince] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
+  const [fetchedAlts, setFetchedAlts] = useState<TorrentOption[] | null>(null)
   const lastSave = useRef(0)
   const retryCount = useRef(0)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -65,6 +66,7 @@ export function PlayerOverlay() {
     setWaiting(true)
     setWaitingSince(Date.now())
     setError(null)
+    setFetchedAlts(null)
     retryCount.current = 0
     if (retryTimer.current) clearTimeout(retryTimer.current)
   }, [player?.infoHash, player?.fileIndex])
@@ -155,31 +157,70 @@ export function PlayerOverlay() {
     return () => clearInterval(iv)
   }, [waiting, waitingSince])
 
+  // Alternatives shown in the diagnostics card: the ones passed at play time
+  // plus (when missing — e.g. opened from Downloads / resumed from history)
+  // live-refetched options for the same title.
+  const seenAlt = new Set<string>()
+  const allAlternatives = [...(player?.alternatives ?? []), ...(fetchedAlts ?? [])].filter((a) => {
+    const k = `${a.hash}-${a.season ?? ''}-${a.episode ?? ''}`
+    if (seenAlt.has(k)) return false
+    seenAlt.add(k)
+    return true
+  })
+
+  // Refetch alternatives for the title when the diagnostics card is visible
+  // but none were passed in the player payload.
+  useEffect(() => {
+    if (!player?.refId) return
+    if (player.alternatives?.length || fetchedAlts) return
+    if (player.kind === 'series' && !player.season) return
+    const stalled =
+      !!error || (ready && waiting && waitingSince !== null && Date.now() - waitingSince > STALL_HINT_AFTER_MS)
+    if (!stalled) return
+    let cancelled = false
+    const url =
+      player.kind === 'series'
+        ? `/api/meta/series/${player.refId}/torrents?season=${player.season}${player.episode ? `&episode=${player.episode}` : ''}&title=${encodeURIComponent(player.title)}`
+        : `/api/meta/movie/${player.refId}`
+    fetch(url)
+      .then((r) => r.json())
+      .then((d: { torrents?: TorrentOption[] }) => {
+        if (cancelled) return
+        setFetchedAlts(playableFirst((d.torrents || []).filter((t) => t.hash !== player.infoHash)).slice(0, 10))
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedAlts([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [player, error, ready, waiting, waitingSince, fetchedAlts])
+
   const switchTo = async (option: TorrentOption) => {
     if (switching) return
     setSwitching(option.hash)
     try {
       toast.loading('Connecting to swarm…', { id: 'switch-torrent' })
-      const t = await addTorrent({
-        source: option.source,
-        title: option.title,
+      // streamTorrentOption waits for metadata (the add responds instantly) so
+      // this can never fail with a false "no video file" on a pending torrent.
+      const { torrent, file } = await streamTorrentOption(option, {
         poster: player?.poster || undefined,
         refId: player?.refId,
         kind: player?.kind,
       })
-      const file = bestVideoFile(t)
-      if (!file) throw new Error('No video file found in this torrent')
       toast.success(`Switched to ${option.quality || option.title}`, { id: 'switch-torrent' })
       openPlayer({
-        infoHash: t.infoHash,
+        infoHash: torrent.infoHash,
         fileIndex: file.index,
         title: player?.title || option.title,
         poster: player?.poster || null,
         refId: player?.refId,
         kind: player?.kind,
+        season: player?.season,
+        episode: player?.episode,
         quality: option.quality,
         fileName: file.name,
-        alternatives: player?.alternatives?.filter((a) => a.hash !== option.hash),
+        alternatives: allAlternatives.filter((a) => a.hash !== option.hash),
       })
     } catch (err) {
       toast.error((err as Error).message || 'Switch failed', { id: 'switch-torrent' })
@@ -279,11 +320,11 @@ export function PlayerOverlay() {
                 </div>
               </div>
 
-              {(player.alternatives?.length ?? 0) > 0 ? (
+              {allAlternatives.length > 0 ? (
                 <div className="space-y-1.5">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Try another torrent</p>
                   <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1 otama-scroll">
-                    {player.alternatives!.map((a) => {
+                    {allAlternatives.map((a) => {
                       const aHevc = isHevcName(a.title) || a.codec === 'hevc'
                       return (
                         <button
@@ -305,9 +346,13 @@ export function PlayerOverlay() {
                     })}
                   </div>
                 </div>
+              ) : fetchedAlts === null && player?.refId ? (
+                <p className="flex items-center gap-2 text-xs text-zinc-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Looking for other torrents of this title…
+                </p>
               ) : (
                 <p className="text-xs text-zinc-500">
-                  No alternative torrents were loaded for this title — close the player and pick another quality from the details screen.
+                  No alternative torrents found for this title — close the player and pick another quality from the details screen.
                 </p>
               )}
 
@@ -371,11 +416,10 @@ export function PlayerOverlay() {
               onPlaying={() => setWaiting(false)}
               onCanPlay={() => setWaiting(false)}
               onError={() => {
-                // Transient races (engine restart / eviction / pending metadata)
-                // used to kill playback permanently with MediaError 4 — auto
-                // retry a few times before showing the diagnostics card.
-                const dataFlowing = (active?.downloaded || 0) > 2 * 1024 * 1024
-                if (!dataFlowing && retryCount.current < 3) {
+                // Transient races (engine restart / eviction / pending metadata /
+                // slow tail-range piece fetches) used to kill playback permanently
+                // — auto retry a few times before showing the diagnostics card.
+                if (retryCount.current < 3) {
                   const attempt = retryCount.current++
                   if (retryTimer.current) clearTimeout(retryTimer.current)
                   retryTimer.current = setTimeout(

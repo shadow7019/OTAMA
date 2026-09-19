@@ -60,6 +60,8 @@ export function TorrentList({
         poster: meta?.poster || null,
         refId: meta?.refId,
         kind: meta?.kind,
+        season: option.season,
+        episode: option.episode,
         quality: option.quality,
         fileName: file.name,
         alternatives: playableFirst(torrents.filter((t) => t.source && t.hash !== option.hash)).slice(0, 10),
