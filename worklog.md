@@ -622,3 +622,23 @@ Stage Summary:
 - Local artifacts: android/dist/OTAMA-1.1.0.apk (81KB), desktop/dist/OTAMA-Setup-1.1.0.exe (146MB), OTAMA-1.1.0-portable.exe (146MB), desktop/dist/OTAMA-1.1.0-arm64.zip (379MB, macOS arm64)
 - CI will attach native DMG + fresh EXE + APK to https://github.com/shadow7019/OTAMA/releases/tag/v1.1.0
 - DMG needs TMDB_API_KEY/TMDB_ACCESS_TOKEN repo secrets for full metadata in CI builds (local builds already have TMDB baked in)
+
+---
+Task ID: 27
+Agent: Z.ai Code (main)
+Task: Fix "OTAMA is damaged" Gatekeeper error on macOS DMG
+
+Work Log:
+- Diagnosis: unsigned + quarantined app → macOS Ventura/Sequoia shows "damaged" instead of "unidentified developer"; DMG itself not corrupt
+- DISCOVERED sandbox filesystem rollback mid-session: android/, .github/ 2 workflows, SSH keys, git history lost (desktop reverted to 1.0.0)
+- Restored full project from GitHub via HTTPS fetch + reset --hard origin/main (bfc2eb3); re-extracted openssh-client to ~/ssh-tools
+- Generated NEW ed25519 deploy key (v2, fingerprint SHA256:OBi4Bw0fw17UXfaWEvHgd4xtpIkr0J6DcmEI8DRzZ1A); user added as repo-scoped deploy key (auth now "Hi shadow7019/OTAMA!")
+- New desktop/scripts/adhoc-sign-mac.cjs afterPack hook: codesign --force --deep --sign - on darwin builds (no-ops on Linux/Windows); verified loading + no-op paths
+- Registered build.afterPack in desktop/package.json; bumped desktop 1.1.1, android versionName 1.1.1 / versionCode 2
+- Updated macos-build.yml release notes (ad-hoc signing + xattr fallback)
+- Pushed main 83e27d0 + tag v1.1.1 → all 3 CI builds re-triggered
+
+Stage Summary:
+- User-side instant fix: xattr -cr /Applications/OTAMA.app (works for the v1.1.0 DMG already downloaded)
+- v1.1.1 DMG will be ad-hoc signed → Gatekeeper shows bypassable "cannot verify" dialog (right-click → Open) instead of "damaged"
+- Release: https://github.com/shadow7019/OTAMA/releases/tag/v1.1.1
