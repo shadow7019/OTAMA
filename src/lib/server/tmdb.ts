@@ -358,16 +358,36 @@ export async function tmdbAnimeCatalog(
   items.forEach((i) => (i.kind = 'anime'))
 
   // Upgrade every card to the show's latest aired season (cached per show).
+  //
+  // CURRENT-CONTENT YEARS: TMDB franchises like Bleach live in ONE show entry
+  // (S1 = 2004 series, S2 = Thousand-Year Blood War) whose seasons span
+  // several years — and daily long-runners (Doraemon, Conan) sit in a single
+  // season since their premiere. Displaying the season's START year made
+  // this year's episodes invisible ("Bleach · S2 | 2022"). So whenever the
+  // show is still current — newest episode within ~2 years, or one already
+  // scheduled — the card shows the year of that latest episode instead.
+  // Shows that genuinely ended keep their real (historical) year.
+  const CURRENT_WINDOW_MS = 2 * 365 * 86_400_000
+  const isCurrent = (date?: string) => !!date && Number.isFinite(Date.parse(date)) && Date.now() - Date.parse(date) < CURRENT_WINDOW_MS
+
   return Promise.all(
     items.map(async (it) => {
       const tvId = it.tmdbId ?? (it.refId.startsWith('tmdb:') ? parseInt(it.refId.slice(5), 10) : NaN)
       if (!Number.isFinite(tvId)) return it
       const latest = await latestSeasonOf(tvId)
-      if (!latest || latest.season < 2) return it // single-season shows need no suffix
+      if (!latest) return it
+      const currentYear =
+        isCurrent(latest.lastAirDate) || isCurrent(latest.nextAirDate)
+          ? yearOf(latest.lastAirDate || latest.nextAirDate)
+          : undefined
+      if (latest.season < 2) {
+        // single-season show — no season suffix, but keep the year current
+        return currentYear && currentYear !== it.year ? { ...it, year: currentYear } : it
+      }
       return {
         ...it,
         title: `${it.title} · S${latest.season}`,
-        year: latest.airDate ? yearOf(latest.airDate) : it.year,
+        year: currentYear ?? (latest.airDate ? yearOf(latest.airDate) : it.year),
         poster: latest.poster || it.poster,
       }
     }),
@@ -385,6 +405,7 @@ interface TmdbSeason {
 interface TmdbTvDetail extends TmdbListRow {
   seasons?: TmdbSeason[]
   last_episode_to_air?: { season_number?: number; air_date?: string | null } | null
+  next_episode_to_air?: { air_date?: string | null } | null
 }
 
 /**
@@ -392,7 +413,7 @@ interface TmdbTvDetail extends TmdbListRow {
  * Picks the season containing the most recently aired episode; falls back to
  * the highest numbered season that has an air date.
  */
-export async function latestSeasonOf(tvId: number): Promise<{ season: number; name: string; airDate?: string; poster?: string } | null> {
+export async function latestSeasonOf(tvId: number): Promise<{ season: number; name: string; airDate?: string; lastAirDate?: string; nextAirDate?: string; poster?: string } | null> {
   try {
     const detail = await tmdbGet<TmdbTvDetail>(`/tv/${tvId}`, {}, 6 * 60 * 60_000)
     const seasons = (detail.seasons || []).filter((s) => s.episode_count > 0)
@@ -410,10 +431,61 @@ export async function latestSeasonOf(tvId: number): Promise<{ season: number; na
       season: pick.season_number,
       name: pick.name,
       airDate: pick.air_date || undefined,
+      lastAirDate: detail.last_episode_to_air?.air_date || undefined,
+      nextAirDate: detail.next_episode_to_air?.air_date || undefined,
       poster: pick.poster_path ? `${IMG}/w500${pick.poster_path}` : undefined,
     }
   } catch {
     return null
+  }
+}
+
+interface TmdbSeasonDetail {
+  episodes?: {
+    episode_number?: number
+    name?: string
+    overview?: string | null
+    air_date?: string | null
+    still_path?: string | null
+  }[]
+}
+
+/**
+ * Seasons + full episode lists straight from TMDB (cached 6h per season).
+ * Used for anime detail views: TMDB is the only source that tracks ongoing
+ * franchises CURRENTLY — TVMaze entries for long-running anime (Bleach)
+ * freeze at the original series finale, hiding sequel seasons like
+ * Thousand-Year Blood War. EpisodeInfo-shaped so it drops into seriesDetail.
+ */
+export async function tmdbSeriesSeasons(tmdbId: number): Promise<{ season: number; episodes: { season: number; episode: number; title?: string; overview?: string; airDate?: string; thumbnail?: string }[] }[]> {
+  try {
+    const detail = await tmdbGet<TmdbTvDetail>(`/tv/${tmdbId}`, {}, 6 * 60 * 60_000)
+    const list = (detail.seasons || [])
+      .filter((s) => s.episode_count > 0 && s.season_number >= 1)
+      .sort((a, b) => a.season_number - b.season_number)
+    const out = await Promise.all(
+      list.map(async (s) => {
+        try {
+          const sd = await tmdbGet<TmdbSeasonDetail>(`/tv/${tmdbId}/season/${s.season_number}`, {}, 6 * 60 * 60_000)
+          const episodes = (sd.episodes || [])
+            .filter((ep) => ep.episode_number != null)
+            .map((ep) => ({
+              season: s.season_number,
+              episode: ep.episode_number as number,
+              title: ep.name || undefined,
+              overview: ep.overview || undefined,
+              airDate: ep.air_date || undefined,
+              thumbnail: ep.still_path ? `${IMG}/w300${ep.still_path}` : undefined,
+            }))
+          return { season: s.season_number, episodes }
+        } catch {
+          return { season: s.season_number, episodes: [] }
+        }
+      }),
+    )
+    return out.filter((s) => s.episodes.length > 0)
+  } catch {
+    return []
   }
 }
 
@@ -478,6 +550,8 @@ export interface TmdbEnhancement {
   genres?: string[]
   tagline?: string
   tmdbRating?: number
+  /** TMDB id of the matched title — lets callers pull TMDB-native structures (e.g. seasons) */
+  tmdbId?: number
 }
 
 interface TmdbDetail extends TmdbListRow {
@@ -506,6 +580,7 @@ export async function tmdbEnhanceByImdb(imdbId: string): Promise<TmdbEnhancement
       genres: detail.genres?.map((g) => g.name).slice(0, 4),
       tagline: detail.tagline || undefined,
       tmdbRating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : undefined,
+      tmdbId: row.id,
     }
   } catch {
     return mapRow(row, media === 'movie' ? 'movie' : 'tv') && {

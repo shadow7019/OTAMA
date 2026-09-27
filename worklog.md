@@ -833,3 +833,21 @@ Work Log:
 Stage Summary:
 - OTAMA is login-free again: open → browse → watch; history + favorites are one shared per-server list with full removal UI (single × and Clear all)
 - All Task-34/35 improvements that matter (history removal UI, anime latest seasons, fresh airing-today feed) are retained; only the account layer was removed
+
+---
+Task ID: 37
+Agent: Z.ai Code (main)
+Task: Anime franchise current-season fix — Bleach TYBW visible end-to-end (v1.2.3)
+
+Work Log:
+- User: "I don't see bleach anime this year season and previous year season — identify same for the anime and get their content to their dedicated catalog"
+- Root cause 1 (catalog card): TMDB's Bleach (30984) holds the whole franchise in ONE entry — S1 = 2004 series (366 eps), S2 = Thousand-Year Blood War (50 eps, last ep 2026-09-12, next 2026-10-20). The card suffix "· S2" was right but the year showed the season START (2022), so this year's/last year's content looked absent
+- Fix 1 (tmdbAnimeCatalog): when a show is CURRENT (newest episode within ~2 years, or one scheduled), the card year = year of the latest episode. Bleach · S2 | 2022 → 2026; also fixes Doraemon (2005→2026), Detective Conan (1996→2026), Re:ZERO, JJK, Frieren; ended shows keep honest historical years (Pokémon S25 2021, REBORN! S8 2010, HxH 2014)
+- Root cause 2 (detail overlay): seasons came from TVMaze via imdb lookup — TVMaze's Bleach entry ENDS at the 2012 finale (S16 = 2011 Fullbring arc, 0 videos in Cinemeta), so clicking Bleach opened Season 16 with 2011 episodes; TYBW unreachable from the UI
+- Fix 2: new tmdbSeriesSeasons(tmdbId) in tmdb.ts (per-season /tv/{id}/season/{n}, 6h cache, EpisodeInfo-shaped); meta route /api/meta/series/:imdb accepts ?anime=1 → swaps in TMDB seasons when TMDB resolves the imdb (fallback = TVMaze chain untouched); overlay appends ?anime=1 for anime details
+- Verified in browser: anime catalog card "Bleach · S2 (2026)" → overlay opens at Season 2 with 2026 episodes (E41-E48 Jul-Sep 2026, Find torrents buttons); API S2E48 "THE END TWO WORLD" 2026-09-12 + upcoming E49/E50; torrents query anime=1&absolute=414 (366+48 Nyaa numbering) → 13 torrents incl. ToonsHub TYBW E48 1080p; non-anime TV regression check: Breaking Bad still 5 TVMaze seasons; lint clean
+- Versions: desktop 1.2.3, android versionCode 12 / versionName 1.2.3, UA OTAMA-Android/1.2.3
+
+Stage Summary:
+- Ongoing anime franchises now surface their CURRENT season content end-to-end: catalog card shows the latest-episode year, detail opens at the TMDB season that contains this year's episodes, and Nyaa absolute-episode streaming still lines up (S1 ep count + episode number)
+- Same-franchise identification is achieved through TMDB's unified show entries; duplicate per-arc TMDB entries have ~0 popularity and never surface in browse

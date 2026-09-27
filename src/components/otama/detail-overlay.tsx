@@ -271,8 +271,10 @@ function SeriesDetailBody({
   fallback: { title: string; poster?: string; year?: number }
 }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['series', imdbId],
-    queryFn: () => fetchJson<SeriesDetail>(`/api/meta/series/${imdbId}`),
+    queryKey: ['series', imdbId, anime],
+    // anime=1 → seasons come from TMDB (tracks ongoing franchises like
+    // Bleach: Thousand-Year Blood War; TVMaze freezes at the 2012 finale)
+    queryFn: () => fetchJson<SeriesDetail>(`/api/meta/series/${imdbId}${anime ? '?anime=1' : ''}`),
     staleTime: 10 * 60_000,
   })
   const seasons = data?.seasons || []
