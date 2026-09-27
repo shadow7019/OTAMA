@@ -53,9 +53,17 @@ jobs:
           {
             echo "### xcodebuild tail"
             echo '```'
-            tail -80 build.log 2>/dev/null || echo "(no build.log)"
+            tail -100 build.log 2>/dev/null || echo "(no build.log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # Commit the log into the repo so it is readable from
+          # raw.githubusercontent.com without API access.
+          tail -160 build.log > last-build-log.txt 2>/dev/null || echo "(no build.log)" > last-build-log.txt
+          git config user.email "ci@otama.local"
+          git config user.name "OTAMA CI"
+          git add last-build-log.txt
+          git commit -m "ci: iOS build log (run ${GITHUB_RUN_ID})" || true
+          git push origin HEAD:main || true
 
       - name: Package unsigned IPA
         working-directory: ios

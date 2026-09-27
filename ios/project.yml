@@ -43,3 +43,14 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_BITCODE: "NO"
+
+schemes:
+  OTAMA:
+    build:
+      targets:
+        OTAMA: [release]
+    run:
+      config: Release
+    archive:
+      config: Release
+
