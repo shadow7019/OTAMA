@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-build.yml'
 
 permissions:
   contents: write
@@ -24,26 +28,44 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
-      - name: Build archive (unsigned)
+      - name: Build OTAMA.app (unsigned)
         working-directory: ios
         run: |
           set -o pipefail
-          xcodebuild archive \
+          xcodebuild \
             -project OTAMA.xcodeproj \
             -scheme OTAMA \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/OTAMA.xcarchive \
+            -sdk iphoneos \
+            ARCHS=arm64 \
+            -derivedDataPath build/dd \
+            build \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             | tee build.log | tail -40
 
-      - name: Package unsigned IPA
-        working-directory: ios/build
+      - name: Diagnostics on failure
+        if: failure()
+        working-directory: ios
         run: |
-          mkdir -p Payload
-          cp -R OTAMA.xcarchive/Products/Applications/OTAMA.app Payload/
-          zip -qry "OTAMA-${GITHUB_REF_NAME#v}.ipa" Payload
+          {
+            echo "### xcodebuild tail"
+            echo '```'
+            tail -80 build.log 2>/dev/null || echo "(no build.log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          APP=$(find build/dd/Build/Products -maxdepth 2 -type d -name "OTAMA.app" -print -quit)
+          echo "APP=$APP"
+          test -n "$APP"
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build && zip -qry "OTAMA-${GITHUB_REF_NAME#v}.ipa" Payload
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

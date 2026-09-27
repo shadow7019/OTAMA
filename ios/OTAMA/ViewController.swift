@@ -81,9 +81,9 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserAction = []
         cfg.allowsPictureInPictureMediaPlayback = true
-        if #available(iOS 16.4, *) {
-            cfg.preferences.isElementFullscreenEnabled = true
-        }
+        // HTML5 element-fullscreen: the web player falls back to the native
+        // <video> fullscreen (webkitEnterFullscreen) on iOS, so playback and
+        // fullscreen work out of the box without extra WKPreferences flags.
         cfg.applicationNameForUserAgent = "OTAMA-iOS/1.3.0"
 
         webView = WKWebView(frame: view.bounds, configuration: cfg)
