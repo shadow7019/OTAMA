@@ -51,6 +51,8 @@ let rendererPortNum = 0
 let lanMode = false
 let gwPortNum = 0
 let lanPhoneUrl = ''
+let tlsChild = null
+let httpsActive = false
 
 /* ------------------------------ small utils ------------------------------ */
 
@@ -267,8 +269,8 @@ function toggleLanMode() {
 
 /**
  * The address phones use when they are NOT on the same Wi-Fi — e.g.
- * http://otama.linkpc.net:3000. Resolution order:
- *   1. OTAMA_SERVER_URL environment variable
+ * https://otama.linkpc.net. Resolution order:
+ *   1. OTAMA_SERVER_URL / SERVER_URL / API_URL environment variable
  *   2. public-url.txt inside the user profile (editable in-app via the
  *      "Set public address" menu item — no terminal knowledge required)
  */
@@ -284,7 +286,9 @@ function normalizePublicUrl(raw) {
 }
 
 function readPublicUrl() {
-  const env = normalizePublicUrl(process.env.OTAMA_SERVER_URL)
+  const env = normalizePublicUrl(
+    process.env.OTAMA_SERVER_URL || process.env.SERVER_URL || process.env.API_URL || '',
+  )
   if (env) return env
   try {
     return normalizePublicUrl(fs.readFileSync(publicUrlFilePath(), 'utf8'))
@@ -311,11 +315,11 @@ const PROMPT_HTML = `<!doctype html><html><head><meta charset="utf-8">
 </style></head><body>
   <h2>Public address</h2>
   <p>The address phones use when they are <b>not</b> on your Wi-Fi — for example<br>
-  <code>http://otama.linkpc.net:3000</code></p>
-  <input id="u" spellcheck="false" placeholder="http://your-domain:3000">
-  <p class="hint">Needs a one-time router port-forward (external TCP port → this PC's port 3000)
-  and your DDNS/domain pointing at this network's public IP. Leave empty + Save to clear.
-  The OTAMA_SERVER_URL environment variable overrides this file.</p>
+  <code>https://otama.linkpc.net</code> (https) or <code>http://otama.linkpc.net:3000</code></p>
+  <input id="u" spellcheck="false" placeholder="https://your-domain">
+  <p class="hint">https://… enables automatic HTTPS (Let's Encrypt; router must forward TCP 80+443).
+  http://…:3000 is plain HTTP (forward TCP 3000). Your DDNS/domain must point at this network's public IP.
+  Leave empty + Save to clear. OTAMA_SERVER_URL / SERVER_URL / API_URL environment variables override this file.</p>
   <div class="row">
     <button id="save">Save</button>
     <button id="close">Close</button>
@@ -365,6 +369,92 @@ function promptPublicUrl() {
       buildMenu() // re-render menu labels with the new address
     }
   })
+}
+
+/* --------------------- automatic HTTPS (bundled Caddy) --------------------- */
+
+function caddyBinPath() {
+  const name = process.platform === 'win32' ? 'caddy.exe' : 'caddy'
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'caddy')
+    : path.join(DESKTOP_ROOT, 'resources', 'caddy')
+  return path.join(base, name)
+}
+
+/**
+ * Serve the public HTTPS address with a real Let's Encrypt certificate.
+ * Spawns the bundled Caddy when the public URL is https://<domain>:
+ *
+ *   internet ──► :443 (Caddy, auto-TLS for the domain)
+ *                 └─ reverse_proxy ──► 127.0.0.1:<gateway>
+ *   internet ──► :80  (Caddy) ──► redirect to https + ACME challenges
+ *
+ * Requires the router to forward TCP 80 + 443 to this PC and the domain to
+ * point at this network's public IP. Failures never affect OTAMA itself —
+ * the HTTP path (gateway :3000) keeps working regardless.
+ */
+async function maybeStartHttpsProxy() {
+  const pub = readPublicUrl()
+  if (!pub.startsWith('https://')) return null
+  let host = ''
+  try {
+    host = new URL(pub).hostname || ''
+  } catch {
+    return null
+  }
+  // ACME needs a real domain — bare IPs cannot get certificates.
+  if (!host || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+    log(`https proxy skipped — '${host}' is not a domain name`)
+    return null
+  }
+  const bin = caddyBinPath()
+  if (!fs.existsSync(bin)) {
+    log('https proxy skipped — bundled Caddy not present (HTTP path still works)')
+    return null
+  }
+
+  const dir = path.join(app.getPath('userData'), 'caddy')
+  const dataDir = path.join(dir, 'data')
+  const cfgDir = path.join(dir, 'config')
+  fs.mkdirSync(dataDir, { recursive: true })
+  fs.mkdirSync(cfgDir, { recursive: true })
+
+  const caddyfile = [
+    '{',
+    '  admin off',
+    `  storage file_system ${JSON.stringify(dataDir).replace(/\\/g, '/')}`,
+    '}',
+    `${host} {`,
+    `  reverse_proxy 127.0.0.1:${gwPortNum} {`,
+    '    header_up Host {host}',
+    '    flush_interval -1',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
+  const cfgPath = path.join(dir, 'Caddyfile')
+  fs.writeFileSync(cfgPath, caddyfile)
+
+  const child = spawn(bin, ['run', '--config', cfgPath, '--adapter', 'caddyfile'], {
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: cfgDir,
+      XDG_DATA_HOME: dataDir,
+    },
+    cwd: dir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  pipeChildLogs(child, 'otama-https')
+  child.on('exit', (code) => {
+    tlsChild = null
+    httpsActive = false
+    log(`https proxy exited (code=${code}) — check router forwarding of TCP 80+443 and the domain A record`)
+  })
+  tlsChild = child
+  httpsActive = true
+  log(`https proxy starting for ${host} → 127.0.0.1:${gwPortNum} on ports 80+443`)
+  return child
 }
 
 /**
@@ -517,6 +607,7 @@ function buildMenu() {
         ...(lanMode
           ? [{ label: pub ? `Public address: ${pub}` : 'Public address: not set', enabled: false }]
           : []),
+        ...(httpsActive ? [{ label: `HTTPS: ${pub} — automatic certificate (ports 80+443)`, enabled: false }] : []),
         {
           label: pub ? 'Edit public address…' : 'Set public address (domain)…',
           click: promptPublicUrl,
@@ -619,7 +710,7 @@ async function apiSmokeCheck(base) {
 }
 
 function killChildren() {
-  for (const child of [engineChild, rendererChild]) {
+  for (const child of [engineChild, rendererChild, tlsChild]) {
     if (child && !child.killed) {
       try {
         child.kill()
@@ -667,6 +758,12 @@ if (!app.requestSingleInstanceLock()) {
         await mainWindow.loadURL(rendererUrl)
         log('window loaded — OTAMA is ready')
         void apiSmokeCheck(rendererUrl)
+      }
+
+      // Automatic HTTPS for the public domain (bundled Caddy) — works with
+      // or without LAN mode since it proxies the loopback gateway.
+      if (!DEV_URL && (await maybeStartHttpsProxy())) {
+        buildMenu()
       }
 
       if (lanMode && !DEV_URL) {

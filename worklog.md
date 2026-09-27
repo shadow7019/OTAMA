@@ -722,3 +722,21 @@ Stage Summary:
 - v1.1.4 live: Android preset otama.linkpc.net:3000, single-port embedded gateway, OTAMA_SERVER_URL support
 - v1.1.5: cold-launch can never dead-end — always lands on actionable setup screen with the real diagnosis
 - User still needs: router port-forward TCP 3000 (or CGNAT check → Tailscale fallback), firewall, LAN access ON
+
+---
+Task ID: 32
+Agent: Z.ai Code (main)
+Task: SERVER_URL=https://otama.linkpc.net — HTTPS-first Android + automatic Let's Encrypt in desktop
+
+Work Log:
+- User specified canonical addresses: API_URL=https://otama.linkpc.net, SERVER_URL=https://otama.linkpc.net
+- desktop/scripts/prepare-caddy.mjs (NEW): downloads platform Caddy v2.8.4 (win amd64 zip / mac arm64 tar.gz) into resources/caddy during prepare:all — zero CI workflow changes; fail-soft (offline → README placeholder, HTTP still works); asset naming verified live (mac uses caddy_X_mac_arm64, NOT darwin)
+- package.json: prepare:caddy script + extraResources caddy → resources/caddy ships inside installer/.app
+- main.mjs: readPublicUrl accepts OTAMA_SERVER_URL || SERVER_URL || API_URL env aliases; maybeStartHttpsProxy() spawns bundled Caddy when public URL is https://<domain> — auto-TLS (ACME HTTP-01 on :80, TLS on :443, storage in userData/caddy), reverse_proxy → 127.0.0.1:<gateway> with flush_interval -1; menu shows HTTPS status line; tlsChild killed on quit; runs with or without LAN mode (proxies loopback)
+- MainActivity: DEFAULT_SERVER_URL = https://otama.linkpc.net (HTTPS-first); candidate chain for bare domains: https typed → +http://:3000; http typed → +http://:3000 +https://; help text: forward 80+443 (https) or 3000 (http); UA 1.1.6
+- Versions: desktop 1.1.6, android versionCode 7 / versionName 1.1.6
+- Verified: syntax checks, prepare-caddy fail-soft run, both Caddy asset URLs 200
+
+Stage Summary:
+- Desktop now self-hosts https://otama.linkpc.net with real certs once router forwards 80+443 — no manual cert work, auto-renewal
+- Android ships HTTPS-first preset with automatic HTTP:3000 fallback; still works if ACME is blocked (CGNAT)

@@ -1,7 +1,7 @@
 {
   "name": "otama-desktop",
   "productName": "OTAMA",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "OTAMA \u2014 torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
   "main": "src/main.mjs",
   "author": "OTAMA Project",
@@ -10,7 +10,8 @@
   "scripts": {
     "prepare:engine": "node scripts/prepare-engine.mjs",
     "prepare:renderer": "node scripts/prepare-renderer.mjs",
-    "prepare:all": "npm run prepare:engine && npm run prepare:renderer",
+    "prepare:caddy": "node scripts/prepare-caddy.mjs",
+    "prepare:all": "npm run prepare:engine && npm run prepare:renderer && npm run prepare:caddy",
     "make:icon": "node scripts/make-ico.mjs",
     "patch:builder": "node scripts/patch-builder.mjs",
     "dev": "electron .",
@@ -64,6 +65,13 @@
           "!**/*.md",
           "!**/{test,__tests__,tests}/**",
           "!**/.github/**"
+        ]
+      },
+      {
+        "from": "resources/caddy",
+        "to": "caddy",
+        "filter": [
+          "**/*"
         ]
       }
     ],

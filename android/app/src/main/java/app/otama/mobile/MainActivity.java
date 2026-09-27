@@ -48,10 +48,10 @@ public class MainActivity extends Activity {
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
 
-    /** Preset internet address (user's DDNS domain → forwarded router port).
-     *  Works once the PC runs OTAMA with LAN access ON and the router
-     *  forwards TCP 3000; the app also probes alternates automatically. */
-    private static final String DEFAULT_SERVER_URL = "http://otama.linkpc.net:3000";
+    /** Preset internet address (user's DDNS domain). HTTPS first (desktop app
+     *  serves automatic Let's Encrypt certificates via bundled Caddy); the
+     *  connect chain falls back to plain HTTP port 3000 automatically. */
+    private static final String DEFAULT_SERVER_URL = "https://otama.linkpc.net";
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -219,7 +219,8 @@ public class MainActivity extends Activity {
                 + "the phone app is a remote control + player.\n\n"
                 + "ANYWHERE (your domain):\n"
                 + "1.  On the PC: OTAMA menu → \"LAN access: ON\"\n"
-                + "2.  Router: forward TCP port 3000 to the PC\n"
+                + "2.  Router: forward TCP 80 + 443 (https)\n"
+                + "      — or TCP 3000 (plain http)\n"
                 + "3.  Just tap Connect — otama.linkpc.net is preset\n\n"
                 + "SAME WI-FI ONLY (no router setup):\n"
                 + "1.  On the PC: press Alt in OTAMA → \"LAN access: ON\"\n"
@@ -260,13 +261,17 @@ public class MainActivity extends Activity {
         final String primary = raw;
 
         // Candidate list: the typed address first, then — for a bare domain
-        // without an explicit port — the common OTAMA ports, so users who
-        // forwarded 80/443 instead of 3000 still connect without retyping.
+        // without an explicit port — the common OTAMA endpoints: HTTPS
+        // (bundled Caddy, ports 80+443) and the HTTP gateway on :3000.
         final List<String> candidates = new ArrayList<>();
         candidates.add(primary);
         if (uri.getPort() == -1 && !isIpLike(host)) {
-            if ("http".equals(uri.getScheme())) candidates.add("http://" + host + ":3000/");
-            candidates.add("https://" + host + "/");
+            if ("https".equals(uri.getScheme())) {
+                candidates.add("http://" + host + ":3000/");
+            } else {
+                candidates.add("http://" + host + ":3000/");
+                candidates.add("https://" + host + "/");
+            }
         }
 
         // Pre-flight check: prove the OTAMA API actually answers here before
@@ -405,7 +410,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.1.5");
+        s.setUserAgentString(ua + " OTAMA-Android/1.1.6");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
