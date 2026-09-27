@@ -781,3 +781,19 @@ Stage Summary:
 - History removal everywhere: History page (single + clear all) and Continue watching ×
 - Anime browse now always shows each show's latest season
 - Test accounts deleted after verification; only the user's real account remains
+
+---
+Task ID: 34b (addendum)
+Agent: Z.ai Code (main)
+Task: Hosted-URL deployment behavior investigation
+
+Work Log:
+- Discovered https://otama.space-z.ai does NOT serve the live sandbox dev server: GET / returns a byte-identical stale pre-auth page (edge-cached), /api/auth/* returns an OTAMA-styled Turbopack 404 (route doesn't exist in the served snapshot), while /api/catalog, /api/history, /health?XTransformPort, socket.io all answer — all of these existed BEFORE Task 34
+- Conclusion: the FC edge serves a pinned replica/snapshot of the repo from before the accounts work (plus aggressive GET caching; query strings do NOT bypass it; HEAD unsupported 403)
+- Origin (127.0.0.1:3000) verified fully correct: auth gate SSR splash, all API routes, /home alias; local Caddy :81 serves /home fresh too
+- /home alias committed (170a5dc) as an escape hatch for Caddy-fronted deployments (desktop/LAN), though the FC edge 404s it until the replica refreshes
+- No cache purge possible from inside the sandbox — replica refresh is platform-triggered (space republish/refresh or redeploy from git)
+
+Stage Summary:
+- v1.2.0 code is on GitHub and in the Release binaries; the hosted URL will pick it up on the platform's next redeploy/replica refresh
+- Android app degrade path is safe: if the stale page loads, browsing still works; auth features appear once the replica refreshes
