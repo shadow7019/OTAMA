@@ -851,3 +851,25 @@ Work Log:
 Stage Summary:
 - Ongoing anime franchises now surface their CURRENT season content end-to-end: catalog card shows the latest-episode year, detail opens at the TMDB season that contains this year's episodes, and Nyaa absolute-episode streaming still lines up (S1 ep count + episode number)
 - Same-franchise identification is achieved through TMDB's unified show entries; duplicate per-arc TMDB entries have ~0 popularity and never surface in browse
+
+---
+Task ID: 38
+Agent: Z.ai Code (main)
+Task: Android app connects DIRECTLY to the hosted server — remove the server-address / LAN gate (v1.2.4)
+
+Work Log:
+- User (screenshot of the address-gate screen failing on http://192.168.1.50:3000): "we don't need this we need direct host we don't want it to work on same Internet connection"
+- Rewrote android/app/src/main/java/app/otama/mobile/MainActivity.java (~630 → 560 lines):
+  - REMOVED the entire first-run setup screen: "OTAMA server address" input, Connect / Connect anyway buttons, candidate probing (testOtamaServer / looksLikeOtama / preflightSaved / connect()) — all gone
+  - Cold launch now goes straight into the WebView at DEFAULT_SERVER_URL (https://otama.space-z.ai); added an OTAMA brand splash (logo + tagline + amber indeterminate ProgressBar) that stays up until the first onPageFinished, with touch barrier
+  - resolveTargetUrl(): honors a previously saved custom server ONLY if it parses and is a PUBLIC host; private/LAN entries (10.x, 127.x, 192.168.x, 172.16-31.x, 169.254.x, localhost, .local/.lan) are dropped once so old installs can never cold-start reaching for an absent PC — direct-host guarantee
+  - Connection-error overlay rebuilt for direct-host messaging: "reachable on ANY internet connection — Wi-Fi or mobile data, no setup needed" + Try again + "Use another server" (advanced self-host escape hatch: card overlay with input, Save / Use hosted server / Cancel; empty input = reset to hosted; https assumed for bare domains)
+  - isPrivateHost() regex+range check used for both launch cleanup and honoring saved prefs; back key closes serverOverlay → exits fullscreen video → webview back
+- Versions: android versionCode 13 / versionName 1.2.4, UA OTAMA-Android/1.2.4, desktop package.json 1.2.4
+- Committed b531a25, pushed main + tag v1.2.4 (deploy key v3, foreground timeout 45)
+- lint clean; no web-app changes (the gate was purely native Android)
+
+Stage Summary:
+- Android app is now zero-config: launch → splash → hosted OTAMA UI, works on mobile data or any Wi-Fi, no same-network requirement, no address form to get wrong
+- Self-hosting survives only as an advanced opt-in on the error screen; LAN/private addresses are actively dropped at cold start
+- v1.2.4 CI builds all four artifacts from the new tag
