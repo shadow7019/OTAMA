@@ -815,3 +815,21 @@ Work Log:
 Stage Summary:
 - "New episodes airing today" now lists shows that REALLY air now (current hits only, no 1971/1989/2009 stalwarts) — auto-updating daily
 - Login works everywhere the current build is served; on otama.space-z.ai the user must wait for the space snapshot to refresh (republish) — app login hits the stale published build, origin + self-hosted desktops unaffected
+
+---
+Task ID: 36
+Agent: Z.ai Code (main)
+Task: Remove the login system entirely (v1.2.2)
+
+Work Log:
+- User: "remove the login system" — the accounts feature (Task 34) created a login wall that could never work on the hosted snapshot (404s there), so it's gone
+- Deleted: src/lib/auth.ts, src/app/api/auth/{register,login,logout,me}, src/components/otama/auth-screen.tsx, AuthGate in page.tsx, UserProvider/useUser in providers.tsx, account chip + sign-out in nav-bar.tsx; API index doc updated
+- Prisma schema: User + Session models dropped, relation fields removed from Favorite/WatchHistory; userId kept as a plain nullable column so the proven [userId,refId] / [userId,kind,refId] unique keys stay; every query now uses a fixed 'local' bucket
+- DB: backed up first, db push preserved all rows, updateMany moved all history/favorites to userId='local' — user's 7 history entries + 1 favorite survive (Practical Magic @ pos 8.6s/6250s etc.)
+- E2E verified in browser: app opens straight to Home (no login screen), History page lists items, per-item Remove works (7→6), entry restored from backup afterwards (7), POST upsert + poster re-verified; airing-today row still MobLand 2025/Lanterns 2026; anime latest-season intact (Mushoku S3, Bleach S2, JoJo S6); zero console errors; lint clean
+- Hosted-snapshot refresh probes: public XTransformPort=3000 probe → 404 (no proxy path to the live dev server); gateway admin API blocked by sandbox; no in-sandbox republish trigger exists — the platform-side republish remains the only refresh path
+- Versions: desktop 1.2.2, android versionCode 11 / versionName 1.2.2, UA OTAMA-Android/1.2.2
+
+Stage Summary:
+- OTAMA is login-free again: open → browse → watch; history + favorites are one shared per-server list with full removal UI (single × and Clear all)
+- All Task-34/35 improvements that matter (history removal UI, anime latest seasons, fresh airing-today feed) are retained; only the account layer was removed

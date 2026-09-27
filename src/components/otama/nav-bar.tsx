@@ -1,16 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Search, Download, Info, Menu, X, Wifi, WifiOff, Settings2, LogOut, UserRound } from 'lucide-react'
+import { Search, Download, Info, Menu, X, Wifi, WifiOff, Settings2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { OtamaLogo } from '@/components/otama/logo'
 import { TmdbDialog } from '@/components/otama/tmdb-dialog'
 import { useAppStore, type View } from '@/store/app-store'
 import { useEngineState } from '@/hooks/use-engine-state'
 import { useDebounce } from '@/hooks/use-debounce'
-import { useUser } from '@/components/otama/providers'
 import { cn } from '@/lib/utils'
 
 const NAV: { id: View; label: string }[] = [
@@ -30,7 +28,6 @@ export function NavBar() {
   const setDownloadsOpen = useAppStore((s) => s.setDownloadsOpen)
   const setAboutOpen = useAppStore((s) => s.setAboutOpen)
   const { torrents, connected } = useEngineState()
-  const { user, logout } = useUser()
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [tmdbOpen, setTmdbOpen] = useState(false)
@@ -107,37 +104,6 @@ export function NavBar() {
           <Button variant="ghost" size="icon" onClick={() => setAboutOpen(true)} aria-label="About OTAMA">
             <Info className="h-5 w-5" />
           </Button>
-
-          {user ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-2 pl-1.5 pr-2 sm:pl-2"
-                  aria-label={`Account: ${user.username}`}
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 text-xs font-black uppercase text-black" aria-hidden>
-                    {user.username.slice(0, 1)}
-                  </span>
-                  <span className="hidden max-w-[9rem] truncate md:inline">{user.username}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuLabel className="flex items-center gap-2">
-                  <UserRound className="h-4 w-4 text-amber-400" aria-hidden />
-                  Signed in as {user.username}
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setView('favorites')}>Your favorites</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setView('history')}>Your history</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => logout()} className="text-red-300 focus:text-red-300">
-                  <LogOut className="h-4 w-4" aria-hidden /> Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
         </div>
       </div>
 
@@ -168,15 +134,6 @@ export function NavBar() {
               aria-label="Search"
             />
           </form>
-          {user ? (
-            <Button
-              variant="ghost"
-              onClick={() => { logout(); setMenuOpen(false) }}
-              className="w-full justify-start text-red-300 hover:text-red-300"
-            >
-              <LogOut className="mr-2 h-4 w-4" aria-hidden /> Sign out ({user.username})
-            </Button>
-          ) : null}
         </nav>
       ) : null}
     </header>

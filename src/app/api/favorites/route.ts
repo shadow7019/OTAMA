@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Favorites — STRICTLY per-account. Every query is scoped by the session user.
+ * Favorites — one shared bucket (the login system was removed).
  */
 
-/** GET /api/favorites — this account's favorites */
-export async function GET(req: NextRequest) {
-  const auth = await requireUser(req)
-  if (auth.res) return auth.res
+/** GET /api/favorites — saved items */
+export async function GET() {
   try {
     const favorites = await db.favorite.findMany({
-      where: { userId: auth.user.id },
+      where: { userId: 'local' },
       orderBy: { createdAt: 'desc' },
     })
     return NextResponse.json({ favorites })
@@ -24,17 +21,15 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** POST /api/favorites — add or update a favorite for this account */
+/** POST /api/favorites — add or update a favorite */
 export async function POST(req: NextRequest) {
-  const auth = await requireUser(req)
-  if (auth.res) return auth.res
   try {
     const body = await req.json()
     if (!body.kind || !body.refId || !body.title) {
       return NextResponse.json({ error: 'kind, refId, title required' }, { status: 400 })
     }
     const favorite = await db.favorite.upsert({
-      where: { userId_kind_refId: { userId: auth.user.id, kind: body.kind, refId: String(body.refId) } },
+      where: { userId_kind_refId: { userId: 'local', kind: body.kind, refId: String(body.refId) } },
       update: {
         title: body.title,
         year: body.year ?? null,
@@ -50,7 +45,7 @@ export async function POST(req: NextRequest) {
         poster: body.poster ?? null,
         rating: body.rating ?? null,
         metaJson: body.meta ? JSON.stringify(body.meta) : null,
-        userId: auth.user.id,
+        userId: 'local',
       },
     })
     return NextResponse.json({ favorite })
@@ -59,16 +54,14 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** DELETE /api/favorites?kind=&refId= — remove from this account's favorites */
+/** DELETE /api/favorites?kind=&refId= — remove a saved item */
 export async function DELETE(req: NextRequest) {
-  const auth = await requireUser(req)
-  if (auth.res) return auth.res
   const { searchParams } = new URL(req.url)
   const kind = searchParams.get('kind')
   const refId = searchParams.get('refId')
   if (!kind || !refId) return NextResponse.json({ error: 'kind, refId required' }, { status: 400 })
   try {
-    await db.favorite.deleteMany({ where: { userId: auth.user.id, kind, refId } })
+    await db.favorite.deleteMany({ where: { userId: 'local', kind, refId } })
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })

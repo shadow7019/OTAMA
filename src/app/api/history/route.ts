@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Watch history — STRICTLY per-account. Every query is scoped by the session
- * user: no account can read or mutate another account's history.
+ * Watch history — one shared bucket (the login system was removed; every
+ * visitor on this server sees the same device-level history).
  */
 
-/** GET /api/history — this account's watch history ordered by recency */
-export async function GET(req: NextRequest) {
-  const auth = await requireUser(req)
-  if (auth.res) return auth.res
+/** GET /api/history — watch history ordered by recency */
+export async function GET() {
   try {
     const history = await db.watchHistory.findMany({
-      where: { userId: auth.user.id },
+      where: { userId: 'local' },
       orderBy: { updatedAt: 'desc' },
       take: 60,
     })
@@ -27,17 +24,15 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** POST /api/history — upsert playback position for this account */
+/** POST /api/history — upsert playback position */
 export async function POST(req: NextRequest) {
-  const auth = await requireUser(req)
-  if (auth.res) return auth.res
   try {
     const body = await req.json()
     if (!body.refId || !body.infoHash || typeof body.position !== 'number') {
       return NextResponse.json({ error: 'refId, infoHash, position required' }, { status: 400 })
     }
     const entry = await db.watchHistory.upsert({
-      where: { userId_refId: { userId: auth.user.id, refId: String(body.refId) } },
+      where: { userId_refId: { userId: 'local', refId: String(body.refId) } },
       update: {
         title: body.title,
         poster: body.poster ?? null,
@@ -56,7 +51,7 @@ export async function POST(req: NextRequest) {
         fileIndex: body.fileIndex ?? 0,
         position: body.position,
         duration: body.duration ?? null,
-        userId: auth.user.id,
+        userId: 'local',
       },
     })
     return NextResponse.json({ entry })
@@ -65,16 +60,14 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** DELETE /api/history?refId=<id|all> — remove one entry, or wipe this account's history */
+/** DELETE /api/history?refId=<id|all> — remove one entry, or wipe the whole history */
 export async function DELETE(req: NextRequest) {
-  const auth = await requireUser(req)
-  if (auth.res) return auth.res
   const { searchParams } = new URL(req.url)
   const refId = searchParams.get('refId')
   if (!refId) return NextResponse.json({ error: 'refId required' }, { status: 400 })
   try {
-    if (refId === 'all') await db.watchHistory.deleteMany({ where: { userId: auth.user.id } })
-    else await db.watchHistory.deleteMany({ where: { userId: auth.user.id, refId } })
+    if (refId === 'all') await db.watchHistory.deleteMany({ where: { userId: 'local' } })
+    else await db.watchHistory.deleteMany({ where: { userId: 'local', refId } })
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
