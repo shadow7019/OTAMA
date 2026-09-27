@@ -79,7 +79,6 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private func buildWebView() {
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
-        cfg.mediaTypesRequiringUserAction = []
         cfg.allowsPictureInPictureMediaPlayback = true
         // HTML5 element-fullscreen: the web player falls back to the native
         // <video> fullscreen (webkitEnterFullscreen) on iOS, so playback and
