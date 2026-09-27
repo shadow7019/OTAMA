@@ -48,10 +48,12 @@ public class MainActivity extends Activity {
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
 
-    /** Preset internet address (user's DDNS domain). HTTPS first (desktop app
-     *  serves automatic Let's Encrypt certificates via bundled Caddy); the
-     *  connect chain falls back to plain HTTP port 3000 automatically. */
-    private static final String DEFAULT_SERVER_URL = "https://otama.linkpc.net";
+    /** Preset server: the hosted OTAMA instance (web UI + torrent engine,
+     *  fully live — catalog API, engine and realtime all verified). Works out
+     *  of the box with no router setup. The user can type any other OTAMA
+     *  address (self-hosted PC domain, LAN IP) — the connect chain auto-probes
+     *  https and the plain-HTTP gateway on :3000. */
+    private static final String DEFAULT_SERVER_URL = "https://otama.space-z.ai";
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -215,17 +217,17 @@ public class MainActivity extends Activity {
         setupView.addView(anywayBtn, ap);
 
         TextView help = new TextView(this);
-        help.setText("OTAMA streams from a server on your computer —\n"
-                + "the phone app is a remote control + player.\n\n"
-                + "ANYWHERE (your domain):\n"
-                + "1.  On the PC: OTAMA menu → \"LAN access: ON\"\n"
-                + "2.  Router: forward TCP 80 + 443 (https)\n"
-                + "      — or TCP 3000 (plain http)\n"
-                + "3.  Just tap Connect — otama.linkpc.net is preset\n\n"
-                + "SAME WI-FI ONLY (no router setup):\n"
-                + "1.  On the PC: press Alt in OTAMA → \"LAN access: ON\"\n"
-                + "      → the dialog shows http://192.168.x.x:3000\n"
-                + "2.  Type that address here instead");
+        help.setText("OTAMA streams from a server — the phone app\n"
+                + "is a remote control + player.\n\n"
+                + "READY TO USE (preset):\n"
+                + "otama.space-z.ai is a hosted OTAMA server —\n"
+                + "just tap Connect. Nothing to install.\n\n"
+                + "YOUR OWN PC (optional):\n"
+                + "ANYWHERE — PC: Alt → \"LAN access: ON\",\n"
+                + "router: forward TCP 80 + 443 (https) or 3000 (http),\n"
+                + "then type your domain here.\n"
+                + "SAME WI-FI — PC: Alt → \"LAN access: ON\" shows\n"
+                + "http://192.168.x.x:3000 — type that here instead");
         help.setTextSize(12);
         help.setTextColor(ZINC_400);
         help.setPadding(0, dp(24), 0, 0);
@@ -410,7 +412,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.1.6");
+        s.setUserAgentString(ua + " OTAMA-Android/1.1.7");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -519,11 +521,12 @@ public class MainActivity extends Activity {
         errorOverlay.addView(title);
 
         TextView detail = new TextView(this);
-        detail.setText(connectedUrl + "\n\nMake sure OTAMA is running on your computer\n"
-                + "with LAN access ON (Alt in OTAMA → \"LAN access\"),\n"
-                + "and that this address is reachable:\n"
-                + "same Wi-Fi — or router forwarding TCP port 3000\n"
-                + "for your domain (otama.linkpc.net).");
+        detail.setText(connectedUrl + "\n\nIf this is your own PC: run OTAMA there with\n"
+                + "LAN access ON (Alt in OTAMA → \"LAN access\")\n"
+                + "and forward the port on your router.\n"
+                + "The preset https://otama.space-z.ai is a hosted\n"
+                + "server — if it shows here, it is temporarily down;\n"
+                + "tap Try again in a moment.");
         detail.setTextSize(13);
         detail.setTextColor(ZINC_400);
         detail.setGravity(Gravity.CENTER);

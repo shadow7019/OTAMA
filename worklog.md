@@ -740,3 +740,21 @@ Work Log:
 Stage Summary:
 - Desktop now self-hosts https://otama.linkpc.net with real certs once router forwards 80+443 — no manual cert work, auto-renewal
 - Android ships HTTPS-first preset with automatic HTTP:3000 fallback; still works if ACME is blocked (CGNAT)
+
+---
+Task ID: 33
+Agent: Z.ai Code (main)
+Task: https://otama.space-z.ai — hosted-instance preset as the app default (v1.1.7)
+
+Work Log:
+- Probed https://otama.space-z.ai: HTTP 200, valid TLS, 0.11s — resolves to the sandbox's public gateway (Aliyun ALB, HK); this sandbox runs the full OTAMA stack (Next UI :3000 + engine :3003, both confirmed listening)
+- End-to-end verification through the public URL: /api/catalog JSON 200 (the app's health probe), /health?XTransformPort=3003 → {"ok":true,"version":"1.3.0"} 200, socket.io polling handshake 200 with sid + websocket upgrade available — hosted instance fully functional
+- MainActivity: DEFAULT_SERVER_URL = https://otama.space-z.ai (hosted, zero-config preset); setup help rewritten (READY TO USE preset / YOUR OWN PC optional); error overlay now explains hosted semantics (temporarily down → Try again) instead of port-forward instructions; UA OTAMA-Android/1.1.7
+- Candidate chain unchanged: typed https URL wins immediately; bare domains still auto-probe http:3000 + https
+- Versions: desktop 1.1.7, android versionCode 8 / versionName 1.1.7
+- Foreground push + tag v1.1.7 → CI three platforms
+
+Stage Summary:
+- App ships pointed at the LIVE hosted instance https://otama.space-z.ai — Connect works out of the box, no router or PC required
+- v1.1.6 (HTTPS-first + bundled Caddy auto-TLS for self-host domains) was already tagged/pushed before this task
+- Self-host path preserved: user can still type their own domain (otama.linkpc.net) or LAN IP
