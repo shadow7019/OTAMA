@@ -22,8 +22,12 @@ const ENDPOINTS: Record<string, string> = {
   '/api/nyaa': 'GET Nyaa anime RSS search (q)',
   '/api/torrentio': 'GET Torrentio streams (imdb, type | q)',
   '/api/torrends': 'GET site directory + per-site search links',
-  '/api/favorites': 'GET/POST/DELETE favorites',
-  '/api/history': 'GET/POST/DELETE watch history (resume)',
+  '/api/favorites': 'GET/POST/DELETE favorites (per-account, requires sign-in)',
+  '/api/history': 'GET/POST/DELETE watch history (per-account, requires sign-in)',
+  '/api/auth/register': 'POST create account { username, password } (first account adopts legacy data)',
+  '/api/auth/login': 'POST sign in { username, password }',
+  '/api/auth/logout': 'POST sign out (destroys the session)',
+  '/api/auth/me': 'GET current account or { user: null }',
 }
 
 export async function GET() {

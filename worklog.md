@@ -758,3 +758,26 @@ Stage Summary:
 - App ships pointed at the LIVE hosted instance https://otama.space-z.ai — Connect works out of the box, no router or PC required
 - v1.1.6 (HTTPS-first + bundled Caddy auto-TLS for self-host domains) was already tagged/pushed before this task
 - Self-host path preserved: user can still type their own domain (otama.linkpc.net) or LAN IP
+
+---
+Task ID: 34
+Agent: Z.ai Code (main)
+Task: Accounts + private watch data + history removal + anime latest-season (v1.2.0)
+
+Work Log:
+- Prisma: User + Session models (scrypt password hash, opaque 32-byte session token in httpOnly cookie, 30d expiry); WatchHistory/Favorite gained nullable userId, unique keys changed to [userId,refId] / [userId,kind,refId]; db push preserved all rows
+- src/lib/auth.ts: zero-dep credentials (Node crypto scrypt, timing-safe compare), session create/verify, requireUser() returning JSON 401 (never plain-text errors), secure-cookie auto-detect via x-forwarded-proto (https hosted vs http LAN)
+- /api/auth/{register,login,logout,me}: registration validates username 3-24 chars + pw >= 6; FIRST account ever adopts pre-account-era history/favorites rows (happened live: user registered as "Teufel" mid-task and inherited their 7 existing history rows); login uses generic error (no user enumeration); logout deletes session row
+- /api/history + /api/favorites rewritten strictly per-account: every query scoped by session userId; upserts use new compound unique keys; DELETE supports single refId and all — isolation verified with two accounts (user2 sees empty always)
+- Anime latest season: tmdb.ts latestSeasonOf(tvId) (6h cache) picks the season containing last_episode_to_air; tmdbAnimeCatalog upgrades every card to latest season — season poster + season air year + "· S<n>" suffix (verified: Mushoku Tensei · S3, Bleach · S2, JoJo · S6, Pokémon · S25, Reborn! · S8, Ninja Boy Rantaro · S29); single-season shows untouched; detail overlay already opened at latest season
+- Frontend: UserProvider (providers.tsx) + useUser(); AuthScreen (sign in / create account tabs, inline errors, privacy note); page.tsx AuthGate — app shell only renders signed in, splash while checking; NavBar adds History view + account chip dropdown (Your favorites / Your history / Sign out); app-store View union gains 'history'
+- HistoryView (new): poster cards with progress, formatted position/duration (h:mm:ss), "5m ago", per-item Remove, two-tap confirm Clear all (auto-disarm 4s); ContinueWatchingRow cards gained a hover/always-visible remove (×) button
+- E2E verified in browser: anonymous → auth screen; UI registration → app; seeded history → Continue watching card + remove works; History page shows "10:00 / 120:00 · 1m ago MOVIE" → Remove → empty state; sign out → auth screen. Found+fixed infinite recursion bug in fmtPos during verification
+- Public URL note: Aliyun FC edge caches GET / HTML briefly (old bundle served to my curl probes for a while) — APIs never cached, user logged in live during the task; browsers get fresh HTML once edge TTL expires
+- Versions: desktop 1.2.0, android versionCode 9 / versionName 1.2.0, UA OTAMA-Android/1.2.0
+
+Stage Summary:
+- Accounts live on the hosted instance: each account has fully private watch history + favorites; server owner (first account) kept pre-existing data
+- History removal everywhere: History page (single + clear all) and Continue watching ×
+- Anime browse now always shows each show's latest season
+- Test accounts deleted after verification; only the user's real account remains

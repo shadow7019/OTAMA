@@ -308,6 +308,11 @@ export async function tmdbCatalog(
  *  - popular/trending → discover by popularity
  *  - top              → discover by vote_average (vote floor to avoid stubs)
  *  - year             → new anime from the last 6 months
+ *
+ * LATEST-SEASON MAPPING: every card is upgraded to the show's most recently
+ * aired season — the season's own poster and air year replace the series-wide
+ * Season-1 art, and multi-season shows get a "· S<n>" suffix. The detail view
+ * already opens at the latest season, so browse and detail now agree.
  */
 export async function tmdbAnimeCatalog(
   opts: { sort?: string; page?: number } = {},
@@ -329,7 +334,65 @@ export async function tmdbAnimeCatalog(
   const rows = (data.results || []).filter((r) => r.name && (r.poster_path || r.backdrop_path))
   const items = await enrichImdb('tv', rows)
   items.forEach((i) => (i.kind = 'anime'))
-  return items
+
+  // Upgrade every card to the show's latest aired season (cached per show).
+  return Promise.all(
+    items.map(async (it) => {
+      const tvId = it.tmdbId ?? (it.refId.startsWith('tmdb:') ? parseInt(it.refId.slice(5), 10) : NaN)
+      if (!Number.isFinite(tvId)) return it
+      const latest = await latestSeasonOf(tvId)
+      if (!latest || latest.season < 2) return it // single-season shows need no suffix
+      return {
+        ...it,
+        title: `${it.title} · S${latest.season}`,
+        year: latest.airDate ? yearOf(latest.airDate) : it.year,
+        poster: latest.poster || it.poster,
+      }
+    }),
+  )
+}
+
+interface TmdbSeason {
+  season_number: number
+  name: string
+  episode_count: number
+  air_date?: string | null
+  poster_path?: string | null
+}
+
+interface TmdbTvDetail extends TmdbListRow {
+  seasons?: TmdbSeason[]
+  last_episode_to_air?: { season_number?: number; air_date?: string | null } | null
+}
+
+/**
+ * Latest AIRED season of a TMDB TV show (cached 6h).
+ * Picks the season containing the most recently aired episode; falls back to
+ * the highest numbered season that has an air date.
+ */
+export async function latestSeasonOf(tvId: number): Promise<{ season: number; name: string; airDate?: string; poster?: string } | null> {
+  try {
+    const detail = await tmdbGet<TmdbTvDetail>(`/tv/${tvId}`, {}, 6 * 60 * 60_000)
+    const seasons = (detail.seasons || []).filter((s) => s.episode_count > 0)
+    if (!seasons.length) return null
+    let pick: TmdbSeason | undefined =
+      detail.last_episode_to_air?.season_number != null
+        ? seasons.find((s) => s.season_number === detail.last_episode_to_air?.season_number)
+        : undefined
+    if (!pick) {
+      const numbered = seasons.filter((s) => s.season_number >= 1 && s.air_date).sort((a, b) => a.season_number - b.season_number)
+      pick = numbered[numbered.length - 1] || seasons[seasons.length - 1]
+    }
+    if (!pick) return null
+    return {
+      season: pick.season_number,
+      name: pick.name,
+      airDate: pick.air_date || undefined,
+      poster: pick.poster_path ? `${IMG}/w500${pick.poster_path}` : undefined,
+    }
+  } catch {
+    return null
+  }
 }
 
 /* ------------------------------ search ------------------------------ */

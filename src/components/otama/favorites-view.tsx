@@ -152,6 +152,17 @@ export function ContinueWatchingRow() {
     openPlayer({ infoHash: e.infoHash, fileIndex: e.fileIndex, title: e.title, poster: e.poster, refId: e.refId })
   }
 
+  const remove = async (e: (typeof entries)[number]) => {
+    try {
+      const r = await fetch(`/api/history?refId=${encodeURIComponent(e.refId)}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error('failed')
+      setEntries((prev) => prev?.filter((x) => x.refId !== e.refId) || [])
+      toast.success('Removed from history')
+    } catch {
+      toast.error('Could not remove that entry')
+    }
+  }
+
   return (
     <section className="space-y-3 px-1" aria-label="Continue watching">
       <h2 className="text-lg font-bold tracking-tight">
@@ -180,6 +191,15 @@ export function ContinueWatchingRow() {
                   </span>
                 </span>
               </button>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => remove(e)}
+                className="absolute right-1.5 top-1.5 h-7 w-7 rounded-full bg-black/70 text-zinc-300 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-sm:opacity-70 transition-opacity hover:bg-red-500/80 hover:text-white"
+                aria-label={`Remove ${e.title} from history`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
             </div>
           )
         })}

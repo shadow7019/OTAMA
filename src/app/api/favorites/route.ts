@@ -1,29 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
-/** GET /api/favorites — list all favorites */
-export async function GET() {
+/**
+ * Favorites — STRICTLY per-account. Every query is scoped by the session user.
+ */
+
+/** GET /api/favorites — this account's favorites */
+export async function GET(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.res) return auth.res
   try {
-    const favorites = await db.favorite.findMany({ orderBy: { createdAt: 'desc' } })
+    const favorites = await db.favorite.findMany({
+      where: { userId: auth.user.id },
+      orderBy: { createdAt: 'desc' },
+    })
     return NextResponse.json({ favorites })
   } catch (err) {
-    // ALWAYS answer JSON — an uncaught error here becomes a plain-text 500,
-    // which the client surfaces as the cryptic "Unexpected token" message.
+    // ALWAYS answer JSON — never a plain-text 500 ("Unexpected token").
     return NextResponse.json({ favorites: [], error: (err as Error).message }, { status: 500 })
   }
 }
 
-/** POST /api/favorites — add or update a favorite */
+/** POST /api/favorites — add or update a favorite for this account */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.res) return auth.res
   try {
     const body = await req.json()
     if (!body.kind || !body.refId || !body.title) {
       return NextResponse.json({ error: 'kind, refId, title required' }, { status: 400 })
     }
     const favorite = await db.favorite.upsert({
-      where: { kind_refId: { kind: body.kind, refId: String(body.refId) } },
+      where: { userId_kind_refId: { userId: auth.user.id, kind: body.kind, refId: String(body.refId) } },
       update: {
         title: body.title,
         year: body.year ?? null,
@@ -39,6 +50,7 @@ export async function POST(req: NextRequest) {
         poster: body.poster ?? null,
         rating: body.rating ?? null,
         metaJson: body.meta ? JSON.stringify(body.meta) : null,
+        userId: auth.user.id,
       },
     })
     return NextResponse.json({ favorite })
@@ -47,14 +59,16 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** DELETE /api/favorites?kind=&refId= */
+/** DELETE /api/favorites?kind=&refId= — remove from this account's favorites */
 export async function DELETE(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.res) return auth.res
   const { searchParams } = new URL(req.url)
   const kind = searchParams.get('kind')
   const refId = searchParams.get('refId')
   if (!kind || !refId) return NextResponse.json({ error: 'kind, refId required' }, { status: 400 })
   try {
-    await db.favorite.deleteMany({ where: { kind, refId } })
+    await db.favorite.deleteMany({ where: { userId: auth.user.id, kind, refId } })
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })

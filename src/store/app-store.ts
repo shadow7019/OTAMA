@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import type { PlayerPayload, TorrentOption } from '@/lib/types'
 
-export type View = 'home' | 'movies' | 'tv' | 'anime' | 'tpb' | 'favorites' | 'search'
+export type View = 'home' | 'movies' | 'tv' | 'anime' | 'tpb' | 'favorites' | 'history' | 'search'
 
 export interface DetailPayload {
   kind: 'movie' | 'tv' | 'anime'

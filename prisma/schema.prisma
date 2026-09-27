@@ -11,7 +11,33 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// A saved item (movie / series / anime / raw torrent)
+// Registered viewer — every account owns a PRIVATE watch history and
+// favorites list; no account can read another account's data.
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String // scrypt$<salt>$<hash> (Node crypto, no native deps)
+  createdAt    DateTime @default(now())
+
+  sessions  Session[]
+  history   WatchHistory[]
+  favorites Favorite[]
+}
+
+// Server-side session (httpOnly cookie holds only a random opaque token).
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// A saved item (movie / series / anime / raw torrent) — per-account
 model Favorite {
   id        String   @id @default(cuid())
   kind      String // 'movie' | 'tv' | 'anime' | 'tpb'
@@ -22,12 +48,15 @@ model Favorite {
   rating    Float?
   metaJson  String? // JSON blob with provider-specific payload (torrent options etc.)
   createdAt DateTime @default(now())
+  userId    String?
+  user      User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([kind, refId])
+  @@unique([userId, kind, refId])
   @@index([createdAt])
+  @@index([userId])
 }
 
-// Resume-playback history
+// Resume-playback history — per-account
 model WatchHistory {
   id        String   @id @default(cuid())
   refId     String // imdb id / tvmaze id / info hash
@@ -41,9 +70,12 @@ model WatchHistory {
   metaJson  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([refId])
+  @@unique([userId, refId])
   @@index([updatedAt])
+  @@index([userId])
 }
 
 // Simple key/value app settings
