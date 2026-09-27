@@ -873,3 +873,25 @@ Stage Summary:
 - Android app is now zero-config: launch → splash → hosted OTAMA UI, works on mobile data or any Wi-Fi, no same-network requirement, no address form to get wrong
 - Self-hosting survives only as an advanced opt-in on the error screen; LAN/private addresses are actively dropped at cold start
 - v1.2.4 CI builds all four artifacts from the new tag
+
+---
+Task ID: 39
+Agent: Z.ai Code (main)
+Task: OTAMA for iPhone — native iOS app + CI-built IPA (v1.3.0)
+
+Work Log:
+- User: "create an iOS application for iPhones"
+- New platform: ios/ — XcodeGen-based project (no checked-in pbxproj; CI runs `xcodegen generate`)
+  - project.yml: app target OTAMA, bundle id app.otama.ios, iOS 15.0+, iPhone only (TARGETED_DEVICE_FAMILY=1), MARKETING_VERSION 1.3.0, NSAppTransportSecurity NSAllowsArbitraryLoads (http self-host parity with Android cleartext), UILaunchScreen with LaunchBackground color, explicit shared scheme
+  - AppDelegate.swift: UIApplication lifecycle (no scene manifest), forced dark window
+  - ViewController.swift: WKWebView direct-host shell mirroring Android v1.2.4 behavior — opens https://otama.space-z.ai directly (no address gate), OTAMA splash (kerned logo + tagline + amber spinner) fading on first didFinish, pull-to-refresh, private/LAN saved hosts dropped at cold start (10/127/0, 192.168, 172.16-31, 169.254, localhost, .local/.lan), error overlay ("reachable on ANY internet connection") with Try again + advanced server dialog (UIAlertController: Save / Use hosted server / Cancel), main-frame cross-host links open in Safari (target=_blank via createWebViewWith), magnet links intercepted, inline media + PiP enabled, UA OTAMA-iOS/1.3.0
+  - Assets.xcassets: AppIcon 1024 full-bleed (PIL-rendered brand play-triangle: gray gradient bg + rounded amber triangle via blur-threshold + soft glow), AccentColor amber, LaunchBackground #09090B
+- CI: .github/workflows/ios-build.yml — macos-15 runner, brew xcodegen, plain `xcodebuild build` (unsigned, CODE_SIGNING_ALLOWED=NO) instead of archive, Payload+zip → OTAMA-<ver>.ipa, attaches to release on tags; also runs on main pushes touching ios/** for iteration
+- Debugging loop (no API/logs access — HTML scraping of run pages): run 1 failed at xcodebuild archive; run 2 failed at build; added failure diagnostics that commit ios/last-build-log.txt back to the repo → real error revealed: `WKWebViewConfiguration has no member 'mediaTypesRequiringUserAction'` (macOS-only API; iOS equivalent is user-gesture playback which the OTAMA player already requires) → removed the line → run 4 BUILD SUCCEEDED
+- v1.3.0 tag force-moved to fixed commit 6c0a0d7; all four platform workflows re-ran and attached assets
+- Versions: iOS 1.3.0, android versionCode 14 / 1.3.0 (UA 1.3.0), desktop 1.3.0
+- Verified: OTAMA-1.3.0.ipa / .apk / -Setup.exe / -portable.exe / -arm64.dmg all HEAD 200 on the v1.3.0 release
+
+Stage Summary:
+- OTAMA now ships 5 platform artifacts; the iOS IPA is UNSIGNED by design (no Apple Developer account available) — install path is AltStore/SideStore/Sideloadly (free Apple ID, 7-day resign) or Xcode for users with a Mac; paid account would enable TestFlight/App Store later
+- iOS app matches the Android zero-config direct-host experience exactly; error overlay diagnostics pattern (CI commits build log to repo) is reusable for future CI debugging without API access
