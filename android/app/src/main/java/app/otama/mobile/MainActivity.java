@@ -4,7 +4,6 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Patterns;
@@ -24,22 +23,24 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.URL;
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * OTAMA for Android — a focused WebView shell that connects to a running
- * OTAMA server (the Next.js web UI + torrent engine). All streaming happens
- * on the server machine; the app renders the exact same UI as the browser.
+ * OTAMA for Android — a focused WebView shell that opens the hosted OTAMA
+ * server DIRECTLY. No address screen, no LAN pairing, no router setup: the
+ * app works on any internet connection (Wi-Fi or mobile data) because all
+ * streaming happens on the hosted server; the app renders the exact same UI
+ * as the browser.
+ *
+ * Self-hosters can still point the app at their own domain via
+ * "Use another server" on the connection-error screen — but the hosted
+ * server is always the default and only visible destination.
  */
 public class MainActivity extends Activity {
 
@@ -48,25 +49,19 @@ public class MainActivity extends Activity {
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
 
-    /** Preset server: the hosted OTAMA instance (web UI + torrent engine,
-     *  fully live — catalog API, engine and realtime all verified). Works out
-     *  of the box with no router setup. The user can type any other OTAMA
-     *  address (self-hosted PC domain, LAN IP) — the connect chain auto-probes
-     *  https and the plain-HTTP gateway on :3000. */
+    /** Direct host: the hosted OTAMA instance (web UI + torrent engine,
+     *  fully live). Reachable from any network — this is where the app
+     *  opens, always, with zero configuration. */
     private static final String DEFAULT_SERVER_URL = "https://otama.space-z.ai";
 
     private SharedPreferences prefs;
     private FrameLayout root;
-    private LinearLayout setupView;
+    private LinearLayout splashView;
     private LinearLayout errorOverlay;
+    private LinearLayout serverOverlay;
     private WebView webView;
-    private EditText urlInput;
-    private TextView testStatus;
-    private Button connectBtn;
-    private Button anywayBtn;
     private String connectedUrl = "";
-    private String pendingUrl = "";
-    private boolean testing = false;
+    private boolean firstPageDone = false;
 
     // fullscreen <video> support
     private View customView;
@@ -84,56 +79,45 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(BG);
         setContentView(root);
 
-        buildSetupView();
+        buildSplash();
         buildWebView();
 
-        String saved = prefs.getString("server_url", null);
-        if (saved != null && !saved.isEmpty()) {
-            preflightSaved(saved);
-        } else {
-            showSetup();
-        }
+        enterWebView(resolveTargetUrl());
     }
 
     /**
-     * Cold launch with a saved address: test it BEFORE showing the WebView.
-     * A stale address (server off, DHCP change, port-forward not done yet)
-     * must land on the setup screen WITH a diagnosis — never the dead-end
-     * black "Try again / Edit server address" error page.
+     * The hosted server is the default (and only visible) destination.
+     * A previously saved CUSTOM address is honored only if it is a public
+     * host — stale LAN/IP entries from older app versions are dropped once
+     * so the app can never cold-start trying to reach a PC that isn't there.
      */
-    private void preflightSaved(final String url) {
-        testing = true;
-        connectBtn.setEnabled(false);
-        testStatus.setTextColor(AMBER);
-        testStatus.setText("Checking " + url + " …");
-        testStatus.setVisibility(View.VISIBLE);
-        new Thread(() -> {
-            final String verdict = testOtamaServer(url); // null = healthy
-            runOnUiThread(() -> {
-                testing = false;
-                connectBtn.setEnabled(true);
-                if (verdict == null) {
-                    enterWebView(url);
-                } else {
-                    // Stale — forget it so the next launch opens setup directly.
-                    prefs.edit().remove("server_url").apply();
-                    pendingUrl = url;
-                    testStatus.setTextColor(0xFFF87171);
-                    testStatus.setText(verdict);
-                    anywayBtn.setVisibility(View.VISIBLE);
-                }
-            });
-        }, "otama-preflight").start();
+    private String resolveTargetUrl() {
+        String saved = prefs.getString("server_url", null);
+        if (saved == null || saved.isEmpty()) return DEFAULT_SERVER_URL;
+        boolean validHost = false;
+        try {
+            String h = URI.create(saved).getHost();
+            validHost = h != null && !h.isEmpty();
+        } catch (Exception e) {
+            validHost = false;
+        }
+        if (!validHost || isPrivateHost(saved)) {
+            prefs.edit().remove("server_url").apply(); // one-time cleanup
+            return DEFAULT_SERVER_URL;
+        }
+        return saved;
     }
 
-    /* ----------------------------- setup screen ----------------------------- */
+    /* ------------------------------- splash ------------------------------- */
 
-    private void buildSetupView() {
-        setupView = new LinearLayout(this);
-        setupView.setOrientation(LinearLayout.VERTICAL);
-        setupView.setBackgroundColor(BG);
-        setupView.setPadding(dp(28), dp(64), dp(28), dp(28));
-        setupView.setGravity(Gravity.CENTER_HORIZONTAL);
+    /** Brand splash shown while the first page loads (and a touch barrier). */
+    private void buildSplash() {
+        splashView = new LinearLayout(this);
+        splashView.setOrientation(LinearLayout.VERTICAL);
+        splashView.setBackgroundColor(BG);
+        splashView.setGravity(Gravity.CENTER);
+        splashView.setClickable(true);
+        splashView.setFocusable(true);
 
         TextView logo = new TextView(this);
         logo.setText("OTAMA");
@@ -142,7 +126,7 @@ public class MainActivity extends Activity {
         logo.setTextColor(0xFFFAFAFA);
         logo.setLetterSpacing(0.35f);
         logo.setGravity(Gravity.CENTER);
-        setupView.addView(logo);
+        splashView.addView(logo);
 
         TextView tag = new TextView(this);
         tag.setText("torrent streaming, everywhere");
@@ -150,250 +134,24 @@ public class MainActivity extends Activity {
         tag.setTextColor(ZINC_400);
         tag.setGravity(Gravity.CENTER);
         tag.setPadding(0, dp(6), 0, dp(36));
-        setupView.addView(tag);
+        splashView.addView(tag);
 
-        TextView label = new TextView(this);
-        label.setText("OTAMA server address");
-        label.setTextSize(14);
-        label.setTextColor(0xFFFAFAFA);
-        label.setPadding(0, 0, 0, dp(8));
-        setupView.addView(label);
-        urlInput = new EditText(this);
-        String last = prefs.getString("last_server_url", "");
-        urlInput.setHint(DEFAULT_SERVER_URL);
-        urlInput.setText(last.isEmpty() ? DEFAULT_SERVER_URL : last);
-        urlInput.setTextSize(15);
-        urlInput.setTextColor(0xFFFAFAFA);
-        urlInput.setHintTextColor(0xFF71717A);
-        urlInput.setBackgroundColor(ZINC_800);
-        urlInput.setPadding(dp(14), dp(12), dp(14), dp(12));
-        urlInput.setSingleLine(true);
-        urlInput.setInputType(android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        urlInput.setImeOptions(EditorInfo.IME_ACTION_GO);
-        urlInput.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_GO) { connect(); return true; }
-            return false;
-        });
-        setupView.addView(urlInput, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        ProgressBar bar = new ProgressBar(this);
+        bar.getIndeterminateDrawable().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
+        splashView.addView(bar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        Button connect = new Button(this);
-        connect.setText("Connect");
-        connect.setTextSize(15);
-        connect.setTextColor(0xFF09090B);
-        connect.getBackground().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
-        connect.setOnClickListener(v -> connect());
-        connectBtn = connect;
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        bp.topMargin = dp(16);
-        setupView.addView(connect, bp);
-
-        // Diagnosis shown when the pre-connect test does not find a healthy
-        // OTAMA server at the address ("unexpected token"-style confusion
-        // should never reach the web UI).
-        testStatus = new TextView(this);
-        testStatus.setTextSize(12);
-        testStatus.setTextColor(0xFFF87171);
-        testStatus.setPadding(dp(4), dp(14), dp(4), 0);
-        testStatus.setVisibility(View.GONE);
-        setupView.addView(testStatus, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        anywayBtn = new Button(this);
-        anywayBtn.setText("Connect anyway");
-        anywayBtn.setTextSize(14);
-        anywayBtn.setTextColor(0xFFFAFAFA);
-        anywayBtn.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
-        anywayBtn.setVisibility(View.GONE);
-        anywayBtn.setOnClickListener(v -> {
-            if (pendingUrl.isEmpty()) return;
-            prefs.edit().putString("server_url", pendingUrl).putString("last_server_url", pendingUrl).apply();
-            enterWebView(pendingUrl);
-        });
-        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        ap.topMargin = dp(10);
-        setupView.addView(anywayBtn, ap);
-
-        TextView help = new TextView(this);
-        help.setText("OTAMA streams from a server — the phone app\n"
-                + "is a remote control + player.\n\n"
-                + "READY TO USE (preset):\n"
-                + "otama.space-z.ai is a hosted OTAMA server —\n"
-                + "just tap Connect. Nothing to install.\n\n"
-                + "YOUR OWN PC (optional):\n"
-                + "ANYWHERE — PC: Alt → \"LAN access: ON\",\n"
-                + "router: forward TCP 80 + 443 (https) or 3000 (http),\n"
-                + "then type your domain here.\n"
-                + "SAME WI-FI — PC: Alt → \"LAN access: ON\" shows\n"
-                + "http://192.168.x.x:3000 — type that here instead");
-        help.setTextSize(12);
-        help.setTextColor(ZINC_400);
-        help.setPadding(0, dp(24), 0, 0);
-        help.setGravity(Gravity.CENTER);
-        setupView.addView(help);
-
-        root.addView(setupView);
+        root.addView(splashView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
-    private void connect() {
-        if (testing) return;
-        String raw = urlInput.getText().toString().trim();
-        if (raw.isEmpty()) {
-            toast("Enter your OTAMA server address");
-            return;
-        }
-        if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
-            raw = "http://" + raw;
-        }
-        URI uri;
-        try {
-            uri = URI.create(raw);
-        } catch (Exception e) {
-            toast("That address doesn't look right");
-            return;
-        }
-        String host = uri.getHost();
-        if (host == null || host.isEmpty() || !Patterns.DOMAIN_NAME.matcher(host).matches() && !isIpLike(host)) {
-            toast("That address doesn't look right");
-            return;
-        }
-        if (!raw.endsWith("/")) raw += "/";
-        final String primary = raw;
-
-        // Candidate list: the typed address first, then — for a bare domain
-        // without an explicit port — the common OTAMA endpoints: HTTPS
-        // (bundled Caddy, ports 80+443) and the HTTP gateway on :3000.
-        final List<String> candidates = new ArrayList<>();
-        candidates.add(primary);
-        if (uri.getPort() == -1 && !isIpLike(host)) {
-            if ("https".equals(uri.getScheme())) {
-                candidates.add("http://" + host + ":3000/");
-            } else {
-                candidates.add("http://" + host + ":3000/");
-                candidates.add("https://" + host + "/");
-            }
-        }
-
-        // Pre-flight check: prove the OTAMA API actually answers here before
-        // dropping the user into a half-broken WebView session.
-        testing = true;
-        connectBtn.setText("Testing…");
-        connectBtn.setEnabled(false);
-        testStatus.setVisibility(View.GONE);
-        anywayBtn.setVisibility(View.GONE);
-        final int total = candidates.size();
-        new Thread(() -> {
-            String verdict = null;
-            String winner = null;
-            int idx = 0;
-            for (String candidate : candidates) {
-                idx++;
-                final int attempt = idx;
-                runOnUiThread(() -> connectBtn.setText(
-                        total > 1 ? ("Testing " + attempt + "/" + total + "…") : "Testing…"));
-                verdict = testOtamaServer(candidate); // null = healthy OTAMA
-                if (verdict == null) {
-                    winner = candidate;
-                    break;
-                }
-            }
-            final String v = verdict;
-            final String w = winner;
-            runOnUiThread(() -> {
-                testing = false;
-                connectBtn.setText("Connect");
-                connectBtn.setEnabled(true);
-                if (w != null) {
-                    // last_server_url keeps what the user TYPED for the input,
-                    // server_url points at the exact winning candidate.
-                    prefs.edit().putString("server_url", w)
-                            .putString("last_server_url", primary).apply();
-                    enterWebView(w);
-                } else {
-                    pendingUrl = primary;
-                    testStatus.setText(v);
-                    testStatus.setVisibility(View.VISIBLE);
-                    anywayBtn.setVisibility(View.VISIBLE);
-                }
-            });
-        }, "otama-connect-test").start();
+    private void hideSplash() {
+        firstPageDone = true;
+        if (splashView != null) splashView.setVisibility(View.GONE);
+        if (webView != null && customView == null) webView.setVisibility(View.VISIBLE);
     }
 
-    /**
-     * GET <base>api/catalog — a JSON answer proves the OTAMA API is live at
-     * this address (even a provider-failure JSON 502 is proof enough). Returns
-     * null when healthy, otherwise a human diagnosis of what went wrong.
-     */
-    private static String testOtamaServer(String base) {
-        HttpURLConnection conn = null;
-        try {
-            URL u = new URL(base + "api/catalog?type=movie&skip=0&sort=top");
-            conn = (HttpURLConnection) u.openConnection();
-            conn.setConnectTimeout(6000);
-            conn.setReadTimeout(12000);
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "OTAMA-Android");
-            int code = conn.getResponseCode();
-            String ctype = conn.getContentType() == null ? "" : conn.getContentType().toLowerCase();
-
-            if (ctype.contains("json")) return null; // it IS OTAMA
-
-            if (code == 200 && ctype.contains("html")) {
-                return "That address serves a web page, but not the OTAMA API.\n"
-                        + "Wrong port? Try the address exactly as shown in the\n"
-                        + "OTAMA desktop app (menu: OTAMA → LAN access).";
-            }
-            if (code == 404) {
-                return "A server answered but it has no OTAMA API (HTTP 404).\n"
-                        + "Is the OTAMA desktop app (v1.1.4 or newer) running there?";
-            }
-            if (code >= 500) {
-                return "The server answered with HTTP " + code + " — OTAMA may still\n"
-                        + "be starting up. Try again in a few seconds.";
-            }
-            if (looksLikeOtama(base)) return null; // very old build — allow
-            return "Unexpected answer (HTTP " + code + ", "
-                    + (ctype.isEmpty() ? "unknown type" : ctype) + ").";
-        } catch (SocketTimeoutException | ConnectException e) {
-            return "Nothing answered at that address (timed out).\n"
-                    + "• Is OTAMA running with LAN access ON (Alt → \"LAN access\")?\n"
-                    + "• Same Wi-Fi — or router forwarding TCP port 3000 to the PC?\n"
-                    + "• Windows Firewall: allow OTAMA on private AND public networks.";
-        } catch (Exception e) {
-            return "Could not connect (" + e.getClass().getSimpleName() + "). Check the address.";
-        } finally {
-            if (conn != null) try { conn.disconnect(); } catch (Exception ignored) { }
-        }
-    }
-
-    /** Fallback: does the root page at least mention OTAMA somewhere? */
-    private static boolean looksLikeOtama(String base) {
-        HttpURLConnection c = null;
-        try {
-            URL u = new URL(base);
-            c = (HttpURLConnection) u.openConnection();
-            c.setConnectTimeout(6000);
-            c.setReadTimeout(12000);
-            InputStream is = c.getInputStream();
-            byte[] buf = new byte[8192];
-            int n = is.read(buf);
-            try { is.close(); } catch (Exception ignored) { }
-            String head = n > 0 ? new String(buf, 0, n, "UTF-8") : "";
-            return head.toLowerCase().contains("otama");
-        } catch (Exception e) {
-            return false;
-        } finally {
-            if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
-        }
-    }
-
-    private static boolean isIpLike(String h) {
-        return h.matches("(?i)^\\[?[0-9a-f:.]+\\]?$");
-    }
-
-    /* ----------------------------- webview ----------------------------- */
+    /* ------------------------------- webview ------------------------------ */
 
     @SuppressLint("SetJavaScriptEnabled")
     private void buildWebView() {
@@ -412,7 +170,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.2.3");
+        s.setUserAgentString(ua + " OTAMA-Android/1.2.4");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -441,9 +199,17 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageFinished(WebView view, String url) {
+                hideSplash();
+            }
+
+            @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
                 if (request.isForMainFrame()) {
-                    runOnUiThread(() -> showErrorOverlay());
+                    runOnUiThread(() -> {
+                        hideSplash();
+                        showErrorOverlay();
+                    });
                 }
             }
         });
@@ -488,22 +254,19 @@ public class MainActivity extends Activity {
         }
         connectedUrl = url;
         hideErrorOverlay();
-        setupView.setVisibility(View.GONE);
-        webView.setVisibility(View.VISIBLE);
+        if (firstPageDone) {
+            webView.setVisibility(View.VISIBLE);
+        } else {
+            splashView.setVisibility(View.VISIBLE);
+            webView.setVisibility(View.GONE);
+        }
         webView.loadUrl(url);
-    }
-
-    private void showSetup() {
-        hideErrorOverlay();
-        webView.setVisibility(View.GONE);
-        setupView.setVisibility(View.VISIBLE);
     }
 
     /* --------------------------- connection error --------------------------- */
 
-    /** Shown when the saved/entered server cannot be reached — without this,
-     *  a stale address (DHCP change, server off) would brick the app on an
-     *  error page with no way back to the address form. */
+    /** Shown when the hosted (or custom) server cannot be reached — without
+     *  this, a network hiccup would brick the app on a dead error page. */
     private void showErrorOverlay() {
         if (errorOverlay != null) return;
         errorOverlay = new LinearLayout(this);
@@ -513,7 +276,7 @@ public class MainActivity extends Activity {
         errorOverlay.setPadding(dp(28), dp(28), dp(28), dp(28));
 
         TextView title = new TextView(this);
-        title.setText("Can't reach the OTAMA server");
+        title.setText("Can't reach OTAMA");
         title.setTextSize(18);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setTextColor(0xFFFAFAFA);
@@ -521,12 +284,13 @@ public class MainActivity extends Activity {
         errorOverlay.addView(title);
 
         TextView detail = new TextView(this);
-        detail.setText(connectedUrl + "\n\nIf this is your own PC: run OTAMA there with\n"
-                + "LAN access ON (Alt in OTAMA → \"LAN access\")\n"
-                + "and forward the port on your router.\n"
-                + "The preset https://otama.space-z.ai is a hosted\n"
-                + "server — if it shows here, it is temporarily down;\n"
-                + "tap Try again in a moment.");
+        detail.setText(connectedUrl + "\n\n"
+                + "OTAMA streams from a hosted server that should be\n"
+                + "reachable on ANY internet connection — Wi-Fi or\n"
+                + "mobile data, no setup needed.\n"
+                + "Check that your internet is on, then Try again.\n\n"
+                + "Running your own OTAMA server on a domain?\n"
+                + "Tap \"Use another server\" to point the app at it.");
         detail.setTextSize(13);
         detail.setTextColor(ZINC_400);
         detail.setGravity(Gravity.CENTER);
@@ -546,18 +310,16 @@ public class MainActivity extends Activity {
         rp.topMargin = dp(28);
         errorOverlay.addView(retry, rp);
 
-        Button edit = new Button(this);
-        edit.setText("Edit server address");
-        edit.setTextColor(0xFFFAFAFA);
-        edit.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
-        edit.setOnClickListener(v -> {
-            prefs.edit().remove("server_url").apply();
-            showSetup();
-        });
-        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        ep.topMargin = dp(10);
-        errorOverlay.addView(edit, ep);
+        Button other = new Button(this);
+        other.setText("Use another server");
+        other.setTextSize(14);
+        other.setTextColor(0xFFFAFAFA);
+        other.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
+        other.setOnClickListener(v -> showServerOverlay());
+        LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        op.topMargin = dp(10);
+        errorOverlay.addView(other, op);
 
         root.addView(errorOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -568,6 +330,168 @@ public class MainActivity extends Activity {
             root.removeView(errorOverlay);
             errorOverlay = null;
         }
+    }
+
+    /* ------------------------- advanced: custom server ------------------------- */
+
+    /** Out-of-the-way advanced escape hatch for self-hosters. The hosted
+     *  server stays the default; anything typed here is only remembered
+     *  when it is a public host (private LAN entries are dropped on the
+     *  next cold start so the app can never get stuck reaching for a PC). */
+    private void showServerOverlay() {
+        if (serverOverlay != null) return;
+        serverOverlay = new LinearLayout(this);
+        serverOverlay.setOrientation(LinearLayout.VERTICAL);
+        serverOverlay.setBackgroundColor(BG);
+        serverOverlay.setGravity(Gravity.CENTER);
+        serverOverlay.setPadding(dp(24), dp(24), dp(24), dp(24));
+        serverOverlay.setClickable(true);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackgroundColor(ZINC_800);
+        card.setPadding(dp(20), dp(20), dp(20), dp(20));
+
+        TextView title = new TextView(this);
+        title.setText("OTAMA server address");
+        title.setTextSize(16);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(0xFFFAFAFA);
+        card.addView(title);
+
+        TextView note = new TextView(this);
+        note.setText("Leave empty to always use the hosted server\n"
+                + "(otama.space-z.ai) — recommended.");
+        note.setTextSize(12);
+        note.setTextColor(ZINC_400);
+        note.setPadding(0, dp(8), 0, dp(12));
+        card.addView(note);
+
+        final EditText input = new EditText(this);
+        input.setHint(DEFAULT_SERVER_URL);
+        String current = prefs.getString("server_url", "");
+        if (current.isEmpty()) current = connectedUrl;
+        input.setText(DEFAULT_SERVER_URL.equals(current) ? "" : current);
+        input.setTextSize(15);
+        input.setTextColor(0xFFFAFAFA);
+        input.setHintTextColor(0xFF71717A);
+        input.setBackgroundColor(BG);
+        input.setPadding(dp(14), dp(12), dp(14), dp(12));
+        input.setSingleLine(true);
+        input.setInputType(android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        input.setImeOptions(EditorInfo.IME_ACTION_GO);
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_GO) { applyServerInput(input); return true; }
+            return false;
+        });
+        card.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button save = new Button(this);
+        save.setText("Save");
+        save.setTextColor(0xFF09090B);
+        save.getBackground().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
+        save.setOnClickListener(v -> applyServerInput(input));
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        sp.topMargin = dp(16);
+        card.addView(save, sp);
+
+        Button hosted = new Button(this);
+        hosted.setText("Use hosted server");
+        hosted.setTextColor(0xFFFAFAFA);
+        hosted.getBackground().setColorFilter(BG, android.graphics.PorterDuff.Mode.SRC_IN);
+        hosted.setOnClickListener(v -> {
+            prefs.edit().remove("server_url").apply();
+            hideServerOverlay();
+            toast("Using the hosted OTAMA server");
+            enterWebView(DEFAULT_SERVER_URL);
+        });
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        hp.topMargin = dp(8);
+        card.addView(hosted, hp);
+
+        Button cancel = new Button(this);
+        cancel.setText("Cancel");
+        cancel.setTextSize(13);
+        cancel.setTextColor(ZINC_400);
+        cancel.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
+        cancel.setOnClickListener(v -> hideServerOverlay());
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
+        cp.topMargin = dp(4);
+        card.addView(cancel, cp);
+
+        serverOverlay.addView(card, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(serverOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void applyServerInput(EditText input) {
+        String raw = input.getText().toString().trim();
+        if (raw.isEmpty()) {
+            // empty = reset to the hosted server
+            prefs.edit().remove("server_url").apply();
+            hideServerOverlay();
+            toast("Using the hosted OTAMA server");
+            enterWebView(DEFAULT_SERVER_URL);
+            return;
+        }
+        if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
+            raw = "https://" + raw;
+        }
+        URI uri;
+        try {
+            uri = URI.create(raw);
+        } catch (Exception e) {
+            toast("That address doesn't look right");
+            return;
+        }
+        String host = uri.getHost();
+        if (host == null || host.isEmpty()
+                || !Patterns.DOMAIN_NAME.matcher(host).matches() && !host.matches("(?i)^\\[?[0-9a-f:.]+\\]?$")) {
+            toast("That address doesn't look right");
+            return;
+        }
+        if (!raw.endsWith("/")) raw += "/";
+        prefs.edit().putString("server_url", raw).apply();
+        hideServerOverlay();
+        toast("Server saved");
+        enterWebView(raw);
+    }
+
+    private void hideServerOverlay() {
+        if (serverOverlay != null) {
+            root.removeView(serverOverlay);
+            serverOverlay = null;
+        }
+    }
+
+    /** Private/LAN hosts are never honored on cold start — the app is a
+     *  direct-host client of the hosted server, not a same-WiFi remote. */
+    private static boolean isPrivateHost(String url) {
+        String host;
+        try {
+            host = URI.create(url).getHost();
+        } catch (Exception e) {
+            return false;
+        }
+        if (host == null) return false;
+        String h = host.toLowerCase();
+        if (h.equals("localhost") || h.equals("127.0.0.1")
+                || h.endsWith(".local") || h.endsWith(".lan")) return true;
+        Matcher m = Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$").matcher(h);
+        if (m.matches()) {
+            int a = Integer.parseInt(m.group(1));
+            int b = Integer.parseInt(m.group(2));
+            if (a == 10 || a == 127 || a == 0) return true;
+            if (a == 192 && b == 168) return true;
+            if (a == 172 && b >= 16 && b <= 31) return true;
+            if (a == 169 && b == 254) return true;
+        }
+        return false;
     }
 
     /* ----------------------------- lifecycle ----------------------------- */
@@ -587,6 +511,10 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (serverOverlay != null) { // close the advanced dialog first
+                hideServerOverlay();
+                return true;
+            }
             if (customView != null) { // leave fullscreen video first
                 onHideCustomViewSafe();
                 return true;
