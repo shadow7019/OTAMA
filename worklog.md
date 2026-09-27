@@ -683,3 +683,23 @@ Stage Summary:
 - Every OTAMA API route now answers JSON in all failure modes; client never shows "Unexpected token" again — instead names the actual problem (server unreachable / HTML from wrong app / internal error + status)
 - Android setup screen self-diagnoses the address before entering the WebView; desktop EXE self-checks its embedded API at launch
 - User guidance: phone must use the exact address from OTAMA's LAN dialog (http://<pc-ip>:3000), same Wi-Fi, Windows Firewall allow on Private networks; PC's own window shows the same metadata errors if the PC install is broken
+
+---
+Task ID: 30
+Agent: Z.ai Code (main)
+Task: otama.linkpc.net — domain-based remote access, single-port gateway, OTAMA_SERVER_URL
+
+Work Log:
+- Verified user's DDNS live: otama.linkpc.net → 183.82.161.156 (resolves!), but nothing answers on :80/:443/:3000 yet — server side (port-forward) pending on user's router
+- desktop/src/gateway.mjs (NEW, pure Node): Caddy-clone reverse proxy — any request with ?XTransformPort=<n> → 127.0.0.1:<n> (engine), everything else → Next UI; raw-TCP WebSocket upgrade passthrough; hop-by-hop header stripping; JSON 502 (never plain text) when upstream is dead
+- desktop/src/main.mjs: gateway embedded on the ONE stable port (3000, 0.0.0.0 in LAN mode); engine + renderer now loopback-only (engine no longer directly exposed); window loads gateway origin; LAN dialog shows BOTH same-Wi-Fi and internet addresses incl. port-forward instructions
+- Public address support: OTAMA_SERVER_URL env var OR public-url.txt in userData; new menu "Set public address (domain)…" opens an in-app save dialog (no terminal needed); menu shows the live public address
+- MainActivity: DEFAULT_SERVER_URL = http://otama.linkpc.net:3000 (prefilled, hint); bare-domain connect probes http://<d>:3000 → https://<d>/ automatically with per-candidate progress; help text rewritten (domain path first, LAN second); error overlays + diagnosis updated for domain/port-forward cases; UA 1.1.4
+- Versions: desktop 1.1.4, android versionCode 5 / versionName 1.1.4
+- E2E gateway test (9/9 PASS vs REAL engine :3003): UI+API proxy, engine via XTransformPort, add torrent → ready, 206 range streaming through gateway, socket.io WS upgrade through gateway, JSON 502 on dead upstream; lint clean
+- Pushed main + tag v1.1.4 → CI rebuilds all 3 packages
+
+Stage Summary:
+- Phone now needs exactly ONE forwarded router port: external TCP 3000 → PC (gateway fronts UI+engine); engine never faces the internet
+- Android app ships preconfigured for otama.linkpc.net:3000 — user only enables LAN access on the PC, forwards the port, and taps Connect
+- OTAMA_SERVER_URL / public-url.txt / in-app dialog = three ways to set the internet address shown on the PC

@@ -33,6 +33,8 @@ import java.net.URI;
 import java.net.URL;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * OTAMA for Android — a focused WebView shell that connects to a running
@@ -45,6 +47,11 @@ public class MainActivity extends Activity {
     private static final int BG = 0xFF09090B;
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
+
+    /** Preset internet address (user's DDNS domain → forwarded router port).
+     *  Works once the PC runs OTAMA with LAN access ON and the router
+     *  forwards TCP 3000; the app also probes alternates automatically. */
+    private static final String DEFAULT_SERVER_URL = "http://otama.linkpc.net:3000";
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -119,8 +126,9 @@ public class MainActivity extends Activity {
         label.setPadding(0, 0, 0, dp(8));
         setupView.addView(label);
         urlInput = new EditText(this);
-        urlInput.setHint("http://192.168.1.50:3000");
-        urlInput.setText(prefs.getString("last_server_url", ""));
+        String last = prefs.getString("last_server_url", "");
+        urlInput.setHint(DEFAULT_SERVER_URL);
+        urlInput.setText(last.isEmpty() ? DEFAULT_SERVER_URL : last);
         urlInput.setTextSize(15);
         urlInput.setTextColor(0xFFFAFAFA);
         urlInput.setHintTextColor(0xFF71717A);
@@ -176,13 +184,16 @@ public class MainActivity extends Activity {
         setupView.addView(anywayBtn, ap);
 
         TextView help = new TextView(this);
-        help.setText("OTAMA streams from a server running on your computer —\n"
+        help.setText("OTAMA streams from a server on your computer —\n"
                 + "the phone app is a remote control + player.\n\n"
-                + "1.  Open OTAMA on your computer (Windows / macOS)\n"
-                + "2.  Press Alt in OTAMA → click \"LAN access: ON\"\n"
-                + "      → OTAMA restarts and shows an address like\n"
-                + "      http://192.168.1.50:3000\n"
-                + "3.  Type that address here (same Wi-Fi on both devices)");
+                + "ANYWHERE (your domain):\n"
+                + "1.  On the PC: OTAMA menu → \"LAN access: ON\"\n"
+                + "2.  Router: forward TCP port 3000 to the PC\n"
+                + "3.  Just tap Connect — otama.linkpc.net is preset\n\n"
+                + "SAME WI-FI ONLY (no router setup):\n"
+                + "1.  On the PC: press Alt in OTAMA → \"LAN access: ON\"\n"
+                + "      → the dialog shows http://192.168.x.x:3000\n"
+                + "2.  Type that address here instead");
         help.setTextSize(12);
         help.setTextColor(ZINC_400);
         help.setPadding(0, dp(24), 0, 0);
@@ -202,19 +213,30 @@ public class MainActivity extends Activity {
         if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
             raw = "http://" + raw;
         }
+        URI uri;
         try {
-            URI uri = URI.create(raw);
-            String host = uri.getHost();
-            if (host == null || host.isEmpty() || !Patterns.DOMAIN_NAME.matcher(host).matches() && !isIpLike(host)) {
-                toast("That address doesn't look right");
-                return;
-            }
+            uri = URI.create(raw);
         } catch (Exception e) {
             toast("That address doesn't look right");
             return;
         }
+        String host = uri.getHost();
+        if (host == null || host.isEmpty() || !Patterns.DOMAIN_NAME.matcher(host).matches() && !isIpLike(host)) {
+            toast("That address doesn't look right");
+            return;
+        }
         if (!raw.endsWith("/")) raw += "/";
-        final String candidate = raw;
+        final String primary = raw;
+
+        // Candidate list: the typed address first, then — for a bare domain
+        // without an explicit port — the common OTAMA ports, so users who
+        // forwarded 80/443 instead of 3000 still connect without retyping.
+        final List<String> candidates = new ArrayList<>();
+        candidates.add(primary);
+        if (uri.getPort() == -1 && !isIpLike(host)) {
+            if ("http".equals(uri.getScheme())) candidates.add("http://" + host + ":3000/");
+            candidates.add("https://" + host + "/");
+        }
 
         // Pre-flight check: prove the OTAMA API actually answers here before
         // dropping the user into a half-broken WebView session.
@@ -223,18 +245,37 @@ public class MainActivity extends Activity {
         connectBtn.setEnabled(false);
         testStatus.setVisibility(View.GONE);
         anywayBtn.setVisibility(View.GONE);
+        final int total = candidates.size();
         new Thread(() -> {
-            final String verdict = testOtamaServer(candidate); // null = healthy OTAMA
+            String verdict = null;
+            String winner = null;
+            int idx = 0;
+            for (String candidate : candidates) {
+                idx++;
+                final int attempt = idx;
+                runOnUiThread(() -> connectBtn.setText(
+                        total > 1 ? ("Testing " + attempt + "/" + total + "…") : "Testing…"));
+                verdict = testOtamaServer(candidate); // null = healthy OTAMA
+                if (verdict == null) {
+                    winner = candidate;
+                    break;
+                }
+            }
+            final String v = verdict;
+            final String w = winner;
             runOnUiThread(() -> {
                 testing = false;
                 connectBtn.setText("Connect");
                 connectBtn.setEnabled(true);
-                if (verdict == null) {
-                    prefs.edit().putString("server_url", candidate).putString("last_server_url", candidate).apply();
-                    enterWebView(candidate);
+                if (w != null) {
+                    // last_server_url keeps what the user TYPED for the input,
+                    // server_url points at the exact winning candidate.
+                    prefs.edit().putString("server_url", w)
+                            .putString("last_server_url", primary).apply();
+                    enterWebView(w);
                 } else {
-                    pendingUrl = candidate;
-                    testStatus.setText(verdict);
+                    pendingUrl = primary;
+                    testStatus.setText(v);
                     testStatus.setVisibility(View.VISIBLE);
                     anywayBtn.setVisibility(View.VISIBLE);
                 }
@@ -263,12 +304,12 @@ public class MainActivity extends Activity {
 
             if (code == 200 && ctype.contains("html")) {
                 return "That address serves a web page, but not the OTAMA API.\n"
-                        + "Wrong port? The OTAMA desktop app shows the exact\n"
-                        + "address to type (menu: OTAMA → LAN access).";
+                        + "Wrong port? Try the address exactly as shown in the\n"
+                        + "OTAMA desktop app (menu: OTAMA → LAN access).";
             }
             if (code == 404) {
                 return "A server answered but it has no OTAMA API (HTTP 404).\n"
-                        + "Is the OTAMA desktop app (v1.1.2 or newer) running there?";
+                        + "Is the OTAMA desktop app (v1.1.4 or newer) running there?";
             }
             if (code >= 500) {
                 return "The server answered with HTTP " + code + " — OTAMA may still\n"
@@ -279,9 +320,9 @@ public class MainActivity extends Activity {
                     + (ctype.isEmpty() ? "unknown type" : ctype) + ").";
         } catch (SocketTimeoutException | ConnectException e) {
             return "Nothing answered at that address (timed out).\n"
-                    + "• Is OTAMA running on the computer with LAN access ON (Alt → \"LAN access\")?\n"
-                    + "• Both devices on the same Wi-Fi?\n"
-                    + "• Windows Firewall: allow OTAMA on Private networks.";
+                    + "• Is OTAMA running with LAN access ON (Alt → \"LAN access\")?\n"
+                    + "• Same Wi-Fi — or router forwarding TCP port 3000 to the PC?\n"
+                    + "• Windows Firewall: allow OTAMA on private AND public networks.";
         } catch (Exception e) {
             return "Could not connect (" + e.getClass().getSimpleName() + "). Check the address.";
         } finally {
@@ -333,7 +374,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.1.3");
+        s.setUserAgentString(ua + " OTAMA-Android/1.1.4");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -443,8 +484,10 @@ public class MainActivity extends Activity {
 
         TextView detail = new TextView(this);
         detail.setText(connectedUrl + "\n\nMake sure OTAMA is running on your computer\n"
-                + "with LAN access ON (Alt in OTAMA → \"LAN access\")\n"
-                + "and that both devices are on the same Wi-Fi.");
+                + "with LAN access ON (Alt in OTAMA → \"LAN access\"),\n"
+                + "and that this address is reachable:\n"
+                + "same Wi-Fi — or router forwarding TCP port 3000\n"
+                + "for your domain (otama.linkpc.net).");
         detail.setTextSize(13);
         detail.setTextColor(ZINC_400);
         detail.setGravity(Gravity.CENTER);

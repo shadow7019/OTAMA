@@ -18,6 +18,11 @@
  *
  * Users do NOT need Node.js installed: both child services run through
  * Electron's own binary with ELECTRON_RUN_AS_NODE=1.
+ *
+ * Remote-access architecture (v1.1.4+): an embedded gateway (gateway.mjs — a
+ * Caddy clone in ~100 lines) fronts BOTH services on ONE stable port. A phone
+ * on the internet therefore needs a single forwarded router port, while the
+ * engine and Next.js stay safely on loopback.
  */
 import { app, BrowserWindow, Menu, dialog, shell } from 'electron'
 import { spawn } from 'node:child_process'
@@ -27,6 +32,7 @@ import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { startOtamaGateway } from './gateway.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESKTOP_ROOT = path.resolve(__dirname, '..') // .../desktop
@@ -43,6 +49,8 @@ let engineRestarts = 0
 let rendererUrl = ''
 let rendererPortNum = 0
 let lanMode = false
+let gwPortNum = 0
+let lanPhoneUrl = ''
 
 /* ------------------------------ small utils ------------------------------ */
 
@@ -192,7 +200,9 @@ async function ensureEngine() {
     engineChild = spawnAsNode(script, {
       env: {
         OTAMA_ENGINE_PORT: String(ENGINE_PORT),
-        OTAMA_HOST: lanMode ? '0.0.0.0' : '127.0.0.1',
+        // The engine NEVER faces the network directly — the embedded gateway
+        // proxies ?XTransformPort=3003 traffic to it (see gateway.mjs).
+        OTAMA_HOST: '127.0.0.1',
         OTAMA_DOWNLOAD_DIR: downloadDir,
       },
     })
@@ -226,10 +236,10 @@ function rendererDir() {
 
 /**
  * LAN mode — lets the OTAMA Android app (or any phone browser) connect to
- * this desktop instance over Wi-Fi. When enabled, BOTH the renderer server
- * and the torrent engine bind to 0.0.0.0 instead of loopback. The engine is
- * torrent-stream REST + streaming with permissive CORS by design; only opt in
- * on trusted networks.
+ * this desktop instance over Wi-Fi (and, with a forwarded router port, from
+ * the internet). Only the embedded GATEWAY binds 0.0.0.0; the engine and the
+ * renderer stay on loopback and are reached through the gateway, so exactly
+ * one port is ever exposed. Only opt in on trusted networks.
  */
 function lanFlagPath() {
   return path.join(app.getPath('userData'), 'lan-mode')
@@ -251,6 +261,110 @@ function toggleLanMode() {
   }
   app.relaunch()
   app.exit(0)
+}
+
+/* ------------------------- public (internet) address ------------------------- */
+
+/**
+ * The address phones use when they are NOT on the same Wi-Fi — e.g.
+ * http://otama.linkpc.net:3000. Resolution order:
+ *   1. OTAMA_SERVER_URL environment variable
+ *   2. public-url.txt inside the user profile (editable in-app via the
+ *      "Set public address" menu item — no terminal knowledge required)
+ */
+function publicUrlFilePath() {
+  return path.join(app.getPath('userData'), 'public-url.txt')
+}
+
+function normalizePublicUrl(raw) {
+  let u = String(raw || '').trim().replace(/\/+$/, '')
+  if (!u) return ''
+  if (!/^https?:\/\//i.test(u)) u = 'http://' + u
+  return u
+}
+
+function readPublicUrl() {
+  const env = normalizePublicUrl(process.env.OTAMA_SERVER_URL)
+  if (env) return env
+  try {
+    return normalizePublicUrl(fs.readFileSync(publicUrlFilePath(), 'utf8'))
+  } catch {
+    return ''
+  }
+}
+
+const PROMPT_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<title>OTAMA — public address</title>
+<style>
+  body{background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:0;padding:22px 24px;font-size:13px;line-height:1.5}
+  h2{margin:0 0 10px;font-size:16px;letter-spacing:.04em}
+  p{color:#a1a1aa;margin:0 0 12px}
+  code{color:#f59e0b;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  input{width:100%;box-sizing:border-box;background:#27272a;border:1px solid #3f3f46;border-radius:8px;color:#fafafa;
+    padding:10px 12px;font-size:14px;outline:none;margin:2px 0 10px}
+  input:focus{border-color:#f59e0b}
+  .hint{font-size:11.5px;color:#71717a}
+  .row{display:flex;gap:10px;margin-top:14px}
+  button{flex:1;padding:10px 0;border:0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+  #save{background:#f59e0b;color:#09090b}
+  #close{background:#27272a;color:#fafafa}
+</style></head><body>
+  <h2>Public address</h2>
+  <p>The address phones use when they are <b>not</b> on your Wi-Fi — for example<br>
+  <code>http://otama.linkpc.net:3000</code></p>
+  <input id="u" spellcheck="false" placeholder="http://your-domain:3000">
+  <p class="hint">Needs a one-time router port-forward (external TCP port → this PC's port 3000)
+  and your DDNS/domain pointing at this network's public IP. Leave empty + Save to clear.
+  The OTAMA_SERVER_URL environment variable overrides this file.</p>
+  <div class="row">
+    <button id="save">Save</button>
+    <button id="close">Close</button>
+  </div>
+<script>
+  var inp = document.getElementById('u')
+  document.getElementById('save').onclick = function () {
+    document.title = 'SAVE:' + encodeURIComponent(inp.value.trim())
+  }
+  document.getElementById('close').onclick = function () {
+    document.title = 'CLOSE'
+  }
+  inp.focus()
+</script></body></html>`
+
+/** Small in-app dialog that saves public-url.txt (no terminal needed). */
+function promptPublicUrl() {
+  const win = new BrowserWindow({
+    width: 560,
+    height: 330,
+    parent: mainWindow || undefined,
+    modal: !!mainWindow,
+    show: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    backgroundColor: '#09090b',
+    title: 'OTAMA — public address',
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  })
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PROMPT_HTML)}`)
+  win.once('ready-to-show', () => win.show())
+  win.on('page-title-updated', (event, title) => {
+    if (title === 'CLOSE') {
+      event.preventDefault()
+      win.destroy()
+    } else if (title.startsWith('SAVE:')) {
+      event.preventDefault()
+      const value = decodeURIComponent(title.slice(5)).trim()
+      try {
+        if (value) fs.writeFileSync(publicUrlFilePath(), normalizePublicUrl(value) + '\n')
+        else fs.rmSync(publicUrlFilePath(), { force: true })
+      } catch (err) {
+        log('public-url save failed:', err)
+      }
+      win.destroy()
+      buildMenu() // re-render menu labels with the new address
+    }
+  })
 }
 
 /**
@@ -311,7 +425,8 @@ async function startRendererServer() {
     throw new Error(`Renderer server missing: ${serverJs} (run "npm run prepare:renderer" first)`)
   }
 
-  const port = await findFreePort(lanMode ? 3000 : undefined)
+  // Loopback only — phones reach the UI through the gateway port.
+  const port = await findFreePort(3001)
   rendererPortNum = port
   // Writable SQLite database inside the user profile (Prisma DATABASE_URL).
   const dbPath = path.join(app.getPath('userData'), 'otama.db').replace(/\\/g, '/')
@@ -323,7 +438,7 @@ async function startRendererServer() {
     cwd: dir,
     env: {
       PORT: String(port),
-      HOSTNAME: lanMode ? '0.0.0.0' : '127.0.0.1',
+      HOSTNAME: '127.0.0.1',
       DATABASE_URL: `file:${dbPath}`,
       OTAMA_DESKTOP: '1',
     },
@@ -348,6 +463,21 @@ async function startRendererServer() {
   return url
 }
 
+/**
+ * The ONE externally-reachable port. Mirrors the production Caddyfile: any
+ * request carrying ?XTransformPort=<n> goes to the engine on <n>, everything
+ * else goes to the Next.js UI. LAN mode binds 0.0.0.0 (phones), otherwise
+ * loopback only (desktop window).
+ */
+async function startGatewayServer() {
+  const port = await findFreePort(3000)
+  const host = lanMode ? '0.0.0.0' : '127.0.0.1'
+  await startOtamaGateway({ port, host, nextPort: rendererPortNum })
+  gwPortNum = port
+  log(`gateway listening on ${host}:${port} — UI :${rendererPortNum}, engine via ?XTransformPort`)
+  return port
+}
+
 /* ------------------------------ window ------------------------------ */
 
 const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
@@ -366,7 +496,8 @@ const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
   <h1>OTAMA</h1><p>starting torrent engine…</p><div class="spin"></div>
 </body></html>`
 
-function buildMenu(lanAddr) {
+function buildMenu() {
+  const pub = readPublicUrl()
   const template = [
     {
       label: 'OTAMA',
@@ -375,7 +506,7 @@ function buildMenu(lanAddr) {
         { type: 'separator' },
         {
           label: lanMode
-            ? `LAN access: ON${lanAddr ? ` — phones connect to ${lanAddr}` : ''}`
+            ? `LAN access: ON${lanPhoneUrl ? ` — same Wi-Fi: ${lanPhoneUrl}` : ''}`
             : 'LAN access: OFF — click to allow phones (restarts)',
           enabled: !lanMode,
           click: lanMode ? undefined : toggleLanMode,
@@ -383,6 +514,13 @@ function buildMenu(lanAddr) {
         ...(lanMode
           ? [{ label: 'Turn LAN access off (restarts OTAMA)', click: toggleLanMode }]
           : []),
+        ...(lanMode
+          ? [{ label: pub ? `Public address: ${pub}` : 'Public address: not set', enabled: false }]
+          : []),
+        {
+          label: pub ? 'Edit public address…' : 'Set public address (domain)…',
+          click: promptPublicUrl,
+        },
         { type: 'separator' },
         { role: 'minimize' },
         { role: 'quit', label: 'Quit OTAMA' },
@@ -519,7 +657,12 @@ if (!app.requestSingleInstanceLock()) {
         createWindow()
         await mainWindow.loadURL(rendererUrl)
       } else {
-        rendererUrl = await startRendererServer()
+        // Next.js on loopback → gateway in front on the ONE public port.
+        await startRendererServer()
+        const gwPort = await startGatewayServer()
+        // rendererUrl = the origin the window loads (gateway) — also used by
+        // the external-navigation guard in createWindow().
+        rendererUrl = `http://127.0.0.1:${gwPort}`
         createWindow()
         await mainWindow.loadURL(rendererUrl)
         log('window loaded — OTAMA is ready')
@@ -528,18 +671,32 @@ if (!app.requestSingleInstanceLock()) {
 
       if (lanMode && !DEV_URL) {
         const lan = lanAddress()
-        const phoneUrl = lan ? `http://${lan}:${rendererPortNum}` : null
-        buildMenu(phoneUrl || 'LAN')
-        if (phoneUrl) {
-          log(`LAN mode — phones connect to ${phoneUrl}`)
+        lanPhoneUrl = lan ? `http://${lan}:${gwPortNum}` : ''
+        const pub = readPublicUrl()
+        buildMenu()
+        if (lanPhoneUrl) {
+          log(`LAN mode — phones on the same Wi-Fi connect to ${lanPhoneUrl}`)
           dialog.showMessageBox({
             type: 'info',
             title: 'OTAMA — LAN access is ON',
-            message: 'Phones on your Wi-Fi can now use OTAMA.',
+            message: 'Phones can now use OTAMA.',
             detail:
-              `Open the OTAMA Android app and enter:\n\n${phoneUrl}\n\n` +
-              'Both devices must be on the same Wi-Fi network.\n' +
-              'If Windows Firewall asks, allow OTAMA on private networks.',
+              `SAME WI-FI — enter this in the OTAMA Android app:
+
+${lanPhoneUrl}
+
+` +
+              (pub
+                ? `INTERNET (anywhere) — enter this instead:
+
+${pub}
+
+One-time setup: forward TCP port ${gwPortNum} on your router to this PC, ` +
+                  `and make sure your domain (otama.linkpc.net or your own) points at this network's public IP.
+
+`
+                : 'INTERNET (anywhere) — set your domain via menu:\nOTAMA → "Set public address (domain)…"\n\n') +
+              'If Windows Firewall asks, allow OTAMA on private AND public networks.',
             buttons: ['OK'],
           })
         } else {
