@@ -87,10 +87,41 @@ public class MainActivity extends Activity {
 
         String saved = prefs.getString("server_url", null);
         if (saved != null && !saved.isEmpty()) {
-            enterWebView(saved);
+            preflightSaved(saved);
         } else {
             showSetup();
         }
+    }
+
+    /**
+     * Cold launch with a saved address: test it BEFORE showing the WebView.
+     * A stale address (server off, DHCP change, port-forward not done yet)
+     * must land on the setup screen WITH a diagnosis — never the dead-end
+     * black "Try again / Edit server address" error page.
+     */
+    private void preflightSaved(final String url) {
+        testing = true;
+        connectBtn.setEnabled(false);
+        testStatus.setTextColor(AMBER);
+        testStatus.setText("Checking " + url + " …");
+        testStatus.setVisibility(View.VISIBLE);
+        new Thread(() -> {
+            final String verdict = testOtamaServer(url); // null = healthy
+            runOnUiThread(() -> {
+                testing = false;
+                connectBtn.setEnabled(true);
+                if (verdict == null) {
+                    enterWebView(url);
+                } else {
+                    // Stale — forget it so the next launch opens setup directly.
+                    prefs.edit().remove("server_url").apply();
+                    pendingUrl = url;
+                    testStatus.setTextColor(0xFFF87171);
+                    testStatus.setText(verdict);
+                    anywayBtn.setVisibility(View.VISIBLE);
+                }
+            });
+        }, "otama-preflight").start();
     }
 
     /* ----------------------------- setup screen ----------------------------- */
@@ -374,7 +405,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.1.4");
+        s.setUserAgentString(ua + " OTAMA-Android/1.1.5");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);

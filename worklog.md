@@ -703,3 +703,22 @@ Stage Summary:
 - Phone now needs exactly ONE forwarded router port: external TCP 3000 → PC (gateway fronts UI+engine); engine never faces the internet
 - Android app ships preconfigured for otama.linkpc.net:3000 — user only enables LAN access on the PC, forwards the port, and taps Connect
 - OTAMA_SERVER_URL / public-url.txt / in-app dialog = three ways to set the internet address shown on the PC
+
+---
+Task ID: 31
+Agent: Z.ai Code (main)
+Task: v1.1.4 shipped + APK "black screen / Try again" diagnosis → v1.1.5 cold-launch preflight
+
+Work Log:
+- v1.1.4 pushed (deploy key v3 re-added by user after rollback wiped ~/.ssh); fixed dirty git state first: junk auto-commit of .zscripts/dev.pid (UUID message) dropped, duplicate-hash Task-29 commit reconciled via rebase --onto origin/main
+- Background setsid push daemon HANGS this session (empty logs, no output) — foreground `timeout 45 git push < /dev/null` works; use that
+- CI green: all 3 workflows → release v1.1.4 with OTAMA-1.1.4.apk, OTAMA-Setup-1.1.4.exe, OTAMA-1.1.4-portable.exe, OTAMA-1.1.4-arm64.dmg
+- User reported APK opens to black screen with "Try again / Edit server address"
+- Diagnosed from sandbox: DNS fine (183.82.161.156) but ports 80/3000/3003/8080/443 all timeout — server side (port-forward / OTAMA running) not done; app behaves correctly
+- UX bug worth fixing: stale saved server_url on cold launch jumped straight to the WebView error overlay (dead end). MainActivity now preflights the saved address (preflightSaved): amber "Checking …" → healthy → WebView; fail → forget server_url, show SETUP screen with red diagnosis + Connect anyway
+- Versions: desktop 1.1.5, android versionCode 6 / versionName 1.1.5 → tag v1.1.5
+
+Stage Summary:
+- v1.1.4 live: Android preset otama.linkpc.net:3000, single-port embedded gateway, OTAMA_SERVER_URL support
+- v1.1.5: cold-launch can never dead-end — always lands on actionable setup screen with the real diagnosis
+- User still needs: router port-forward TCP 3000 (or CGNAT check → Tailscale fallback), firewall, LAN access ON
