@@ -797,3 +797,21 @@ Work Log:
 Stage Summary:
 - v1.2.0 code is on GitHub and in the Release binaries; the hosted URL will pick it up on the platform's next redeploy/replica refresh
 - Android app degrade path is safe: if the stale page loads, browsing still works; auth features appear once the replica refreshes
+
+---
+Task ID: 35
+Agent: Z.ai Code (main)
+Task: Fix stale "New episodes airing today" row + diagnose hosted-URL login failure (v1.2.1)
+
+Work Log:
+- User report 1: "new episodes airing today section only shows old year shows" — confirmed: home row feeds from TMDB /tv/airing_today, whose page 1 is talk shows (2009), Simpsons (1989), Kamen Rider (1971) — technically airing today but useless as a fresh row
+- Fix (src/lib/server/tmdb.ts): airing_today + on_the_air now use /discover/tv with air_date.gte/lte = next-episode window (yesterday→tomorrow for today feed, yesterday→+7d for weekly), first_air_date floor −730d (fresh shows only) + ceiling +1d (no announced stubs), vote_count ≥1, popularity sort, timezone=Asia/Kolkata. Ended shows drop out automatically (no next episode)
+- Verified via API + browser: row now MobLand (2025) 8.4, Lanterns (2026) 8.2, Against the Current (2026), A Tale of Two Cities (2026), Pls Love (2026), Sins and Roses (2025)... all 2024–2026
+- User report 2: "can't login with credentials" — root-caused: https://otama.space-z.ai is an Aliyun FC-hosted PUBLISHED production snapshot (HTML marker NAk3xd7Q..., X-Fc-Request-Id headers, X-Nextjs-Cache: HIT), NOT the live sandbox (local Caddy :81 = FC_CUSTOM_LISTEN_PORT proxies to fresh dev :3000 — auth route 400-vs-404 divergence proves it). The published snapshot predates the accounts task, so /api/auth/* 404s there
+- Origin verified flawless: register→200, me→200, login→200, wrong password→401 generic; user's real account "Teufel" exists; e2e roundtrip done in-browser (register temp → app shell → sign out → sign in with credentials → app returns; zero console errors); temp accounts deleted
+- Hosted snapshot refresh is platform-side (space republish / redeploy from git); pushed v1.2.1 to git in case the space auto-redeploys from repo
+- Versions: desktop 1.2.1, android versionCode 10 / versionName 1.2.1, UA OTAMA-Android/1.2.1
+
+Stage Summary:
+- "New episodes airing today" now lists shows that REALLY air now (current hits only, no 1971/1989/2009 stalwarts) — auto-updating daily
+- Login works everywhere the current build is served; on otama.space-z.ai the user must wait for the space snapshot to refresh (republish) — app login hits the stale published build, origin + self-hosted desktops unaffected

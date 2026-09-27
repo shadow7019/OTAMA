@@ -204,9 +204,14 @@ export type TmdbSort =
  *  - year         → discover sorted by release date
  *  - now_playing  → /movie/now_playing   (auto-updating: in theaters)
  *  - upcoming     → /movie/upcoming      (auto-updating: coming soon)
- *  - airing_today → /tv/airing_today     (auto-updating: new episodes today)
- *  - on_the_air   → /tv/on_the_air       (auto-updating: shows airing this week)
+ *  - airing_today → /discover/tv with a next-episode air window (shows that
+ *                   REALLY have an episode airing right now, fresh shows only)
+ *  - on_the_air   → same, with a 7-day window (shows airing this week)
  *  - any genre    → /discover with sort_by (top uses vote_average + vote_count floor)
+ *
+ *  WHY NOT TMDB /tv/airing_today | /tv/on_the_air: TMDB lists every daily-era
+ *  stalwart there (talk shows from 2009, Kamen Rider from 1971, Simpsons
+ *  from 1989) — technically airing, but useless as a "new episodes" row.
  */
 const LIVE_FEEDS: TmdbSort[] = ['now_playing', 'airing_today', 'on_the_air', 'upcoming']
 
@@ -275,12 +280,29 @@ export async function tmdbCatalog(
   } else if (sort === 'upcoming') {
     params = { page }
     path = '/movie/upcoming'
-  } else if (sort === 'airing_today') {
-    params = { page }
-    path = '/tv/airing_today'
-  } else if (sort === 'on_the_air') {
-    params = { page }
-    path = '/tv/on_the_air'
+  } else if (sort === 'airing_today' || sort === 'on_the_air') {
+    // Discover's air_date.gte/lte filter on the NEXT episode to air, so the
+    // window only returns shows that actually have an episode airing right
+    // now (ended shows have no next episode and drop out by themselves).
+    // The ~2-year first_air_date floor keeps decades-old daily stalwarts
+    // (Simpsons, Kamen Rider, daytime talk shows) out of the row, while
+    // popularity sorting surfaces the biggest current hits first. Window
+    // starts yesterday and the first_air_date ceiling allows tomorrow so
+    // timezone edges (IST vs UTC) and same-day premieres never fall through.
+    const now = Date.now()
+    const day = (offsetDays: number) => new Date(now + offsetDays * 86_400_000).toISOString().slice(0, 10)
+    params = {
+      sort_by: 'popularity.desc',
+      include_adult: false,
+      'air_date.gte': day(-1),
+      'air_date.lte': day(sort === 'airing_today' ? 1 : 7),
+      'first_air_date.gte': day(-730),
+      'first_air_date.lte': day(1),
+      'vote_count.gte': 1,
+      timezone: 'Asia/Kolkata',
+      page,
+    }
+    path = '/discover/tv'
   } else {
     // year / newest
     params = {
