@@ -59,7 +59,7 @@ export function SearchView({ query }: { query: string }) {
   return (
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8">
       <h1 className="text-2xl font-black tracking-tight">
-        Results for <span className="text-amber-400">“{query}”</span>
+        Results for <span className="text-fuchsia-400">“{query}”</span>
       </h1>
       {error ? (
         <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">Search failed: {(error as Error).message}</p>

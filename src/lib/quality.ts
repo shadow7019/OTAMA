@@ -52,8 +52,8 @@ export const BUCKET_META: Record<QualityBucket, BucketMeta> = {
   '480p': {
     label: '480p / SD',
     short: 'SD',
-    badge: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
-    chip: 'bg-amber-500 text-black border-amber-400',
+    badge: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40',
+    chip: 'bg-fuchsia-500 text-black border-fuchsia-400',
   },
   other: {
     label: 'Other / unknown',

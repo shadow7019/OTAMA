@@ -132,7 +132,7 @@ export function TorrendsSitesDialog({
           <Button
             onClick={searchInApp}
             disabled={!q.trim()}
-            className="bg-amber-500 font-bold text-black hover:bg-amber-400 shrink-0"
+            className="bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400 shrink-0"
             title="Search OTAMA's integrated providers in-app"
           >
             <PlayCircle className="mr-1 h-4 w-4" aria-hidden />
@@ -156,10 +156,10 @@ export function TorrendsSitesDialog({
                 <li key={s.name}>
                   <button
                     onClick={() => openSite(s)}
-                    className="group flex w-full items-center gap-3 rounded-lg border border-white/5 bg-card px-3 py-2.5 text-left transition-colors hover:border-amber-400/40 hover:bg-white/[0.03]"
+                    className="group flex w-full items-center gap-3 rounded-lg border border-white/5 bg-card px-3 py-2.5 text-left transition-colors hover:border-fuchsia-400/40 hover:bg-white/[0.03]"
                     aria-label={`Search ${s.title} for ${q || 'everything'}`}
                   >
-                    <Globe className="h-4 w-4 shrink-0 text-zinc-500 group-hover:text-amber-400" aria-hidden />
+                    <Globe className="h-4 w-4 shrink-0 text-zinc-500 group-hover:text-fuchsia-400" aria-hidden />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{s.title}</span>
                       <span className="block truncate text-xs text-zinc-500">
@@ -176,7 +176,7 @@ export function TorrendsSitesDialog({
                         {s.proxies.length} mirrors
                       </Badge>
                     ) : null}
-                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-zinc-600 group-hover:text-amber-400" aria-hidden />
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-zinc-600 group-hover:text-fuchsia-400" aria-hidden />
                   </button>
                 </li>
               ))}

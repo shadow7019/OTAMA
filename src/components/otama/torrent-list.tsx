@@ -106,7 +106,7 @@ export function TorrentList({
         {meta?.title ? (
           <Button
             size="sm"
-            className="mt-3 bg-amber-500 font-bold text-black hover:bg-amber-400 min-h-[44px]"
+            className="mt-3 bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400 min-h-[44px]"
             onClick={() => {
               closeDetail()
               setQuery(meta.title!)
@@ -123,7 +123,7 @@ export function TorrentList({
   const renderRow = (t: TorrentOption, idx: number) => (
     <li
       key={`${t.hash}-${t.season ?? ''}-${t.episode ?? ''}-${idx}`}
-      className="group flex items-center gap-3 rounded-xl border border-white/5 bg-card p-3 transition-colors hover:border-amber-400/40"
+      className="group flex items-center gap-3 rounded-xl border border-white/5 bg-card p-3 transition-colors hover:border-fuchsia-400/40"
     >
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium truncate" title={t.title}>
@@ -156,7 +156,7 @@ export function TorrentList({
           ) : null}
           {isRiskyContainer(t.title) ? (
             <span
-              className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 uppercase"
+              className="rounded bg-fuchsia-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-300 uppercase"
               title={`${(containerOf(t.title) || 'mkv').toUpperCase()} container — plays in Chromium-based browsers, but not Firefox/Safari; an MP4 release is more compatible`}
             >
               {containerOf(t.title)}
@@ -168,7 +168,7 @@ export function TorrentList({
         size="sm"
         onClick={() => play(t)}
         disabled={addingHash !== null}
-        className="bg-amber-500 text-black hover:bg-amber-400 font-bold shrink-0 min-h-[36px]"
+        className="bg-fuchsia-500 text-black hover:bg-fuchsia-400 font-bold shrink-0 min-h-[36px]"
         aria-label={`Play ${t.title}`}
       >
         {addingHash === t.hash ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-black" />}
@@ -202,7 +202,7 @@ export function TorrentList({
           <Button
             variant="ghost"
             size="sm"
-            className="mt-2 w-full text-amber-400 hover:text-amber-300 min-h-[36px]"
+            className="mt-2 w-full text-fuchsia-400 hover:text-fuchsia-300 min-h-[36px]"
             onClick={() => setExpanded((prev) => new Set(prev).add(bucket))}
             aria-label={`Show all ${list.length} ${BUCKET_META[bucket].short} torrents`}
           >
@@ -215,7 +215,7 @@ export function TorrentList({
 
   const chip = (active: boolean) =>
     `min-h-[32px] rounded-full border px-3 text-xs font-semibold transition-colors ${
-      active ? 'bg-amber-500 text-black border-amber-400 hover:bg-amber-400' : 'bg-white/5 text-zinc-300 border-white/10 hover:bg-white/10'
+      active ? 'bg-fuchsia-500 text-black border-fuchsia-400 hover:bg-fuchsia-400' : 'bg-white/5 text-zinc-300 border-white/10 hover:bg-white/10'
     }`
 
   return (

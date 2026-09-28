@@ -39,7 +39,7 @@ export function TpbResultList({ items }: { items: TpbItem[] }) {
   return (
     <ul className="space-y-2 max-w-4xl">
       {items.map((item) => (
-        <li key={`${item.id}-${item.hash}`} className="flex items-center gap-3 rounded-xl border border-white/5 bg-card p-3 hover:border-amber-400/40 transition-colors">
+        <li key={`${item.id}-${item.hash}`} className="flex items-center gap-3 rounded-xl border border-white/5 bg-card p-3 hover:border-fuchsia-400/40 transition-colors">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium" title={item.name}>{item.name}</p>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
@@ -49,7 +49,7 @@ export function TpbResultList({ items }: { items: TpbItem[] }) {
               <span className="rounded bg-white/5 px-1.5 py-0.5 uppercase text-[10px]">{item.category}</span>
             </div>
           </div>
-          <Button size="sm" className="h-8 bg-amber-500 font-bold text-black hover:bg-amber-400" onClick={() => play(item)} aria-label={`Play ${item.name}`}>
+          <Button size="sm" className="h-8 bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400" onClick={() => play(item)} aria-label={`Play ${item.name}`}>
             <Play className="h-3.5 w-3.5 fill-black" />
           </Button>
           {item.imdb ? (

@@ -56,7 +56,7 @@ export function NavBar() {
               variant="ghost"
               size="sm"
               onClick={() => setView(n.id)}
-              className={cn('text-sm font-medium', view === n.id ? 'text-amber-400' : 'text-zinc-300 hover:text-white')}
+              className={cn('text-sm font-medium', view === n.id ? 'text-fuchsia-400' : 'text-zinc-300 hover:text-white')}
               aria-current={view === n.id ? 'page' : undefined}
             >
               {n.label}
@@ -93,7 +93,7 @@ export function NavBar() {
           >
             <Download className="h-5 w-5" />
             {activeTorrents > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-black">
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-fuchsia-500 px-1 text-[10px] font-bold text-black">
                 {activeTorrents}
               </span>
             ) : null}
@@ -119,7 +119,7 @@ export function NavBar() {
                 setView(n.id)
                 setMenuOpen(false)
               }}
-              className={cn('w-full justify-start', view === n.id ? 'text-amber-400' : 'text-zinc-300')}
+              className={cn('w-full justify-start', view === n.id ? 'text-fuchsia-400' : 'text-zinc-300')}
             >
               {n.label}
             </Button>

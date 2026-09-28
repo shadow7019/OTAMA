@@ -58,10 +58,10 @@ export function AnimeFreshRow() {
     <section aria-label="Latest anime episodes">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight">
-          <Flame className="h-5 w-5 text-amber-400" aria-hidden />
+          <Flame className="h-5 w-5 text-fuchsia-400" aria-hidden />
           Latest anime episodes
         </h2>
-        <Button variant="ghost" size="sm" className="text-amber-400 hover:text-amber-300" onClick={() => setView('anime')}>
+        <Button variant="ghost" size="sm" className="text-fuchsia-400 hover:text-fuchsia-300" onClick={() => setView('anime')}>
           Browse anime →
         </Button>
       </div>
@@ -86,7 +86,7 @@ export function AnimeFreshRow() {
             <article
               key={item.hash}
               role="listitem"
-              className="group flex w-64 shrink-0 flex-col justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 transition-colors hover:border-amber-400/40 hover:bg-white/[0.06]"
+              className="group flex w-64 shrink-0 flex-col justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 transition-colors hover:border-fuchsia-400/40 hover:bg-white/[0.06]"
             >
               <div className="space-y-1.5">
                 <p className="line-clamp-2 min-h-[2.5rem] text-sm font-medium leading-snug" title={item.title}>
@@ -100,7 +100,7 @@ export function AnimeFreshRow() {
               </div>
               <Button
                 size="sm"
-                className="h-9 w-full bg-amber-500 font-bold text-black hover:bg-amber-400"
+                className="h-9 w-full bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400"
                 onClick={() => play(item)}
                 aria-label={`Play ${item.title}`}
               >

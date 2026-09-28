@@ -87,7 +87,7 @@ export function FavoritesView() {
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8">
       <div className="flex items-center gap-2">
         <h1 className="text-2xl font-black tracking-tight">Favorites</h1>
-        <Heart className="h-5 w-5 fill-amber-400 text-amber-400" />
+        <Heart className="h-5 w-5 fill-fuchsia-400 text-fuchsia-400" />
       </div>
       {favs === null ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
@@ -104,14 +104,14 @@ export function FavoritesView() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {favs.map((row) => (
             <div key={row.id} className="group relative">
-              <button onClick={() => open(row)} className="w-full text-left rounded-xl overflow-hidden ring-1 ring-white/5 hover:ring-amber-400/60 transition-all min-h-[44px]" aria-label={`Open ${row.title}`}>
+              <button onClick={() => open(row)} className="w-full text-left rounded-xl overflow-hidden ring-1 ring-white/5 hover:ring-fuchsia-400/60 transition-all min-h-[44px]" aria-label={`Open ${row.title}`}>
                 <Poster src={row.poster || undefined} alt={row.title} />
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 to-transparent p-3 pt-8">
                   <p className="text-sm font-semibold line-clamp-1">{row.title}</p>
                   <p className="text-xs text-zinc-400">{row.year || row.kind}</p>
                 </div>
                 {row.rating ? (
-                  <span className="absolute top-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-semibold text-amber-300">
+                  <span className="absolute top-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-semibold text-fuchsia-300">
                     ★ {row.rating.toFixed(1)}
                   </span>
                 ) : null}
@@ -166,7 +166,7 @@ export function ContinueWatchingRow() {
   return (
     <section className="space-y-3 px-1" aria-label="Continue watching">
       <h2 className="text-lg font-bold tracking-tight">
-        Continue <span className="text-amber-400">watching</span>
+        Continue <span className="text-fuchsia-400">watching</span>
       </h2>
       <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
         {entries.map((e) => {
@@ -175,19 +175,19 @@ export function ContinueWatchingRow() {
             <div key={e.refId} className="relative w-[210px] shrink-0 group">
               <button
                 onClick={() => resume(e)}
-                className="block w-full text-left rounded-xl overflow-hidden ring-1 ring-white/5 hover:ring-amber-400/60 transition-all min-h-[44px]"
+                className="block w-full text-left rounded-xl overflow-hidden ring-1 ring-white/5 hover:ring-fuchsia-400/60 transition-all min-h-[44px]"
                 aria-label={`Resume ${e.title}`}
               >
                 <Poster src={e.poster || undefined} alt={e.title} ratio="aspect-video" />
                 <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-amber-500">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-fuchsia-500">
                     <Play className="h-5 w-5 fill-black text-black" />
                   </span>
                 </span>
                 <span className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/95 to-transparent">
                   <span className="block text-sm font-semibold truncate">{e.title}</span>
                   <span className="mt-1 block h-1 w-full rounded-full bg-white/20">
-                    <span className="block h-1 rounded-full bg-amber-400" style={{ width: `${pct}%` }} />
+                    <span className="block h-1 rounded-full bg-fuchsia-400" style={{ width: `${pct}%` }} />
                   </span>
                 </span>
               </button>

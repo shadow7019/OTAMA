@@ -401,7 +401,7 @@ export function PlayerOverlay() {
               onDoubleClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start gap-3">
-                <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-fuchsia-400" />
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-white">
                     {error ? 'Playback problem' : 'Stuck buffering? Here is what OTAMA sees'}
@@ -419,7 +419,7 @@ export function PlayerOverlay() {
                       <>This container (AVI/TS) cannot play inside browsers. Pick a different release below.</>
                     ) : ext === 'maybe' ? (
                       <>
-                        This file is <span className="font-semibold text-amber-300">MKV/MOV</span> — it plays in
+                        This file is <span className="font-semibold text-fuchsia-300">MKV/MOV</span> — it plays in
                         Chromium-based browsers but not Firefox/Safari. For maximum compatibility switch to an MP4
                         release below.
                       </>
@@ -446,10 +446,10 @@ export function PlayerOverlay() {
                           key={`${a.hash}-${a.season ?? ''}-${a.episode ?? ''}`}
                           onClick={() => void switchTo(a)}
                           disabled={switching !== null}
-                          className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2.5 text-left text-xs transition-colors hover:border-amber-400/50 hover:bg-white/10 disabled:opacity-50 min-h-[44px]"
+                          className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2.5 text-left text-xs transition-colors hover:border-fuchsia-400/50 hover:bg-white/10 disabled:opacity-50 min-h-[44px]"
                         >
                           {switching === a.hash ? (
-                            <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-amber-400" />
+                            <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-fuchsia-400" />
                           ) : (
                             <span className={`h-2 w-2 shrink-0 rounded-full ${aHevc ? 'bg-red-400' : 'bg-emerald-400'}`} />
                           )}
@@ -494,13 +494,13 @@ export function PlayerOverlay() {
                fullscreen buttons underneath were unreachable ("can't make
                the video full screen"). Now all clicks pass through. */
             <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 pb-20 text-zinc-300">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-fuchsia-400 border-t-transparent" />
               <p className="text-sm" aria-live="polite">{stageLabel}</p>
               {ready && active ? (
                 <Progress value={Math.min(100, (active.progress || 0) * 100)} className="w-56" aria-label="Overall torrent progress" />
               ) : null}
               {!ready && retryCount.current > 0 ? (
-                <p className="text-xs text-amber-300/90">Reconnecting (attempt {retryCount.current + 1}/4)…</p>
+                <p className="text-xs text-fuchsia-300/90">Reconnecting (attempt {retryCount.current + 1}/4)…</p>
               ) : null}
               <p className="flex items-center gap-3 text-xs text-zinc-500">
                 <span className="inline-flex items-center gap-1">
@@ -510,13 +510,13 @@ export function PlayerOverlay() {
                   <ArrowDownToLine className="h-3 w-3" /> {fmtSpeed(active?.downloadSpeed || 0)}
                 </span>
                 {!connected ? (
-                  <span className="inline-flex items-center gap-1 text-amber-400">
+                  <span className="inline-flex items-center gap-1 text-fuchsia-400">
                     <WifiOff className="h-3 w-3" /> engine offline
                   </span>
                 ) : null}
               </p>
               {ext === 'unsupported' && (
-                <p className="max-w-sm text-center text-xs text-amber-300/90">
+                <p className="max-w-sm text-center text-xs text-fuchsia-300/90">
                   This format (e.g. AVI/TS) usually can&apos;t play in browsers. Consider another torrent.
                 </p>
               )}
@@ -566,7 +566,7 @@ export function PlayerOverlay() {
         <div className="z-10 border-t border-white/10 bg-black/90 px-4 py-2.5">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1.5 sm:gap-x-6 text-xs text-zinc-300">
             <span className="inline-flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${active?.done ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+              <span className={`h-2 w-2 rounded-full ${active?.done ? 'bg-emerald-400' : 'bg-fuchsia-400 animate-pulse'}`} />
               {active?.done ? 'Completed — seeding' : 'Streaming'}
             </span>
             <span className="inline-flex items-center gap-1.5">

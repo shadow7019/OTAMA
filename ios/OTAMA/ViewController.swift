@@ -15,7 +15,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private static let defaultServer = URL(string: "https://otama.space-z.ai")!
     private static let serverKey = "otama.server_url"
 
-    private static let amber = UIColor(red: 0xF5 / 255.0, green: 0x9E / 255.0, blue: 0x0B / 255.0, alpha: 1)
+    private static let accent = UIColor(red: 0xE8 / 255.0, green: 0x79 / 255.0, blue: 0xF9 / 255.0, alpha: 1)
     private static let bg = UIColor(red: 0x09 / 255.0, green: 0x09 / 255.0, blue: 0x0B / 255.0, alpha: 1)
     private static let zinc800 = UIColor(red: 0x27 / 255.0, green: 0x27 / 255.0, blue: 0x2A / 255.0, alpha: 1)
     private static let zinc400 = UIColor(red: 0xA1 / 255.0, green: 0xA1 / 255.0, blue: 0xAA / 255.0, alpha: 1)
@@ -83,7 +83,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         // HTML5 element-fullscreen: the web player falls back to the native
         // <video> fullscreen (webkitEnterFullscreen) on iOS, so playback and
         // fullscreen work out of the box without extra WKPreferences flags.
-        cfg.applicationNameForUserAgent = "OTAMA-iOS/1.3.1"
+        cfg.applicationNameForUserAgent = "OTAMA-iOS/1.4.0"
 
         webView = WKWebView(frame: view.bounds, configuration: cfg)
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -99,7 +99,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         webView.scrollView.keyboardDismissMode = .interactive
         view.addSubview(webView)
 
-        refreshControl.tintColor = ViewController.amber
+        refreshControl.tintColor = ViewController.accent
         refreshControl.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
         webView.scrollView.addSubview(refreshControl)
     }
@@ -139,7 +139,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         tagline.textColor = ViewController.zinc400
 
         let spinner = UIActivityIndicatorView(style: .large)
-        spinner.color = ViewController.amber
+        spinner.color = ViewController.accent
         spinner.startAnimating()
 
         let stack = UIStackView(arrangedSubviews: [logo, tagline, spinner])
@@ -200,7 +200,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         retry.setTitle("Try again", for: .normal)
         retry.setTitleColor(.black, for: .normal)
         retry.titleLabel?.font = .boldSystemFont(ofSize: 15)
-        retry.backgroundColor = ViewController.amber
+        retry.backgroundColor = ViewController.accent
         retry.layer.cornerRadius = 10
         retry.heightAnchor.constraint(equalToConstant: 48).isActive = true
         retry.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)

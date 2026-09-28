@@ -71,19 +71,81 @@ export function HomeView() {
     }
   }
 
+  const movieItems = movies.data?.items || []
+  const seriesItems = series.data?.items || []
+
   return (
     <div className="pb-10">
-      <Hero items={movies.data?.items || []} loading={movies.isLoading} />
-      <div className="mx-auto max-w-7xl space-y-8 px-4 pt-8 md:px-8">
+      <Hero items={movieItems} loading={movies.isLoading} />
+      <div className="mx-auto max-w-7xl space-y-9 px-4 pt-6 md:px-8">
         <ContinueWatchingRow />
-        <MediaRow title="Trending" accent="now" items={(movies.data?.items || []).slice(0, 20)} loading={movies.isLoading} onSelect={openFor} />
-        <MediaRow title="New episodes" accent="airing today" items={(airingToday.data?.items || []).slice(0, 20)} loading={airingToday.isLoading} onSelect={openFor} />
-        <MediaRow title="New in" accent="theaters" items={(nowPlaying.data?.items || []).slice(0, 20)} loading={nowPlaying.isLoading} onSelect={openFor} />
-        <MediaRow title="Top" accent="series" items={(series.data?.items || []).slice(0, 20)} loading={series.isLoading} onSelect={openFor} />
-        <MediaRow title="Popular" accent="anime" items={(anime.data?.items || []).slice(0, 20)} loading={anime.isLoading} onSelect={openFor} />
+        <MediaRow
+          ranked
+          title="Top 10 Movies"
+          accent="Today"
+          subtitle="The films everyone is streaming right now — updated live."
+          items={movieItems.slice(0, 10)}
+          loading={movies.isLoading}
+          onSelect={openFor}
+          exploreTo="movies"
+        />
+        <MediaRow
+          title="Popular on OTAMA"
+          accent="now"
+          subtitle="Fan favorites and critically acclaimed films — the ones audiences can't stop talking about."
+          items={movieItems.slice(10, 30)}
+          loading={movies.isLoading}
+          onSelect={openFor}
+          exploreTo="movies"
+        />
+        <MediaRow
+          ranked
+          title="Top 10 TV Shows"
+          accent="Today"
+          subtitle="Series riding the top of the charts today."
+          items={seriesItems.slice(0, 10)}
+          loading={series.isLoading}
+          onSelect={openFor}
+          exploreTo="tv"
+        />
+        <MediaRow
+          title="New episodes"
+          accent="airing today"
+          subtitle="Fresh episodes landing today — keep up with your shows."
+          items={(airingToday.data?.items || []).slice(0, 20)}
+          loading={airingToday.isLoading}
+          onSelect={openFor}
+          exploreTo="tv"
+        />
+        <MediaRow
+          title="New in"
+          accent="theaters"
+          subtitle="Just released on the big screen — now streaming."
+          items={(nowPlaying.data?.items || []).slice(0, 20)}
+          loading={nowPlaying.isLoading}
+          onSelect={openFor}
+          exploreTo="movies"
+        />
+        <MediaRow
+          title="Popular"
+          accent="anime"
+          subtitle="The seasons and series the anime community is watching."
+          items={(anime.data?.items || []).slice(0, 20)}
+          loading={anime.isLoading}
+          onSelect={openFor}
+          exploreTo="anime"
+        />
         <AnimeFreshRow />
         <PirateBayFreshRow />
-        <MediaRow title="Coming" accent="soon" items={(upcoming.data?.items || []).slice(0, 20)} loading={upcoming.isLoading} onSelect={openFor} />
+        <MediaRow
+          title="Coming"
+          accent="soon"
+          subtitle="Get ahead of the hype — upcoming releases to watch for."
+          items={(upcoming.data?.items || []).slice(0, 20)}
+          loading={upcoming.isLoading}
+          onSelect={openFor}
+          exploreTo="movies"
+        />
         {movies.error ? (
           <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
             <p className="font-medium">Metadata is unavailable right now.</p>

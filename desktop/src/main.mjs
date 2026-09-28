@@ -303,14 +303,14 @@ const PROMPT_HTML = `<!doctype html><html><head><meta charset="utf-8">
   body{background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:0;padding:22px 24px;font-size:13px;line-height:1.5}
   h2{margin:0 0 10px;font-size:16px;letter-spacing:.04em}
   p{color:#a1a1aa;margin:0 0 12px}
-  code{color:#f59e0b;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  code{color:#d946ef;font-family:ui-monospace,Consolas,monospace;font-size:12px}
   input{width:100%;box-sizing:border-box;background:#27272a;border:1px solid #3f3f46;border-radius:8px;color:#fafafa;
     padding:10px 12px;font-size:14px;outline:none;margin:2px 0 10px}
-  input:focus{border-color:#f59e0b}
+  input:focus{border-color:#d946ef}
   .hint{font-size:11.5px;color:#71717a}
   .row{display:flex;gap:10px;margin-top:14px}
   button{flex:1;padding:10px 0;border:0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
-  #save{background:#f59e0b;color:#09090b}
+  #save{background:#d946ef;color:#09090b}
   #close{background:#27272a;color:#fafafa}
 </style></head><body>
   <h2>Public address</h2>
@@ -574,12 +574,12 @@ const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <style>
   html,body{height:100%;margin:0;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
     display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;user-select:none}
-  .mark{width:84px;height:84px;border-radius:22px;background:linear-gradient(135deg,#f59e0b,#d97706);
+  .mark{width:84px;height:84px;border-radius:22px;background:linear-gradient(135deg,#d946ef,#a21caf);
     display:flex;align-items:center;justify-content:center;box-shadow:0 12px 40px rgba(245,158,11,.25)}
   .tri{width:0;height:0;border-left:26px solid #09090b;border-top:16px solid transparent;border-bottom:16px solid transparent;margin-left:6px}
   h1{font-size:26px;letter-spacing:.35em;margin:0;font-weight:700;text-indent:.35em}
   p{color:#a1a1aa;font-size:13px;margin:0}
-  .spin{width:18px;height:18px;border:2px solid #3f3f46;border-top-color:#f59e0b;border-radius:50%;animation:s .8s linear infinite}
+  .spin{width:18px;height:18px;border:2px solid #3f3f46;border-top-color:#d946ef;border-radius:50%;animation:s .8s linear infinite}
   @keyframes s{to{transform:rotate(360deg)}}
 </style></head><body>
   <div class="mark"><div class="tri"></div></div>

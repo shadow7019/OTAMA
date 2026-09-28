@@ -144,7 +144,7 @@ export function TmdbDialog({ open, onOpenChange }: { open: boolean; onOpenChange
               href="https://www.themoviedb.org/settings/api"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"
+              className="inline-flex items-center gap-1 text-xs text-fuchsia-400 hover:text-fuchsia-300"
             >
               Get a key on themoviedb.org <ExternalLink className="h-3 w-3" />
             </a>

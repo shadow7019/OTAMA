@@ -105,7 +105,7 @@ export function DownloadsSheet() {
                           <Loader2 className={`h-3 w-3 ${t.done ? 'hidden' : 'animate-spin'}`} /> {t.done ? 'done' : 'downloading'}
                         </span>
                       ) : (
-                        <span className="text-amber-400">fetching metadata…</span>
+                        <span className="text-fuchsia-400">fetching metadata…</span>
                       )}
                       <span>{fmtSpeed(t.downloadSpeed)}</span>
                       <span>{t.numPeers} peers</span>

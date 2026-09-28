@@ -48,42 +48,42 @@ type Source = 'tpb' | 'leetx' | 'solid' | 'torrentio' | 'rarbg' | 'lime' | 'td' 
 
 const SOURCE_META: Record<Source, { heading: React.ReactNode; hint: string; label: string }> = {
   tpb: {
-    heading: (<>Pirate <span className="text-amber-400">Bay</span></>),
+    heading: (<>Pirate <span className="text-fuchsia-400">Bay</span></>),
     hint: 'Search ThePirateBay directly — leave the box empty for the latest uploads.',
     label: 'Pirate Bay',
   },
   leetx: {
-    heading: (<>1337<span className="text-amber-400">x</span></>),
+    heading: (<>1337<span className="text-fuchsia-400">x</span></>),
     hint: 'Search 1337x across its mirror network — mirrors are picked automatically.',
     label: '1337x',
   },
   solid: {
-    heading: (<>Solid <span className="text-amber-400">Torrents</span></>),
+    heading: (<>Solid <span className="text-fuchsia-400">Torrents</span></>),
     hint: 'SolidTorrents — DHT index search that works even when trackers are blocked.',
     label: 'Solid Torrents',
   },
   torrentio: {
-    heading: (<>Torrent<span className="text-amber-400">io</span></>),
+    heading: (<>Torrent<span className="text-fuchsia-400">io</span></>),
     hint: 'Torrentio — one search across YTS, EZTV, RARBG, 1337x, Pirate Bay, Kickass, TorrentGalaxy, MagnetDL and more (keyed by IMDb).',
     label: 'Torrentio',
   },
   rarbg: {
-    heading: (<>RARBG <span className="text-amber-400">archive</span></>),
+    heading: (<>RARBG <span className="text-fuchsia-400">archive</span></>),
     hint: 'The revived RARBG index (therarbg.to) — famous for clean x264/x265 movie & TV releases. Infohash included, no extra lookups.',
     label: 'RARBG',
   },
   lime: {
-    heading: (<>Lime<span className="text-amber-400">Torrents</span></>),
+    heading: (<>Lime<span className="text-fuchsia-400">Torrents</span></>),
     hint: 'LimeTorrents — hash-ready results across its rotating mirror domains.',
     label: 'LimeTorrents',
   },
   td: {
-    heading: (<>Torrent<span className="text-amber-400">Downloads</span></>),
+    heading: (<>Torrent<span className="text-fuchsia-400">Downloads</span></>),
     hint: 'TorrentDownloads — magnets resolved from detail pages automatically.',
     label: 'TorrentDownloads',
   },
   tgx: {
-    heading: (<>Torrent<span className="text-amber-400">Galaxy</span></>),
+    heading: (<>Torrent<span className="text-fuchsia-400">Galaxy</span></>),
     hint: 'TorrentGalaxy (TGx) — best-effort via its proxy network; returns empty here when every mirror is unreachable.',
     label: 'TorrentGalaxy',
   },
@@ -261,7 +261,7 @@ export function TpbView() {
               variant={active ? 'secondary' : 'ghost'}
               size="sm"
               onClick={() => setSource(s)}
-              className={active ? 'bg-amber-500/15 text-amber-300 border border-amber-400/30' : 'text-zinc-400'}
+              className={active ? 'bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-400/30' : 'text-zinc-400'}
               role="tab"
               aria-selected={active}
             >
@@ -302,7 +302,7 @@ export function TpbView() {
             </SelectContent>
           </Select>
         ) : null}
-        <Button type="submit" className="bg-amber-500 font-bold text-black hover:bg-amber-400 min-h-[44px] px-6">
+        <Button type="submit" className="bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400 min-h-[44px] px-6">
           Search
         </Button>
       </form>
@@ -373,7 +373,7 @@ export function TpbView() {
                 <span className="hidden md:flex self-center"><Seeds count={item.seeds} leechers={item.leechers} /></span>
                 <span className="hidden md:block text-xs text-zinc-500 self-center">{item.added ? item.added.slice(0, 10) : '—'}</span>
                 <div className="flex md:justify-end gap-1 self-center">
-                  <Button size="sm" className="h-8 bg-amber-500 font-bold text-black hover:bg-amber-400" onClick={() => play({ source: item.hash, title: item.name, quality: item.quality, refId: item.imdb, key: `tpb-${item.hash}` })} aria-label={`Play ${item.name}`}>
+                  <Button size="sm" className="h-8 bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400" onClick={() => play({ source: item.hash, title: item.name, quality: item.quality, refId: item.imdb, key: `tpb-${item.hash}` })} aria-label={`Play ${item.name}`}>
                     <Play className="h-3.5 w-3.5 fill-black" />
                   </Button>
                   {item.imdb ? (
@@ -423,7 +423,7 @@ export function TpbView() {
                   <span className="hidden md:flex self-center"><Seeds count={item.seeds} leechers={item.leechers} /></span>
                   <div className="flex md:justify-end gap-1 self-center">
                     {item.source ? (
-                      <Button size="sm" className="h-8 bg-amber-500 font-bold text-black hover:bg-amber-400" onClick={() => play({ source: item.source, title: item.title, quality: item.quality, refId: matchedItem?.imdbId, key: `hub-${item.hash}` })} aria-label={`Play ${item.title}`}>
+                      <Button size="sm" className="h-8 bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400" onClick={() => play({ source: item.source, title: item.title, quality: item.quality, refId: matchedItem?.imdbId, key: `hub-${item.hash}` })} aria-label={`Play ${item.title}`}>
                         <Play className="h-3.5 w-3.5 fill-black" />
                       </Button>
                     ) : null}

@@ -47,7 +47,7 @@ import java.util.regex.Pattern;
  */
 public class MainActivity extends Activity {
 
-    private static final int AMBER = 0xFFF59E0B;
+    private static final int ACCENT = 0xFFE879F9;
     private static final int BG = 0xFF09090B;
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
@@ -211,7 +211,7 @@ public class MainActivity extends Activity {
         splashView.addView(tag);
 
         ProgressBar bar = new ProgressBar(this);
-        bar.getIndeterminateDrawable().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
+        bar.getIndeterminateDrawable().setColorFilter(ACCENT, android.graphics.PorterDuff.Mode.SRC_IN);
         splashView.addView(bar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -244,7 +244,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.3.1");
+        s.setUserAgentString(ua + " OTAMA-Android/1.4.0");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -376,7 +376,7 @@ public class MainActivity extends Activity {
         Button retry = new Button(this);
         retry.setText("Try again");
         retry.setTextColor(0xFF09090B);
-        retry.getBackground().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
+        retry.getBackground().setColorFilter(ACCENT, android.graphics.PorterDuff.Mode.SRC_IN);
         retry.setOnClickListener(v -> {
             hideErrorOverlay();
             webView.reload();
@@ -466,7 +466,7 @@ public class MainActivity extends Activity {
         Button save = new Button(this);
         save.setText("Save");
         save.setTextColor(0xFF09090B);
-        save.getBackground().setColorFilter(AMBER, android.graphics.PorterDuff.Mode.SRC_IN);
+        save.getBackground().setColorFilter(ACCENT, android.graphics.PorterDuff.Mode.SRC_IN);
         save.setOnClickListener(v -> applyServerInput(input));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46));

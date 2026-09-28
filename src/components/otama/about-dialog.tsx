@@ -42,8 +42,8 @@ export function AboutDialog() {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-xl border border-white/10 bg-amber-500/5 p-3 text-xs leading-relaxed text-zinc-300">
-          <strong className="text-amber-300">Use responsibly.</strong> OTAMA is a torrent client —
+        <div className="rounded-xl border border-white/10 bg-fuchsia-500/5 p-3 text-xs leading-relaxed text-zinc-300">
+          <strong className="text-fuchsia-300">Use responsibly.</strong> OTAMA is a torrent client —
           only stream content you have the rights to (public-domain, Creative-Commons, your own
           uploads). You are responsible for complying with the law in your country.
         </div>

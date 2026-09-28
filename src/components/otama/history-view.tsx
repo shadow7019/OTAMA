@@ -91,7 +91,7 @@ export function HistoryView() {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight">
           History
-          <History className="h-5 w-5 text-amber-400" aria-hidden />
+          <History className="h-5 w-5 text-fuchsia-400" aria-hidden />
         </h1>
         {rows && rows.length > 0 ? (
           <Button
@@ -128,20 +128,20 @@ export function HistoryView() {
           {rows.map((row) => {
             const pct = row.duration ? Math.min(100, (row.position / row.duration) * 100) : 4
             return (
-              <li key={row.refId} className="group relative flex items-center gap-3 rounded-xl border border-white/5 bg-zinc-900/50 p-2.5 transition-colors hover:border-amber-400/40">
+              <li key={row.refId} className="group relative flex items-center gap-3 rounded-xl border border-white/5 bg-zinc-900/50 p-2.5 transition-colors hover:border-fuchsia-400/40">
                 <button
                   onClick={() => resume(row)}
-                  className="relative w-36 shrink-0 overflow-hidden rounded-lg focus-visible:ring-2 focus-visible:ring-amber-400"
+                  className="relative w-36 shrink-0 overflow-hidden rounded-lg focus-visible:ring-2 focus-visible:ring-fuchsia-400"
                   aria-label={`Resume ${row.title}`}
                 >
                   <Poster src={row.poster || undefined} alt="" ratio="aspect-video" />
                   <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-500">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-fuchsia-500">
                       <Play className="h-4 w-4 fill-black text-black" />
                     </span>
                   </span>
                   <span className="absolute inset-x-1.5 bottom-1.5 h-1 rounded-full bg-white/25">
-                    <span className="block h-1 rounded-full bg-amber-400" style={{ width: `${pct}%` }} />
+                    <span className="block h-1 rounded-full bg-fuchsia-400" style={{ width: `${pct}%` }} />
                   </span>
                 </button>
                 <div className="min-w-0 flex-1">

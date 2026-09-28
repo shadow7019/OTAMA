@@ -256,7 +256,7 @@ function PlayBestTorrentButton({
       size="sm"
       onClick={() => void play()}
       disabled={busy}
-      className="bg-amber-500 text-black hover:bg-amber-400 font-bold min-h-[36px]"
+      className="bg-fuchsia-500 text-black hover:bg-fuchsia-400 font-bold min-h-[36px]"
       aria-label={`Play ${meta.title} — best torrent`}
       title={`Streams: ${best?.title ?? ''}`}
     >
@@ -378,7 +378,7 @@ function EpisodeList({
               onClick={() => setOpenEp(open ? null : key)}
               aria-expanded={open}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-sm font-bold text-amber-400">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-fuchsia-500/15 text-sm font-bold text-fuchsia-400">
                 {ep.episode}
               </span>
               <span className="min-w-0 flex-1">
@@ -532,7 +532,7 @@ function NoImdbFallback({ detail }: { detail: { title: string; poster?: string; 
           <p className="text-sm text-zinc-300">No IMDb match for this title, so torrent sources cannot be keyed to it.</p>
           <p className="mt-1 text-sm text-zinc-500">Try a direct torrent search — 12+ sites are indexed.</p>
           <Button
-            className="mt-4 bg-amber-500 font-bold text-black hover:bg-amber-400 min-h-[44px] px-6"
+            className="mt-4 bg-fuchsia-500 font-bold text-black hover:bg-fuchsia-400 min-h-[44px] px-6"
             onClick={() => {
               closeDetail()
               useAppStore.getState().setQuery(detail.title)
@@ -584,8 +584,8 @@ function DetailHeader({
               <h2 className="text-2xl font-black tracking-tight leading-tight">{item.title}</h2>
               <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-400">
                 {item.rating ? (
-                  <span className="inline-flex items-center gap-1 font-semibold text-amber-300">
-                    <Star className="h-4 w-4 fill-amber-300" /> {item.rating.toFixed(1)}
+                  <span className="inline-flex items-center gap-1 font-semibold text-fuchsia-300">
+                    <Star className="h-4 w-4 fill-fuchsia-300" /> {item.rating.toFixed(1)}
                   </span>
                 ) : null}
                 {item.year ? <span>{item.year}</span> : null}
@@ -616,7 +616,7 @@ function DetailHeader({
             variant={favorite ? 'default' : 'secondary'}
             size="icon"
             onClick={onToggleFavorite}
-            className={favorite ? 'bg-amber-500 text-black hover:bg-amber-400' : ''}
+            className={favorite ? 'bg-fuchsia-500 text-black hover:bg-fuchsia-400' : ''}
             aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
           >
             <Heart className={`h-4 w-4 ${favorite ? 'fill-black' : ''}`} />
