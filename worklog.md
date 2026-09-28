@@ -922,3 +922,26 @@ Stage Summary:
 - Phone UI now respects every screen edge (notch, status bar, nav bar, keyboard) on both platforms; Android fix works immediately against the old published snapshot, safe-area CSS lands after the next platform republish
 - Back button now walks out of player → details → sheets one layer per press and only exits when the app is back at its root state
 - Push of v1.3.1 pending deploy key v4 registration
+
+---
+Task ID: 41
+Agent: Z.ai Code (main)
+Task: New neon swirl icon everywhere + chillflix.lol-style layout (v1.4.0)
+
+Work Log:
+- User: uploaded a magenta/violet/blue swirl-play icon + asked to match https://www.chillflix.lol
+- Icon: uploaded file was NOT at the stated upload path — downloaded from the chat CDN URL (1254x1254 RGB). Detected rounded-square bounds, zoomed crop (78% of bounds, centered) so canvas corners are pure gradient (corner sample check), rendered: iOS AppIcon 1024 full-bleed, desktop icon.png/icon-512/icon-master, Android mipmaps 48-192, new public/logo.svg + OtamaLogo component (SVG swirl ring + gradient play, #ec4899→#8b5cf6→#38bdf8)
+- chillflix research (curl HTML + 3 CSS files): dark palette hsl(222 28% 5%) bg / hsl(222 22% 9%) card / 14% borders, green #6fae6a Match%, red #ff4d2e HOT badge, hero = full-bleed backdrop + linear/radial overlays + SVG grain, rows = title + subtitle + Explore more outline button + arrow scrollers, cards = meta UNDER poster
+- Theme: .dark tokens rebased to navy (oklch 265-hue family) + fuchsia primary/ring; site-wide amber→fuchsia class swap (19 files, 83 refs); native accents: Android ACCENT 0xFFE879F9, iOS accent fuchsia, desktop splash/error CSS hexes → #d946ef
+- hero.tsx rebuilt: full-bleed clamp(540px,72svh,680px)/md:690px, -mt-16 bleed under glass nav, TRENDING flame badge, Match% (rating*10), year + MOVIE/TV/ANIME pill + rating pill + genre chips, 4xl/6xl title, line-clamp-3 desc, View details/More info buttons, slide dots (7s rotation kept)
+- media-row.tsx: subtitle + exploreTo (Explore more outline btn via setView) + ranked Top-10 variant (gradient italic rank numbers overlapping posters)
+- media-card.tsx: meta under poster (title / year + kind chip / green star rating), hover scale + fuchsia ring + play chip
+- home-view.tsx: Continue Watching → Top 10 Movies Today (ranked) → Popular on OTAMA now → Top 10 TV Shows Today (ranked) → New episodes airing today (kept!) → New in theaters → Popular anime → fresh rows → Coming soon; every TMDB row has subtitle + Explore more
+- Verified via agent-browser desktop + iPhone-14 viewport: hero bleed, badge, meta pills, Top-10 numbers, card meta, airing-today intact; lint clean
+- Junk UUID auto-commit (.zscripts/dev.pid only) dropped via rebase --onto; v1.4.0 retagged f421770; stale local v1.3.1 tag deleted (never pushed — Task 40 work folded into v1.4.0)
+- Versions: android 16/1.4.0 + UA 1.4.0, iOS 1.4.0 + UA, desktop 1.4.0
+- Push still BLOCKED on deploy key v4 registration (permission denied on ssh -T); commit + tag ready locally
+
+Stage Summary:
+- Full brand refresh: neon swirl-play icon on all 5 platforms + chillflix-style navy/fuchsia UI with Netflix-style hero, Top-10 ranked rows and meta-under-poster cards
+- Release v1.4.0 (single tag covering Task 40 phone fixes + Task 41 rebrand) ready to push the moment the deploy key v4 is added
