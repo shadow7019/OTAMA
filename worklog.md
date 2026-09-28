@@ -993,3 +993,21 @@ Stage Summary:
 - Artplayer integration shipped behind the exact same orchestration contracts — smooth gesture controls everywhere, verified end-to-end in a real browser on desktop + mobile viewports
 - Every release now ships verifiable SHA-256 checksums and honest, actionable anti-warning guidance; Windows binaries carry proper version resources
 - v1.5.0 (versionCode 17) committed locally; ONE deploy-key registration by the user unblocks the entire backlog: v1.3.1 + v1.4.0 + v1.5.0 land as a single v1.5.0 release with the new player, all screen/back fixes, the rebrand, search resilience, and the checksums/notes work
+
+---
+Task ID: 43-ship (addendum)
+Agent: Z.ai Code (main)
+Task: Execute the v1.5.0 release pipeline after the user registered deploy key v4 ("done")
+
+Work Log:
+- ls-remote → HEAD reachable (deploy key v4 registered by user, auth restored)
+- git push origin main → d8f32f0..6242a21 (Tasks 40-42 + 43 backlog landed: v1.3.1 screen/back, v1.4.0 rebrand, search resilience, v1.5.0 player + checksums + notes)
+- Deleted stale local tag v1.4.0 (superseded by v1.5.0; v1.3.1 tag never existed); pushed tag v1.5.0
+- All 4 workflows (android/ios/macos/windows) triggered and COMPLETED — full matrix ~8 minutes
+- Verified release v1.5.0: 9/9 assets HTTP 200 (apk, Setup.exe, portable.exe, dmg, ipa + 4× SHA256SUMS)
+- Release notes render with all sections: 5-platform table incl. iPhone row, Verify integrity, "Why does my browser / antivirus show a warning?" explainer
+- Integrity proof: downloaded OTAMA-1.5.0.apk, computed SHA-256 locally, exact match with published SHA256SUMS-android.txt (82ad8242…746a6a)
+
+Stage Summary:
+- v1.5.0 is LIVE on GitHub with the new Artplayer player, screen/back fixes, rebrand, search resilience, SHA-256 checksums and anti-warning release notes — the entire Task 40→43 backlog shipped in one release
+- Remaining for the hosted web instance (otama.space-z.ai): platform republish to pick up the Artplayer web player
