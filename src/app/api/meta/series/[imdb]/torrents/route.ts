@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findEpisodeTorrents } from '@/lib/server/providers'
+import { withTimeout } from '@/lib/server/with-timeout'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ imdb
   const anime = searchParams.get('anime') === '1'
   const absoluteEpisode = parseInt(searchParams.get('absolute') || '', 10) || undefined
   try {
-    const torrents = await findEpisodeTorrents(imdb, title, season, episode, { anime, absoluteEpisode })
+    // Hard budget: the fallback ladder inside is sequential — an unlucky
+    // combination of slow sources used to be able to hold this route well
+    // past the hosting edge timeout.
+    const torrents = await withTimeout(findEpisodeTorrents(imdb, title, season, episode, { anime, absoluteEpisode }), 22_000, 'episode torrents')
     return NextResponse.json({ torrents })
   } catch (err) {
     return NextResponse.json({ torrents: [], error: (err as Error).message }, { status: 200 })

@@ -102,7 +102,11 @@ export function TorrentList({
   if (torrents.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-sm text-zinc-400">
-        <p>No torrents found for this selection. Try another episode/season or search every site directly.</p>
+        <p>
+          No release found on any tracked site — OTAMA tried every source and query variant (title, no-year,
+          article-stripped, original title). Brand-new or unreleased titles often have no torrent yet; check
+          back after the digital release.
+        </p>
         {meta?.title ? (
           <Button
             size="sm"

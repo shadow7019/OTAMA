@@ -83,7 +83,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         // HTML5 element-fullscreen: the web player falls back to the native
         // <video> fullscreen (webkitEnterFullscreen) on iOS, so playback and
         // fullscreen work out of the box without extra WKPreferences flags.
-        cfg.applicationNameForUserAgent = "OTAMA-iOS/1.5.0"
+        cfg.applicationNameForUserAgent = "OTAMA-iOS/1.5.1"
 
         webView = WKWebView(frame: view.bounds, configuration: cfg)
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]

@@ -357,79 +357,149 @@ function withDeadline<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   ])
 }
 
+/* ------------------------------ relevance guard ------------------------------
+ * apibay (and occasionally other engines) answer unknown/odd queries with
+ * their "latest uploads" dump — 100 newest torrents of every category. For
+ * example a Devanagari query ("द वन") used to surface Spider-Man/Ted Lasso
+ * rows as "torrents for The Vvaan". Every title-keyed result batch passes
+ * through this guard: the row title must share at least one content word
+ * with the query. Queries with no latin/digit content words (pure
+ * non-latin titles) skip the text fan-out entirely — an upload name in
+ * another script is never going to match them. */
+
+const TITLE_STOPWORDS = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'to', 'in', 'on', 'part', 'vol', 'volume', 'ii', 'iii', 'iv', 'vi'])
+
+function contentTokens(s: string): string[] {
+  const ascii = s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+  return (ascii.match(/[a-z0-9]+/g) || []).filter((t) => t.length >= 2 && !TITLE_STOPWORDS.has(t) && !/^(19|20)\d{2}$/.test(t))
+}
+
+/** Keep only rows whose title shares a content word with the query. */
+export function filterRelevant<T>(q: string, rows: T[], titleOf: (r: T) => string): T[] {
+  const toks = contentTokens(q)
+  if (!toks.length) return []
+  return rows.filter((r) => {
+    const title = contentTokens(titleOf(r)).join(' ')
+    return toks.some((tok) => title.includes(tok))
+  })
+}
+
 /**
  * Find movie torrents across ALL video sources:
  * Torrentio (multi-site, file-exact) + TPB + YTS + 1337x + SolidTorrents
  * + RARBG archive + LimeTorrents + TorrentDownloads + TorrentGalaxy.
+ *
+ * Two waves: wave 1 is the imdb-keyed lookups + the primary `title year`
+ * query. If that comes back scarce (upload naming rarely agrees with TMDB —
+ * year off by one, leading article dropped, original-language title indexed
+ * instead), wave 2 re-fans-out to every title-keyed source with the query
+ * VARIANTS in parallel. Popular titles never pay for it; dead titles cost
+ * one extra ~10s round instead of returning a false "no streams".
  */
-export async function findMovieTorrents(imdbId?: string, title?: string, year?: number): Promise<TorrentOption[]> {
-  return cached(`movtorrent:${imdbId || '-'}|${title || '-'}|${year || '-'}`, 10 * 60_000, async () => {
-    const { ytsMovieTorrents } = await import('./yts')
-    const { leetxSearch } = await import('./leetx')
-    const { torrentioStreams } = await import('./torrentio')
-    const { solidSearch } = await import('./solidtorrents')
-    const { rarbgSearch } = await import('./rarbg')
-    const { limeSearch } = await import('./limetorrents')
-    const { torrentDownloadsSearch } = await import('./torrentdownloads')
-    const { tgxSearch } = await import('./torrentgalaxy')
+export async function findMovieTorrents(
+  imdbId?: string,
+  title?: string,
+  year?: number,
+  opts: { originalTitle?: string } = {},
+): Promise<TorrentOption[]> {
+  return cached(
+    `movtorrent:${imdbId || '-'}|${title || '-'}|${year || '-'}|${opts.originalTitle || '-'}`,
+    10 * 60_000,
+    async () => {
+      const { ytsMovieTorrents } = await import('./yts')
+      const { leetxSearch } = await import('./leetx')
+      const { torrentioStreams } = await import('./torrentio')
+      const { solidSearch } = await import('./solidtorrents')
+      const { rarbgSearch } = await import('./rarbg')
+      const { limeSearch } = await import('./limetorrents')
+      const { torrentDownloadsSearch } = await import('./torrentdownloads')
+      const { tgxSearch } = await import('./torrentgalaxy')
 
-    const tpbTask = (async () => {
-      let rows: TpbItem[] = []
-      if (imdbId) {
-        try {
-          rows = await apibaySearch(imdbId)
-        } catch { /* fall through */ }
-      }
-      if (rows.length === 0 && title) {
-        const q = year ? `${title} ${year}` : title
-        try {
-          rows = await apibaySearch(q)
-        } catch { /* fall through */ }
-      }
       const videoCats = new Set(['201', '202', '207', '208', '209', '299'])
-      return rows
-        .filter((r) => videoCats.has(r.categoryCode) || r.imdb)
-        .map(apibayToTorrentOption)
-    })()
 
-    const q = title ? `${title}${year ? ` ${year}` : ''}` : ''
-    const [torrentio, tpb, yts, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
-      imdbId
-        ? torrentioStreams('movie', imdbId).catch(() => [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-      tpbTask,
-      ytsMovieTorrents(imdbId, title, year).catch(() => [] as TorrentOption[]),
-      q
-        ? leetxSearch(q, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-      q
-        ? solidSearch(q, { videoOnly: true }).catch(() => [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-      q
-        ? rarbgSearch(q).catch(() => [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-      q
-        ? limeSearch(q, { category: 'movies' }).catch(() => [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-      q
-        ? torrentDownloadsSearch(q, { resolve: 8 }).catch(() => [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-      q
-        ? withDeadline(tgxSearch(q, { resolve: 6 }).catch(() => [] as TorrentOption[]), 16_000, [] as TorrentOption[])
-        : Promise.resolve([] as TorrentOption[]),
-    ])
+      /** One query against every title-keyed source, each soft-deadline'd so
+       *  a blocked/slow site can never stall the wave. Results pass the
+       *  relevance guard — engines that answer unknown queries with their
+       *  latest-uploads dump must never look like "torrents for X". */
+      const fanOut = async (q: string, ms: number): Promise<TorrentOption[]> => {
+        if (!q || !contentTokens(q).length) return []
+        const rel = (rows: TorrentOption[]) => filterRelevant(q, rows, (r) => r.title || '')
+        const [tpb, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
+          withDeadline(
+            apibaySearch(q)
+              .then((rows) => rows.filter((r) => videoCats.has(r.categoryCode) || r.imdb).map(apibayToTorrentOption))
+              .catch(() => [] as TorrentOption[])
+              .then(rel),
+            ms,
+            [] as TorrentOption[],
+          ),
+          withDeadline(leetxSearch(q, { category: 'movies', resolve: 8 }).catch(() => [] as TorrentOption[]).then(rel), ms, [] as TorrentOption[]),
+          withDeadline(solidSearch(q, { videoOnly: true }).catch(() => [] as TorrentOption[]).then(rel), ms, [] as TorrentOption[]),
+          withDeadline(rarbgSearch(q).catch(() => [] as TorrentOption[]).then(rel), ms, [] as TorrentOption[]),
+          withDeadline(limeSearch(q, { category: 'movies' }).catch(() => [] as TorrentOption[]).then(rel), ms, [] as TorrentOption[]),
+          withDeadline(torrentDownloadsSearch(q, { resolve: 8 }).catch(() => [] as TorrentOption[]).then(rel), ms, [] as TorrentOption[]),
+          withDeadline(tgxSearch(q, { resolve: 6 }).catch(() => [] as TorrentOption[]).then(rel), ms, [] as TorrentOption[]),
+        ])
+        return [...tpb, ...leetx, ...solid, ...rarbg, ...lime, ...td, ...tgx]
+      }
 
-    const seen = new Set<string>()
-    const merged: TorrentOption[] = []
-    for (const t of [...torrentio, ...yts, ...tpb, ...rarbg, ...lime, ...leetx, ...solid, ...td, ...tgx]) {
-      const key = (t.source || t.hash || '').toLowerCase()
-      if (!key || seen.has(key)) continue
-      seen.add(key)
-      merged.push(t)
-    }
-    // Browser-playable (H.264/x264, MP4/MKV) releases first, seeds second.
-    return sortTorrentsPlayableFirst(merged).slice(0, 40)
-  })
+      const merge = (lists: TorrentOption[][]): TorrentOption[] => {
+        const seen = new Set<string>()
+        const merged: TorrentOption[] = []
+        for (const t of lists.flat()) {
+          const key = (t.source || t.hash || '').toLowerCase()
+          if (!key || seen.has(key)) continue
+          seen.add(key)
+          merged.push(t)
+        }
+        return merged
+      }
+
+      /* ---- wave 1: imdb-keyed sources + primary query -------------------
+       *  Every branch is deadline'd — wall time stays ≤ ms so wave 2 fits
+       *  inside the route budget and the result actually gets cached. */
+      const primary = title ? `${title}${year ? ` ${year}` : ''}` : ''
+      const [torrentio, tpbImdb, yts, wave1] = await Promise.all([
+        imdbId
+          ? withDeadline(torrentioStreams('movie', imdbId).catch(() => [] as TorrentOption[]), 10_000, [] as TorrentOption[])
+          : Promise.resolve([] as TorrentOption[]),
+        (async () => {
+          if (!imdbId) return [] as TorrentOption[]
+          try {
+            const rows = await withDeadline(apibaySearch(imdbId), 10_000, [] as TpbItem[])
+            return rows.filter((r) => videoCats.has(r.categoryCode) || r.imdb).map(apibayToTorrentOption)
+          } catch {
+            return [] as TorrentOption[]
+          }
+        })(),
+        withDeadline(ytsMovieTorrents(imdbId, title, year).catch(() => [] as TorrentOption[]), 10_000, [] as TorrentOption[]),
+        fanOut(primary, 10_000),
+      ])
+      let merged = merge([torrentio, yts, tpbImdb, wave1])
+
+      /* ---- wave 2: query variants when the primary came back scarce ----- */
+      if (merged.length < 4 && title) {
+        const variants: string[] = []
+        const tried = new Set([primary.toLowerCase()])
+        const pushV = (v?: string | null) => {
+          const t = (v || '').trim()
+          if (t && !tried.has(t.toLowerCase())) {
+            tried.add(t.toLowerCase())
+            variants.push(t)
+          }
+        }
+        pushV(title) // uploads often omit the year entirely
+        const noArticle = title.replace(/^(the|a|an|la|le|el|los|las|les|der|die|das|il|lo|i)\s+/i, '')
+        pushV(noArticle) // "The Vvaan" → "Vvaan"
+        pushV(opts.originalTitle) // original-language title indexed as-is
+        const extra = await Promise.all(variants.map((v) => fanOut(v, 8_000)))
+        merged = merge([merged, ...extra])
+      }
+
+      // Browser-playable (H.264/x264, MP4/MKV) releases first, seeds second.
+      return sortTorrentsPlayableFirst(merged).slice(0, 40)
+    },
+  )
 }
 
 /* ------------------------------ poster validation ------------------------------ */
@@ -912,5 +982,35 @@ async function findEpisodeTorrentsBase(
       if (opts.length) return opts.slice(0, 12)
     } catch { /* give up */ }
   }
+  /* Last resort: bare-title searches. Uploads often skip the SxxEyy marker
+   * (season/mixed packs, renamed releases) or drop the leading article
+   * ("The Last of Us" indexed as "Last of Us") — better to surface the
+   * show's other torrents than a false "no streams". */
+  const bareVariants: string[] = []
+  const bareNoArticle = title.replace(/^(the|a|an)\s+/i, '')
+  for (const q of [title, bareNoArticle]) {
+    const t = q.trim()
+    if (t && !bareVariants.some((x) => x.toLowerCase() === t.toLowerCase())) bareVariants.push(t)
+  }
+  for (const q of bareVariants) {
+    try {
+      const rows = await apibaySearch(q)
+      const tvCats = new Set(['205', '208', '201'])
+      const opts = rows
+        .filter((r) => tvCats.has(r.categoryCode) || /\bS\d{1,2}(E\d{1,2})?\b/i.test(r.name))
+        .map(apibayToTorrentOption)
+      const sorted = sortTorrentsPlayableFirst(opts).slice(0, 12)
+      if (sorted.length) return sorted
+    } catch { /* try next */ }
+  }
+  try {
+    const { leetxSearch } = await import('./leetx')
+    for (const q of bareVariants) {
+      try {
+        const opts = await leetxSearch(q, { category: 'tv', resolve: 6 })
+        if (opts.length) return opts.slice(0, 12)
+      } catch { /* try next variant */ }
+    }
+  } catch { /* 1337x unavailable — nothing left */ }
   return []
 }

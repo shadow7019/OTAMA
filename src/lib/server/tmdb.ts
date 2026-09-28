@@ -552,6 +552,11 @@ export interface TmdbEnhancement {
   tmdbRating?: number
   /** TMDB id of the matched title — lets callers pull TMDB-native structures (e.g. seasons) */
   tmdbId?: number
+  /** Release year from release_date/first_air_date — Cinemeta misses it for
+   *  unreleased titles, which used to degrade torrent query construction. */
+  year?: number
+  /** Original-language title — torrent sites sometimes index it as-is. */
+  originalTitle?: string
 }
 
 interface TmdbDetail extends TmdbListRow {
@@ -559,6 +564,8 @@ interface TmdbDetail extends TmdbListRow {
   episode_run_time?: number[]
   tagline?: string
   genres?: { id: number; name: string }[]
+  original_title?: string
+  original_name?: string
 }
 
 /** Better backdrop/summary for a detail page, keyed by IMDB id (cached 6h). */
@@ -581,6 +588,8 @@ export async function tmdbEnhanceByImdb(imdbId: string): Promise<TmdbEnhancement
       tagline: detail.tagline || undefined,
       tmdbRating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : undefined,
       tmdbId: row.id,
+      year: yearOf(detail.release_date || detail.first_air_date),
+      originalTitle: detail.original_title || detail.original_name || undefined,
     }
   } catch {
     return mapRow(row, media === 'movie' ? 'movie' : 'tv') && {
