@@ -6,7 +6,8 @@ import { NextResponse } from 'next/server'
 
 const ENDPOINTS: Record<string, string> = {
   '/api/catalog': 'GET browse catalog (type, genre, sort, source, page|skip)',
-  '/api/search': 'GET unified search across all providers (q)',
+  '/api/search': 'GET unified METADATA search — TMDB-first (q); torrent sites live at /api/search/torrents',
+  '/api/search/torrents': 'GET unified TORRENT-SITE search (q) — loads independently of metadata',
   '/api/meta/movie/[imdb]': 'GET movie detail + aggregated torrents',
   '/api/meta/series/[imdb]': 'GET series detail + seasons/episodes',
   '/api/meta/series/[imdb]/torrents': 'GET episode/season torrents',

@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { RefreshCw } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MediaCard } from '@/components/otama/media-card'
 import { TorrentList } from '@/components/otama/torrent-list'
@@ -11,11 +12,16 @@ import type { MetaItem, TorrentOption, TpbItem } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
 import { fetchJson } from '@/lib/fetch-json'
 
-interface SearchResults {
+/** Phase 1 — metadata (TMDB-first, fast, always answered). */
+interface SearchMeta {
   movies: MetaItem[]
   series: MetaItem[]
   anime: TorrentOption[]
   animeSeries: MetaItem[]
+}
+
+/** Phase 2 — torrent-site fan-out (slow, may fail without hurting phase 1). */
+interface SearchTorrents {
   tpb: TpbItem[]
   leetx: TorrentOption[]
   solid: TorrentOption[]
@@ -24,11 +30,25 @@ interface SearchResults {
 
 export function SearchView({ query }: { query: string }) {
   const openDetail = useAppStore((s) => s.openDetail)
+  const enabled = query.trim().length > 0
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['search', query],
-    queryFn: () => fetchJson<SearchResults>(`/api/search?q=${encodeURIComponent(query)}`),
+    queryFn: () => fetchJson<SearchMeta>(`/api/search?q=${encodeURIComponent(query)}`),
     staleTime: 2 * 60_000,
-    enabled: query.trim().length > 0,
+    enabled,
+    retry: 1,
+  })
+
+  // Torrent sites load independently: if they are slow or unreachable the
+  // Movies / TV / Anime tabs above still render full TMDB results, and each
+  // torrent tab shows a retry affordance instead of killing the whole page.
+  const torrents = useQuery({
+    queryKey: ['search-torrents', query],
+    queryFn: () => fetchJson<SearchTorrents>(`/api/search/torrents?q=${encodeURIComponent(query)}`),
+    staleTime: 2 * 60_000,
+    enabled,
+    retry: 1,
   })
 
   const openFor = (item: MetaItem) => {
@@ -56,6 +76,29 @@ export function SearchView({ query }: { query: string }) {
     toast.info(`“${item.title}” has no torrent mapping — search for it in the Torrents tab.`)
   }
 
+  const torrentTabsPending = torrents.isLoading || (!torrents.data && !torrents.isError)
+
+  /** Soft per-tab state for the torrent-source tabs (loading / failed+retry / data). */
+  const torrentTab = (body: React.ReactNode) => {
+    if (torrents.isError) {
+      return (
+        <div className="py-8 text-center">
+          <p className="text-sm text-zinc-400">Torrent sites couldn&apos;t be reached this time — the Movies / TV / Anime results are unaffected.</p>
+          <button
+            onClick={() => torrents.refetch()}
+            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-200 transition-colors hover:bg-white/10"
+          >
+            <RefreshCw className="h-4 w-4" /> Retry torrent search
+          </button>
+        </div>
+      )
+    }
+    if (torrentTabsPending) {
+      return <div className="max-w-3xl space-y-2 py-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
+    }
+    return body
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8">
       <h1 className="text-2xl font-black tracking-tight">
@@ -76,10 +119,10 @@ export function SearchView({ query }: { query: string }) {
             <TabsTrigger value="movies">Movies ({data?.movies.length ?? 0})</TabsTrigger>
             <TabsTrigger value="series">TV ({data?.series.length ?? 0})</TabsTrigger>
             <TabsTrigger value="anime">Anime ({(data?.anime.length ?? 0) + (data?.animeSeries.length ?? 0)})</TabsTrigger>
-            <TabsTrigger value="tpb">Pirate Bay ({data?.tpb.length ?? 0})</TabsTrigger>
-            <TabsTrigger value="leetx">1337x ({data?.leetx.length ?? 0})</TabsTrigger>
-            <TabsTrigger value="solid">Solid ({data?.solid.length ?? 0})</TabsTrigger>
-            <TabsTrigger value="more">More Sites ({data?.more.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="tpb">Pirate Bay ({torrents.data?.tpb.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="leetx">1337x ({torrents.data?.leetx.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="solid">Solid ({torrents.data?.solid.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="more">More Sites ({torrents.data?.more.length ?? 0})</TabsTrigger>
           </TabsList>
           <TabsContent value="movies" className="pt-4">
             {(data?.movies.length ?? 0) === 0 ? (
@@ -126,27 +169,33 @@ export function SearchView({ query }: { query: string }) {
             )}
           </TabsContent>
           <TabsContent value="tpb" className="pt-4">
-            <TpbResultList items={data?.tpb || []} />
+            {torrentTab(<TpbResultList items={torrents.data?.tpb || []} />)}
           </TabsContent>
           <TabsContent value="leetx" className="pt-4 max-w-3xl">
-            {(data?.leetx.length ?? 0) === 0 ? (
-              <p className="py-8 text-center text-sm text-zinc-400">No 1337x results (or 1337x is unreachable right now).</p>
-            ) : (
-              <TorrentList torrents={data!.leetx} compact />
+            {torrentTab(
+              (torrents.data?.leetx.length ?? 0) === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-400">No 1337x results (or 1337x is unreachable right now).</p>
+              ) : (
+                <TorrentList torrents={torrents.data!.leetx} compact />
+              ),
             )}
           </TabsContent>
           <TabsContent value="solid" className="pt-4 max-w-3xl">
-            {(data?.solid.length ?? 0) === 0 ? (
-              <p className="py-8 text-center text-sm text-zinc-400">No SolidTorrents results (or the index is unreachable right now).</p>
-            ) : (
-              <TorrentList torrents={data!.solid} compact />
+            {torrentTab(
+              (torrents.data?.solid.length ?? 0) === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-400">No SolidTorrents results (or the index is unreachable right now).</p>
+              ) : (
+                <TorrentList torrents={torrents.data!.solid} compact />
+              ),
             )}
           </TabsContent>
           <TabsContent value="more" className="pt-4 max-w-3xl">
-            {(data?.more.length ?? 0) === 0 ? (
-              <p className="py-8 text-center text-sm text-zinc-400">No results from RARBG archive, LimeTorrents, TorrentDownloads or TorrentGalaxy (some sites may be blocked on this network).</p>
-            ) : (
-              <TorrentList torrents={data!.more} compact />
+            {torrentTab(
+              (torrents.data?.more.length ?? 0) === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-400">No results from RARBG archive, LimeTorrents, TorrentDownloads or TorrentGalaxy (some sites may be blocked on this network).</p>
+              ) : (
+                <TorrentList torrents={torrents.data!.more} compact />
+              ),
             )}
           </TabsContent>
         </Tabs>

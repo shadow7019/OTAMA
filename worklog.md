@@ -945,3 +945,26 @@ Work Log:
 Stage Summary:
 - Full brand refresh: neon swirl-play icon on all 5 platforms + chillflix-style navy/fuchsia UI with Netflix-style hero, Top-10 ranked rows and meta-under-poster cards
 - Release v1.4.0 (single tag covering Task 40 phone fixes + Task 41 rebrand) ready to push the moment the deploy key v4 is added
+
+---
+Task ID: 42
+Agent: Z.ai Code (main)
+Task: Search must always show TMDB results — torrent sites can no longer kill it (folded into v1.4.0)
+
+Work Log:
+- User (screenshot, phone on hosted instance): search "The Vvaan" → red banner "Search failed: Cannot reach the OTAMA server — … same Wi-Fi", zero results everywhere: "I don't need this to happen get all with my TMDB integration fix this issue"
+- Root cause: /api/search fanned out to 12 providers in ONE handler; 1337x/TorrentDownloads/TGX each resolve ~10 detail pages, so any slow site held the whole response past the hosting edge timeout → client fetch() throws → global failure banner; TMDB results (which were already merged first when reachable) died with it. fetch-json's message still had LAN-era "same Wi-Fi" wording. dev.log also showed /api/meta/movie 200 in 33.4s — same unbounded-fan-out class in the detail routes
+- New src/lib/server/with-timeout.ts: hard budget wrapper — a hanging provider now REJECTS at its deadline so safe()/catch fallbacks engage; no route can outwait the edge anymore
+- /api/search SPLIT: metadata phase only (TMDB multi-search 12s cap + Cinemeta/TVMaze/Nyaa/YTS 9s caps + poster-strip 8s cap), returns {movies, series, anime, animeSeries}; response shape stays a superset-compatible subset so old clients keep working
+- NEW /api/search/torrents: TPB/1337x/Solid/RARBG/Lime/TD/TGX with 14s caps per site, deduped "more" tab; client fires it in parallel — failure or timeout degrades ONLY the 4 torrent tabs (skeleton → soft note + Retry button), Movies/TV/Anime stay up
+- search-view.tsx: two independent useQuery calls (retry 1); per-tab loading/failed states; tab counts come from their own query
+- fetch-json.ts: unreachable message modernized to "check your internet connection and try again" (direct-host era)
+- Detail routes hardened the same way: meta/movie cineMeta 15s + TMDB enhance 8s + findMovieTorrents 12s; meta/series TMDB enhance 8s + tmdbSeriesSeasons 12s (TVMaze seasons win on timeout)
+- Measured: metadata search 0.44-2.9s (was unbounded); torrents route answers 200 at exactly 14.0s even with a hung site; meta/movie cold 13.6s bounded (was 33.4s)
+- Browser E2E (390×844 + 1440×900): "The Vvaan" → Movies(31)/TV(9) with "The Vvaan: Force of the Forrest" first, Solid(20) lands ~14s later, no red banner; detail opens with graceful "No streams" + cross-site search fallback; "breaking bad" → all 7 tabs populate (PB 30 / Solid 20 / More 30) with playable rows; zero console errors; lint clean
+- Release: folded into the still-unpushed v1.4.0 (tag moved to this commit) — no native file changes, versionCode stays 16, version stays 1.4.0
+- Push still blocked: deploy key v4 public key not yet registered on GitHub (permission denied publickey)
+
+Stage Summary:
+- Search is TMDB-first and unkillable: metadata results render in ~1-3s on any connection; torrent tabs load independently and degrade with a retry affordance; every server fan-out is now time-budgeted so the hosting edge can never truncate a response into a fake "Cannot reach the OTAMA server"
+- v1.4.0 now contains Task 40 (screen/back) + Task 41 (rebrand) + Task 42 (search resilience), ready to push the moment the deploy key is registered

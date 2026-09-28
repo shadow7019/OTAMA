@@ -36,7 +36,7 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   } catch {
     // TypeError: Failed to fetch / Load failed — DNS, refused, offline, CORS
     throw new FetchJsonError(
-      'Cannot reach the OTAMA server — check that OTAMA is running on the computer, the address is right, and both devices are on the same Wi-Fi',
+      'Cannot reach the OTAMA server — check your internet connection and try again',
     )
   }
 

@@ -1,59 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cineCatalog, nyaaSearch, apibaySearch, tvmazeSearch, stripBrokenPosters } from '@/lib/server/providers'
+import { cineCatalog, nyaaSearch, tvmazeSearch, stripBrokenPosters } from '@/lib/server/providers'
 import { ytsSearch } from '@/lib/server/yts'
-import { leetxSearch } from '@/lib/server/leetx'
-import { solidSearch } from '@/lib/server/solidtorrents'
-import { rarbgSearch } from '@/lib/server/rarbg'
-import { limeSearch } from '@/lib/server/limetorrents'
-import { torrentDownloadsSearch } from '@/lib/server/torrentdownloads'
-import { tgxSearch } from '@/lib/server/torrentgalaxy'
-import { tmdbSearchMulti, tmdbStatus } from '@/lib/server/tmdb'
-import type { MetaItem, TorrentOption, TpbItem } from '@/lib/types'
+import { tmdbSearchMulti } from '@/lib/server/tmdb'
+import { withTimeout } from '@/lib/server/with-timeout'
+import type { MetaItem, TorrentOption } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/search?q= — unified search across providers.
- * Returns { movies, series, anime, tpb, leetx } where anime = Nyaa raw results,
- * leetx = 1337x torrent results; YTS movies are merged into movies.
- * When a TMDB key is configured, TMDB multi-search is merged in (deduped by imdb).
+ * GET /api/search?q= — METADATA phase of unified search (fast, TMDB-first).
+ *
+ * SPLIT from the torrent-site fan-out (which moved to /api/search/torrents):
+ * previously all 12 providers raced in one handler, and a single slow torrent
+ * site (1337x / TorrentDownloads / TGX each resolve ~10 detail pages) held the
+ * whole response past the hosting edge timeout — the phone then showed
+ * "Cannot reach the OTAMA server" with ZERO results, TMDB included.
+ *
+ * Now this route answers metadata only: TMDB multi-search merged over
+ * Cinemeta / TVMaze / YTS, plus raw Nyaa anime torrents (fast RSS). Every
+ * provider is hard-capped so the response lands within seconds even when
+ * sites hang. The torrent tabs load separately and degrade independently.
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const q = (searchParams.get('q') || '').trim()
   if (!q) {
-    return NextResponse.json({ movies: [], series: [], anime: [], animeSeries: [], tpb: [], leetx: [], solid: [], more: [] })
+    return NextResponse.json({ movies: [], series: [], anime: [], animeSeries: [] })
   }
 
   const safe = async <T>(p: Promise<T>, fallback: T): Promise<T> => {
     try { return await p } catch { return fallback }
   }
+  const cap = <T>(p: Promise<T>, ms: number): Promise<T> => withTimeout(p, ms, 'search provider')
 
-  // Optional TMDB layer (fails silently when unconfigured)
+  // TMDB layer (built-in key; internal per-call timeout + cache already apply)
   let tmdbMovies: MetaItem[] = []
   let tmdbSeries: MetaItem[] = []
   try {
-    const status = await tmdbStatus()
-    if (status.configured && status.valid) {
-      const res = await safe(tmdbSearchMulti(q), { movies: [] as MetaItem[], series: [] as MetaItem[] })
-      tmdbMovies = res.movies
-      tmdbSeries = res.series
-    }
+    const res = await safe(cap(tmdbSearchMulti(q), 12_000), { movies: [] as MetaItem[], series: [] as MetaItem[] })
+    tmdbMovies = res.movies
+    tmdbSeries = res.series
   } catch { /* TMDB optional */ }
 
-  const [movies, series, tvAlt, anime, tpb, ytsMovies, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
-    safe(cineCatalog('movie', { search: q, sort: 'top' }), [] as MetaItem[]),
-    safe(cineCatalog('series', { search: q, sort: 'top' }), [] as MetaItem[]),
-    safe(tvmazeSearch(q), [] as MetaItem[]),
-    safe(nyaaSearch(q, { sort: 'seeders' }), []),
-    safe(apibaySearch(q), [] as TpbItem[]),
-    safe(ytsSearch(q), [] as MetaItem[]),
-    safe(leetxSearch(q, { resolve: 10 }), [] as TorrentOption[]),
-    safe(solidSearch(q), [] as TorrentOption[]),
-    safe(rarbgSearch(q), [] as TorrentOption[]),
-    safe(limeSearch(q), [] as TorrentOption[]),
-    safe(torrentDownloadsSearch(q, { resolve: 10 }), [] as TorrentOption[]),
-    safe(tgxSearch(q, { resolve: 10 }), [] as TorrentOption[]),
+  const [movies, series, tvAlt, anime, ytsMovies] = await Promise.all([
+    safe(cap(cineCatalog('movie', { search: q, sort: 'top' }), 9_000), [] as MetaItem[]),
+    safe(cap(cineCatalog('series', { search: q, sort: 'top' }), 9_000), [] as MetaItem[]),
+    safe(cap(tvmazeSearch(q), 9_000), [] as MetaItem[]),
+    safe(cap(nyaaSearch(q, { sort: 'seeders' }), 9_000), [] as TorrentOption[]),
+    safe(cap(ytsSearch(q), 9_000), [] as MetaItem[]),
   ])
 
   // merge TMDB results first (best metadata), dedupe by imdb id then title
@@ -100,32 +94,18 @@ export async function GET(req: NextRequest) {
   }
 
   // strip broken poster URLs (metahub HTML placeholders) so cards show the
-  // branded fallback instead of a failed image load
+  // branded fallback instead of a failed image load — capped so poster
+  // probing can never stall the metadata response
   const [moviesClean, seriesClean, animeSeriesClean] = await Promise.all([
-    stripBrokenPosters(moviesMerged).catch(() => moviesMerged),
-    stripBrokenPosters(seriesMerged).catch(() => seriesMerged),
-    stripBrokenPosters(animeSeries).catch(() => animeSeries),
+    safe(cap(stripBrokenPosters(moviesMerged), 8_000), moviesMerged),
+    safe(cap(stripBrokenPosters(seriesMerged), 8_000), seriesMerged),
+    safe(cap(stripBrokenPosters(animeSeries), 8_000), animeSeries),
   ])
-
-  // new-site fan-out merged into one "More torrent sites" tab (deduped by hash)
-  const moreSeen = new Set<string>()
-  const more: TorrentOption[] = []
-  for (const t of [...rarbg, ...lime, ...td, ...tgx]) {
-    const key = (t.hash || t.source || '').toLowerCase()
-    if (!key || moreSeen.has(key)) continue
-    moreSeen.add(key)
-    more.push(t)
-  }
-  more.sort((a, b) => (b.seeds || 0) - (a.seeds || 0))
 
   return NextResponse.json({
     movies: moviesClean.slice(0, 40),
     series: seriesClean,
     anime,
     animeSeries: animeSeriesClean,
-    tpb: tpb.slice(0, 30),
-    leetx: leetx.slice(0, 20),
-    solid: solid.slice(0, 20),
-    more: more.slice(0, 30),
   })
 }

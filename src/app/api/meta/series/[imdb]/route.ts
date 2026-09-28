@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { seriesDetail } from '@/lib/server/providers'
 import { tmdbEnhanceByImdb, tmdbSeriesSeasons, tmdbStatus } from '@/lib/server/tmdb'
+import { withTimeout } from '@/lib/server/with-timeout'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,12 +19,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ imdb
     try {
       const status = await tmdbStatus()
       if (status.configured && status.valid) {
-        const enh = await tmdbEnhanceByImdb(imdb)
+        // Time-budgeted: TMDB enhance = find + detail, seasons = N+1 calls —
+        // on a cold cache these could hold the response far past the hosting
+        // edge timeout; on timeout the TVMaze seasons already in `detail` win.
+        const enh = await withTimeout(tmdbEnhanceByImdb(imdb), 8_000, 'TMDB enhance')
         if (enh) {
           detail.item.backdrop = enh.backdrop || detail.item.backdrop
           detail.item.summary = detail.item.summary || enh.summary
           if (anime && enh.tmdbId) {
-            const tmdbSeasons = await tmdbSeriesSeasons(enh.tmdbId)
+            const tmdbSeasons = await withTimeout(tmdbSeriesSeasons(enh.tmdbId), 12_000, 'TMDB seasons')
             if (tmdbSeasons.length) detail.seasons = tmdbSeasons
           }
         }
