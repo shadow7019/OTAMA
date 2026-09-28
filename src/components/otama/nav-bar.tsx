@@ -40,7 +40,7 @@ export function NavBar() {
   const activeTorrents = torrents.length
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/80 backdrop-blur-lg">
+    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/80 backdrop-blur-lg pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 md:px-8">
         <button className="md:hidden" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu" aria-expanded={menuOpen}>
           {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}

@@ -56,7 +56,13 @@ export function DetailOverlay() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeDetail()
+      if (e.key === 'Escape') {
+        // One Escape (or one phone back press) closes ONE layer: skip while a
+        // player or a Radix sheet/dialog sits on top of this overlay.
+        if (useAppStore.getState().player) return
+        if (document.querySelector('[role="dialog"][data-state="open"]')) return
+        closeDetail()
+      }
     }
     if (detail) window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -71,6 +77,7 @@ export function DetailOverlay() {
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm"
           onClick={closeDetail}
+          data-otama-overlay="detail"
           role="dialog"
           aria-modal="true"
           aria-label={detail.title}
@@ -81,6 +88,7 @@ export function DetailOverlay() {
             exit={{ opacity: 0, y: 40, scale: 0.98 }}
             transition={{ type: 'spring', damping: 26, stiffness: 300 }}
             className="absolute inset-x-0 bottom-0 top-10 mx-auto max-w-5xl overflow-hidden rounded-t-3xl bg-background shadow-2xl md:top-16"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
             onClick={(e) => e.stopPropagation()}
           >
             <Button

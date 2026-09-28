@@ -351,7 +351,8 @@ export function PlayerOverlay() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black flex flex-col"
+        className="fixed inset-0 z-50 bg-black flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+        data-otama-overlay="player"
         role="dialog"
         aria-label={`Playing ${player.title}`}
       >

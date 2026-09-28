@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Patterns;
 import android.view.Gravity;
@@ -12,6 +13,8 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -56,6 +59,7 @@ public class MainActivity extends Activity {
 
     private SharedPreferences prefs;
     private FrameLayout root;
+    private FrameLayout contentBox;
     private LinearLayout splashView;
     private LinearLayout errorOverlay;
     private LinearLayout serverOverlay;
@@ -79,10 +83,80 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(BG);
         setContentView(root);
 
+        // Content box: everything except fullscreen video lives here and is
+        // padded by the real system-bar/cutout/keyboard insets, so the UI is
+        // never covered by the status bar, navigation bar, notch or keyboard.
+        contentBox = new FrameLayout(this);
+        contentBox.setBackgroundColor(BG);
+        root.addView(contentBox, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         buildSplash();
         buildWebView();
+        applyEdgeToEdge();
 
         enterWebView(resolveTargetUrl());
+    }
+
+    /** Draw edge-to-edge on EVERY Android version (targetSdk 35 enforces it
+     *  on Android 15; older versions get the same behavior explicitly), then
+     *  pad the content box by the real insets. One uniform code path. */
+    private void applyEdgeToEdge() {
+        if (Build.VERSION.SDK_INT < 35) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int t, b, l, r;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets i = insets.getInsets(
+                        WindowInsets.Type.systemBars()
+                                | WindowInsets.Type.displayCutout()
+                                | WindowInsets.Type.ime());
+                t = i.top; b = i.bottom; l = i.left; r = i.right;
+            } else {
+                t = insets.getSystemWindowInsetTop();
+                b = insets.getSystemWindowInsetBottom();
+                l = insets.getSystemWindowInsetLeft();
+                r = insets.getSystemWindowInsetRight();
+            }
+            contentBox.setPadding(l, t, r, b);
+            return insets;
+        });
+    }
+
+    /** Hide system bars while a video plays fullscreen. */
+    private void enterImmersive() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                c.hide(WindowInsets.Type.systemBars());
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+    }
+
+    private void exitImmersive() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) c.show(WindowInsets.Type.systemBars());
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
     }
 
     /**
@@ -141,7 +215,7 @@ public class MainActivity extends Activity {
         splashView.addView(bar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        root.addView(splashView, new FrameLayout.LayoutParams(
+        contentBox.addView(splashView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -170,7 +244,7 @@ public class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         String ua = s.getUserAgentString();
-        s.setUserAgentString(ua + " OTAMA-Android/1.3.0");
+        s.setUserAgentString(ua + " OTAMA-Android/1.3.1");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -226,11 +300,13 @@ public class MainActivity extends Activity {
                 webView.setVisibility(View.GONE);
                 root.addView(view, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                enterImmersive();
             }
 
             @Override
             public void onHideCustomView() {
                 if (customView == null) return;
+                exitImmersive();
                 root.removeView(customView);
                 customView = null;
                 if (customViewCallback != null) {
@@ -241,7 +317,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        root.addView(webView, new FrameLayout.LayoutParams(
+        contentBox.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         webView.setVisibility(View.GONE);
     }
@@ -321,7 +397,7 @@ public class MainActivity extends Activity {
         op.topMargin = dp(10);
         errorOverlay.addView(other, op);
 
-        root.addView(errorOverlay, new FrameLayout.LayoutParams(
+        contentBox.addView(errorOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -425,7 +501,7 @@ public class MainActivity extends Activity {
 
         serverOverlay.addView(card, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(serverOverlay, new FrameLayout.LayoutParams(
+        contentBox.addView(serverOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -523,12 +599,44 @@ public class MainActivity extends Activity {
                 webView.goBack();
                 return true;
             }
+            // Nothing in the WebView history — let the PAGE walk out of its
+            // overlays (player → details → sheets), one layer per press.
+            // The app itself only closes when the page has nothing to undo.
+            dispatchPageBack();
+            return true;
         }
         return super.onKeyDown(keyCode, event);
     }
 
+    /**
+     * Ask the page to close its topmost overlay. The page reports whether
+     * anything was open (window.__otamaOverlayOpen in v1.3.1+, DOM
+     * heuristics as fallback for older builds) and an Escape keypress does
+     * the actual closing — the same path the desktop uses. Only when the
+     * page reports "nothing open" does the back press close the app.
+     */
+    private void dispatchPageBack() {
+        final String probe =
+            "(function(){"
+            + "function anyOpen(){"
+            + "try{if(window.__otamaOverlayOpen&&window.__otamaOverlayOpen())return true}catch(e){}"
+            + "if(document.querySelector('[data-otama-overlay]'))return true;"
+            + "if(document.querySelector('[role=\"dialog\"][data-state=\"open\"]'))return true;"
+            + "if(document.querySelector('div.fixed.inset-0.z-50')||document.querySelector('div.fixed.inset-0.z-40'))return true;"
+            + "return false}"
+            + "var open=anyOpen();"
+            + "if(open){try{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,which:27,bubbles:true,cancelable:true}))}catch(e){}}"
+            + "return open?'handled':'exit'})()";
+        webView.evaluateJavascript(probe, value -> {
+            if (value == null || !value.contains("handled")) {
+                finish();
+            }
+        });
+    }
+
     private void onHideCustomViewSafe() {
         if (customView == null) return;
+        exitImmersive();
         root.removeView(customView);
         customView = null;
         if (customViewCallback != null) {

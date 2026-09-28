@@ -31,6 +31,11 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#0f0d0b",
+  width: "device-width",
+  initialScale: 1,
+  // Draw under the notch / status bar / home indicator; the UI pads itself
+  // with env(safe-area-inset-*) so nothing is ever covered on phones.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

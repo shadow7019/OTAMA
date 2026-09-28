@@ -83,7 +83,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         // HTML5 element-fullscreen: the web player falls back to the native
         // <video> fullscreen (webkitEnterFullscreen) on iOS, so playback and
         // fullscreen work out of the box without extra WKPreferences flags.
-        cfg.applicationNameForUserAgent = "OTAMA-iOS/1.3.0"
+        cfg.applicationNameForUserAgent = "OTAMA-iOS/1.3.1"
 
         webView = WKWebView(frame: view.bounds, configuration: cfg)
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -93,6 +93,10 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        // Keep the system's automatic safe-area handling (status bar / home
+        // indicator) and dismiss the keyboard naturally on swipe.
+        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        webView.scrollView.keyboardDismissMode = .interactive
         view.addSubview(webView)
 
         refreshControl.tintColor = ViewController.amber

@@ -4,7 +4,7 @@ import { OtamaLogo } from '@/components/otama/logo'
 
 export function Footer() {
   return (
-    <footer className="mt-auto border-t border-white/5 bg-black/30">
+    <footer className="mt-auto border-t border-white/5 bg-black/30 pb-[env(safe-area-inset-bottom)]">
       <div className="mx-auto max-w-7xl px-4 py-6 md:px-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1.5">
