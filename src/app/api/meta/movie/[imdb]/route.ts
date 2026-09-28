@@ -19,6 +19,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ imd
     const item = await withTimeout(cineMeta('movie', imdb), 15_000, 'metadata')
 
     // Optional TMDB enhancement (never blocks the response on failure)
+    let originalTitle: string | undefined
     try {
       const status = await tmdbStatus()
       if (status.configured && status.valid) {
@@ -28,13 +29,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ imd
           item.summary = item.summary || enh.summary
           item.runtime = item.runtime || enh.runtime
           if (!item.genres?.length && enh.genres?.length) item.genres = enh.genres
+          // Cinemeta misses the year for unreleased titles — TMDB knows it,
+          // and the torrent query ladder needs it (e.g. "The Vvaan").
+          if (!item.year && enh.year) item.year = enh.year
+          originalTitle = enh.originalTitle
         }
       }
     } catch { /* enhancement optional */ }
 
     let torrents: TorrentOption[] = []
     try {
-      torrents = await withTimeout(findMovieTorrents(imdb, item.title, item.year), 12_000, 'torrent lookup')
+      torrents = await withTimeout(findMovieTorrents(imdb, item.title, item.year, { originalTitle }), 20_000, 'torrent lookup')
     } catch { /* torrents optional */ }
     return NextResponse.json({ item, torrents })
   } catch (err) {

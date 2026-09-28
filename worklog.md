@@ -1011,3 +1011,25 @@ Work Log:
 Stage Summary:
 - v1.5.0 is LIVE on GitHub with the new Artplayer player, screen/back fixes, rebrand, search resilience, SHA-256 checksums and anti-warning release notes — the entire Task 40→43 backlog shipped in one release
 - Remaining for the hosted web instance (otama.space-z.ai): platform republish to pick up the Artplayer web player
+
+---
+Task ID: 44
+Agent: Z.ai Code (main)
+Task: "the vvan shows no torrent found for this selection fix this and also add do for all the content that are missing and shows no stream" — fix The Vvaan + a global fallback chain for every title that shows no streams
+
+Work Log:
+- Root-caused with live provider probing: The Vvaan (tt34498564, TMDB 1384514, original title "द वन", in theatres now) had HDTC releases on Torrentio all along, but the resolution chain hid them: (1) findMovieTorrents fired ONE query ("title year") per site — no variants; (2) Cinemeta returns NO year for the title → query degraded; (3) the route's 12s torrent budget threw before slow first-hit sources (Torrentio) resolved — and because withTimeout's throw prevented caching, every detail open re-ran the doomed lookup
+- Second bug found while testing: apibay answers UNKNOWN/odd queries (Devanagari "द वन") with its latest-100-uploads dump (Spider-Man/Ted Lasso rows) — after the budget fix those 40 junk rows briefly showed up as "torrents for The Vvaan"
+- Fixes (src/lib/server/providers.ts):
+  - findMovieTorrents rewritten as TWO WAVES: wave 1 = imdb-keyed sources (torrentio/tpb-imdb/yts, all now 10s deadline'd) + primary query fan-out (10s); if merged < 4, wave 2 re-fans-out ALL query variants in parallel (8s): no-year title, article-stripped title ("The Vvaan"→"Vvaan"), TMDB original title — then merges/dedups; total ≤19s fits the route's 20s budget so the result actually caches (warm hits 0.1s)
+  - NEW relevance guard (filterRelevant, exported): every title-keyed result batch must share a content word with the query (diacritic-stripped tokens, stopwords + years excluded; queries with no latin content words are skipped entirely) — engines can never pass their latest-uploads dump off as matches
+- tmdb.ts: TmdbEnhancement now carries year + originalTitle (release_date/first_air_date/original_title/original_name); movie route injects the year Cinemeta missed (The Vvaan now queries "The Vvaan 2026")
+- Series parity: findEpisodeTorrentsBase gained a bare-title last resort (TPB + 1337x with title and article-stripped title) after the SxxEyy ladder; series torrents route wrapped in a 22s withTimeout so the sequential ladder can never hold it past the edge
+- /api/search/torrents: same relevance guard applied to every tab (tpb/leetx/solid/more)
+- torrent-list.tsx: empty state now explains OTAMA tried every source + variant and that unreleased titles need the digital release
+- VERIFIED end-to-end: The Vvaan detail → 3 real torrents (HDTC Hindi 480p/720p/1080p, 16/4/0 seeds) with ENABLED "Play — best torrent" button; clicked play → Artplayer played the 720p HDTC at 522 KB/s (2 peers, screenshot; currentTime 7.4→28.5s, zero page errors); regressions: BBB 35 torrents, Breaking Bad S01E01 15 torrents, Devanagari junk query now 0 rows (was 100), interstellar fan-out normal; lint clean
+- Test torrent deleted from engine; runtime db restored
+
+Stage Summary:
+- "No streams" is now a last-resort truth instead of a budget accident: movies get a two-wave variant fan-out with TMDB year/original-title injection, series get a bare-title ladder floor, and every title-keyed result set is relevance-guarded against engine junk dumps
+- The Vvaan itself went from permanently broken to actually streaming (theatre HDTC rip) — the exact complaint in this task

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { apibaySearch } from '@/lib/server/providers'
+import { apibaySearch, filterRelevant } from '@/lib/server/providers'
 import { leetxSearch } from '@/lib/server/leetx'
 import { solidSearch } from '@/lib/server/solidtorrents'
 import { rarbgSearch } from '@/lib/server/rarbg'
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   }
   const cap = <T>(p: Promise<T>, ms: number): Promise<T> => withTimeout(p, ms, 'torrent site')
 
-  const [tpb, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
+  const [tpbRaw, leetx, solid, rarbg, lime, td, tgx] = await Promise.all([
     safe(cap(apibaySearch(q), 14_000), [] as TpbItem[]),
     safe(cap(leetxSearch(q, { resolve: 8 }), 14_000), [] as TorrentOption[]),
     safe(cap(solidSearch(q), 14_000), [] as TorrentOption[]),
@@ -43,11 +43,21 @@ export async function GET(req: NextRequest) {
     safe(cap(torrentDownloadsSearch(q, { resolve: 8 }), 14_000), [] as TorrentOption[]),
     safe(cap(tgxSearch(q, { resolve: 8 }), 14_000), [] as TorrentOption[]),
   ])
+  /* Relevance guard: search engines answer unknown/odd queries (e.g. titles
+   * in non-latin scripts) with their latest-uploads dump — those rows must
+   * never be presented as matches for the query. */
+  const tpb = filterRelevant(q, tpbRaw, (r) => r.name || '')
+  const leetxR = filterRelevant(q, leetx, (r) => r.title || '')
+  const solidR = filterRelevant(q, solid, (r) => r.title || '')
+  const rarbgR = filterRelevant(q, rarbg, (r) => r.title || '')
+  const limeR = filterRelevant(q, lime, (r) => r.title || '')
+  const tdR = filterRelevant(q, td, (r) => r.title || '')
+  const tgxR = filterRelevant(q, tgx, (r) => r.title || '')
 
   // new-site fan-out merged into one "More torrent sites" tab (deduped by hash)
   const moreSeen = new Set<string>()
   const more: TorrentOption[] = []
-  for (const t of [...rarbg, ...lime, ...td, ...tgx]) {
+  for (const t of [...rarbgR, ...limeR, ...tdR, ...tgxR]) {
     const key = (t.hash || t.source || '').toLowerCase()
     if (!key || moreSeen.has(key)) continue
     moreSeen.add(key)
@@ -57,8 +67,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     tpb: tpb.slice(0, 30),
-    leetx: leetx.slice(0, 20),
-    solid: solid.slice(0, 20),
+    leetx: leetxR.slice(0, 20),
+    solid: solidR.slice(0, 20),
     more: more.slice(0, 30),
   })
 }
