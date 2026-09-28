@@ -1,7 +1,7 @@
 {
   "name": "otama-desktop",
   "productName": "OTAMA",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "OTAMA \u2014 torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
   "main": "src/main.mjs",
   "author": "OTAMA Project",
@@ -33,7 +33,7 @@
   "build": {
     "appId": "app.otama.desktop",
     "productName": "OTAMA",
-    "copyright": "OTAMA Project",
+    "copyright": "Copyright © OTAMA Project — open source (MIT)",
     "afterPack": "scripts/adhoc-sign-mac.cjs",
     "directories": {
       "output": "dist",
@@ -79,6 +79,7 @@
       "icon": "build/icon.ico",
       "artifactName": "OTAMA-${version}-${arch}.${ext}",
       "signExecutable": false,
+      "legalTrademarks": "OTAMA Project — open source (MIT)",
       "target": [
         {
           "target": "nsis",

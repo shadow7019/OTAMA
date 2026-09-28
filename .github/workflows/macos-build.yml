@@ -74,11 +74,19 @@ jobs:
         working-directory: desktop
         run: npx electron-builder --mac dmg --arm64 --publish never
 
+      - name: Generate SHA-256 checksum
+        working-directory: desktop/dist
+        run: |
+          shasum -a 256 OTAMA-*-arm64.dmg > SHA256SUMS-macos.txt
+          cat SHA256SUMS-macos.txt
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OTAMA-macos-dmg
-          path: desktop/dist/OTAMA-*-arm64.dmg
+          path: |
+            desktop/dist/OTAMA-*-arm64.dmg
+            desktop/dist/SHA256SUMS-macos.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -91,10 +99,26 @@ jobs:
 
             | Platform | File | Install |
             |---|---|---|
-            | 🪟 Windows | `OTAMA-Setup-*.exe` | Run installer (SmartScreen may warn — unsigned build, click "More info → Run anyway") |
+            | 🪟 Windows | `OTAMA-Setup-*.exe` | Run installer (see ⚠️ note below) |
             | 🪟 Windows portable | `OTAMA-*-portable.exe` | Single file, no install |
-            | 🍎 macOS (Apple Silicon M1/M2/M3/M4) | `OTAMA-*-arm64.dmg` | Open DMG, drag OTAMA to Applications. App is ad-hoc signed — if macOS still complains, right-click OTAMA → Open, or run `xattr -cr /Applications/OTAMA.app` once |
-            | 🤖 Android | `OTAMA-*.apk` | Allow "install unknown apps", open APK |
+            | 🍎 macOS (Apple Silicon M1–M4) | `OTAMA-*-arm64.dmg` | Open DMG, drag OTAMA to Applications. Ad-hoc signed — right-click OTAMA → Open, or run `xattr -cr /Applications/OTAMA.app` once |
+            | 🤖 Android | `OTAMA-*.apk` | Open APK → allow "install unknown apps" → **Install anyway** |
+            | 📱 iPhone / iPad | `OTAMA-*.ipa` | Unsigned IPA — sideload via **AltStore / SideStore / Sideloadly** with a free Apple ID (re-sign every 7 days) |
+
+            🔎 **Verify integrity:** SHA-256 checksums for every file are attached as `SHA256SUMS-*.txt`. If your download's hash matches, you hold exactly the file that public CI built — nothing was modified in transit.
+
+            ---
+            ### ⚠️ Why does my browser / antivirus show a warning?
+
+            Those warnings are **not a virus** — they are what Windows, Android and iOS show for **any app installed outside their official app store** without a paid developer certificate. OTAMA is fully open source: every binary on this page was built automatically by **public GitHub Actions runs from the public source code in this repo** (open the *Actions* tab and watch each build yourself). Nothing is obfuscated — no ads, no trackers, no hidden code.
+
+            How to continue on each platform:
+            - **Windows — SmartScreen** ("Windows protected your PC"): click **More info → Run anyway**. SmartScreen warns on *every* unsigned executable until it accumulates download reputation; a certificate that removes the warning outright costs hundreds of $ per year, which a free project can't justify.
+            - **Windows — antivirus:** OTAMA is a standard Electron/Node app; some heuristics blanket-flag any torrent-related software. Verify the SHA-256 above, or add an exclusion if you trust it.
+            - **Android — Play Protect:** tap **Install anyway** (or *More details → Install anyway*). Chrome's "this file may be harmful" banner during download → **Download anyway**. The APK is release-signed with a stable key that stays identical across versions.
+            - **iOS:** Safari may warn about `.ipa` downloads — installs are re-signed by AltStore/Sideloadly with *your own* Apple ID. First launch: Settings → General → VPN & Device Management → trust your Apple ID.
 
             OTAMA is self-contained: embedded torrent-stream engine + Next.js renderer + template database.
-          files: desktop/dist/OTAMA-*-arm64.dmg
+          files: |
+            desktop/dist/OTAMA-*-arm64.dmg
+            desktop/dist/SHA256SUMS-macos.txt

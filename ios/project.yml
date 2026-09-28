@@ -7,7 +7,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.4.0"
+    MARKETING_VERSION: "1.5.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
 
@@ -21,7 +21,7 @@ targets:
       path: OTAMA/Info.plist
       properties:
         CFBundleDisplayName: OTAMA
-        CFBundleShortVersionString: "1.4.0"
+        CFBundleShortVersionString: "1.5.0"
         CFBundleVersion: "1"
         UILaunchScreen:
           UIColorName: LaunchBackground

@@ -75,11 +75,19 @@ jobs:
           cp -R "$APP" build/Payload/
           cd build && zip -qry "OTAMA-${GITHUB_REF_NAME#v}.ipa" Payload
 
+      - name: Generate SHA-256 checksum
+        working-directory: ios/build
+        run: |
+          shasum -a 256 OTAMA-*.ipa > SHA256SUMS-ios.txt
+          cat SHA256SUMS-ios.txt
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: OTAMA-ios-ipa
-          path: ios/build/OTAMA-*.ipa
+          path: |
+            ios/build/OTAMA-*.ipa
+            ios/build/SHA256SUMS-ios.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -87,4 +95,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: ios/build/OTAMA-*.ipa
+          files: |
+            ios/build/OTAMA-*.ipa
+            ios/build/SHA256SUMS-ios.txt

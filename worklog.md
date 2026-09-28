@@ -968,3 +968,28 @@ Work Log:
 Stage Summary:
 - Search is TMDB-first and unkillable: metadata results render in ~1-3s on any connection; torrent tabs load independently and degrade with a retry affordance; every server fan-out is now time-budgeted so the hosting edge can never truncate a response into a fake "Cannot reach the OTAMA server"
 - v1.4.0 now contains Task 40 (screen/back) + Task 41 (rebrand) + Task 42 (search resilience), ready to push the moment the deploy key is registered
+
+---
+Task ID: 43
+Agent: Z.ai Code (main)
+Task: Smooth player + stop the "virus warning" experience on Android/iOS/Windows downloads ("can we use a player that is smooth also after downloading this application on android and iOS it gives virus warnings a lot we don't need that")
+
+Work Log:
+- PLAYER — replaced the bare <video controls> with Artplayer 5.4 (bun add artplayer; dynamic import inside the construction effect so SSR/initial bundle stay clean):
+  - gestures on phones (double-tap seek, swipe brightness/volume), long-press 2x fast-forward, lock button, auto-orientation fullscreen, playback-rate/aspect-ratio/flip menus, PiP, web fullscreen, mini progress bar, auto-hiding controls, fuchsia #e879f9 theme
+  - ALL orchestration logic preserved through art.video: stall watchdog (readyState polling), retry-on-error (3 backoff attempts), auto-failover to healthier torrents, HEVC/AVI/MKV diagnostics card, resume via #t= media fragment read from resumeAtRef (no rebuild when history lands late), close-and-save, root fullscreen (stats bar stays visible) + Artplayer's own video-area fullscreen
+  - fixed a latent bug on the way: the 10s periodic history save used to attach on [player] while the video mounted later on [ready] — the listener never attached; now bound per Artplayer instance via video:timeupdate
+  - E2E in agent-browser: seeded the engine with the Blender Sintel torrent (sandbox blocks UDP trackers — added via direct POST with HTTPS announce trackers, metadata in ~8s, 18 peers); desktop 1440x900 and mobile 390x844 both: overlay opens, .art-video-player mounts, video readyState 4, currentTime advancing (24.9→29.0), controls auto-hide, stats bar correct, zero console/page errors; test torrent + history cleaned up after
+- VIRUS-WARNING WORK (everything achievable without paid certs):
+  - all 4 release workflows now attach SHA-256 checksums (SHA256SUMS-{windows,android,macos,ios}.txt) next to every binary, artifact + release
+  - release notes (macos-build.yml canonical body) rewritten: full 5-platform table (iPhone row was MISSING before), integrity-verification section, and a dedicated "Why does my browser / antivirus show a warning?" explainer with exact per-platform bypass steps (SmartScreen More info→Run anyway; Play Protect Install anyway; Chrome Download anyway; iOS AltStore trust flow) + the "every binary is built by public GitHub Actions from public source" trust argument
+  - Windows metadata hardened: proper LegalCopyright ("Copyright © OTAMA Project — open source (MIT)") + win.legalTrademarks version resources (help AV classifiers, costs nothing)
+  - Android already ships stable release-key signing (committed keystore, consistent across versions = the single biggest real Play-Protect reducer); documented honestly that zero-warning installs require a paid cert (EV ~hundreds $/yr) or store distribution
+- VERSION: 5 spots bumped to 1.5.0 (build.gradle versionCode 17, MainActivity UA, desktop/package.json, ios/project.yml MARKETING_VERSION + CFBundleShortVersionString, ViewController UA)
+- RELEASE REALITY CHECK: origin/main is still at v1.3.0 — deploy key v4 (generated 2025-09-28, fingerprint AAAAC3…1fK, comment otama-deploy-key-v4) is NOT registered on GitHub: `git ls-remote` → Permission denied (publickey). Tasks 40-42 commits (v1.3.1, v1.4.0, search resilience) plus this one are LOCAL-ONLY; local tags v1.3.1/v1.4.0 exist but no releases were created on GitHub. Push attempted again this session, still denied.
+- HANDOFF for the moment the key is registered: push main; git tag -d v1.3.1 v1.4.0 (superseded — v1.5.0 contains all of it); git tag v1.5.0 && git push origin main v1.5.0; CI builds 4 workflows → verify 6 release assets (apk, Setup.exe, portable.exe, dmg, ipa, 4× SHA256SUMS)
+
+Stage Summary:
+- Artplayer integration shipped behind the exact same orchestration contracts — smooth gesture controls everywhere, verified end-to-end in a real browser on desktop + mobile viewports
+- Every release now ships verifiable SHA-256 checksums and honest, actionable anti-warning guidance; Windows binaries carry proper version resources
+- v1.5.0 (versionCode 17) committed locally; ONE deploy-key registration by the user unblocks the entire backlog: v1.3.1 + v1.4.0 + v1.5.0 land as a single v1.5.0 release with the new player, all screen/back fixes, the rebrand, search resilience, and the checksums/notes work

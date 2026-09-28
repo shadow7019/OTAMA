@@ -69,6 +69,18 @@ jobs:
         working-directory: desktop
         run: npx electron-builder --win --publish never
 
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        working-directory: desktop/dist
+        run: |
+          $files = Get-ChildItem -File -Filter "OTAMA-*.exe"
+          $lines = foreach ($f in $files) {
+            $h = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+            "$h  $($f.Name)"
+          }
+          $lines -join "`n" | Set-Content -Path SHA256SUMS-windows.txt -Encoding ascii
+          Get-Content SHA256SUMS-windows.txt
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -76,6 +88,7 @@ jobs:
           path: |
             desktop/dist/OTAMA-Setup-*.exe
             desktop/dist/OTAMA-*-portable.exe
+            desktop/dist/SHA256SUMS-windows.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -86,3 +99,4 @@ jobs:
           files: |
             desktop/dist/OTAMA-Setup-*.exe
             desktop/dist/OTAMA-*-portable.exe
+            desktop/dist/SHA256SUMS-windows.txt

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Users, ArrowDownToLine, Signal, RefreshCw, ShieldAlert, WifiOff, Loader2, Maximize2, Minimize2 } from 'lucide-react'
 import { toast } from 'sonner'
+import type Artplayer from 'artplayer'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { QualityBadge } from '@/components/otama/media-card'
@@ -46,19 +47,24 @@ export function PlayerOverlay() {
   const videoRef = useRef<HTMLVideoElement>(null)
   /** Player root — fullscreened as a whole so the top bar + stats bar stay visible. */
   const rootRef = useRef<HTMLDivElement>(null)
+  /** Artplayer instance + its mount container. Artplayer replaces the bare
+   *  <video controls>: smooth gesture controls (double-tap seek, long-press
+   *  2x, lock), playback-rate menu, auto-hiding UI — consistent on every
+   *  platform instead of each browser's stock controls. */
+  const artRef = useRef<Artplayer | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  /** Latest resume offset without triggering a player rebuild (the #t=
+   *  media fragment is applied at construction time only). */
+  const resumeAtRef = useRef<number | null>(null)
+  const lastSave = useRef(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [waiting, setWaiting] = useState(true)
   const [waitingSince, setWaitingSince] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
   const [fetchedAlts, setFetchedAlts] = useState<TorrentOption[] | null>(null)
-  /** resume position (seconds) from watch history — applied as a `#t=` media
-   *  fragment so the browser's FIRST range request lands at the resume offset
-   *  instead of discovering it after a metadata round-trip. */
-  const [resumeAt, setResumeAt] = useState<number | null>(null)
   /** true while the video element has metadata but readyState stays 0 */
   const [stuckAtZero, setStuckAtZero] = useState(false)
-  const lastSave = useRef(0)
   const retryCount = useRef(0)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoTried = useRef(0)
@@ -130,7 +136,7 @@ export function PlayerOverlay() {
     setWaitingSince(Date.now())
     setError(null)
     setFetchedAlts(null)
-    setResumeAt(null)
+    resumeAtRef.current = null
     setStuckAtZero(false)
     retryCount.current = 0
     autoTried.current = 0
@@ -175,7 +181,7 @@ export function PlayerOverlay() {
         if (cancelled) return
         const entry = d.history?.find((h) => h.refId === player.refId && h.infoHash === player.infoHash)
         if (entry && entry.position > 30) {
-          setResumeAt(entry.position)
+          resumeAtRef.current = entry.position
           toast.info(`Resuming from ${Math.floor(entry.position / 60)}m — press Escape to exit`)
         }
       })
@@ -185,24 +191,109 @@ export function PlayerOverlay() {
     }
   }, [player])
 
-  // periodic + final progress save
+  // final progress save when the payload changes / the overlay unmounts
+  // (the periodic 10s save is attached to the Artplayer instance below)
   useEffect(() => {
     if (!player) return
-    const v = videoRef.current
-    const onTime = () => {
-      const now = Date.now()
-      if (now - lastSave.current > 10_000 && v && !v.paused) {
-        lastSave.current = now
-        void saveHistory(player, v.currentTime, v.duration)
-      }
-    }
-    v?.addEventListener('timeupdate', onTime)
     return () => {
-      v?.removeEventListener('timeupdate', onTime)
       const vv = videoRef.current
       if (vv && vv.currentTime > 5) void saveHistory(player, vv.currentTime, vv.duration)
     }
   }, [player])
+
+  /** Build the Artplayer instance once the engine resolved the torrent
+   *  metadata. Replaces the old bare <video controls>: every existing
+   *  orchestration behaviour (stall watchdog, auto-failover, retry-on-error,
+   *  history saving) keeps working through `art.video`. */
+  useEffect(() => {
+    if (!player || !ready) return
+    let destroyed = false
+    void (async () => {
+      const ArtplayerCtor = (await import('artplayer')).default
+      if (destroyed || !containerRef.current) return
+      const resume = resumeAtRef.current && resumeAtRef.current > 30 ? Math.floor(resumeAtRef.current) : 0
+      const art = new ArtplayerCtor({
+        container: containerRef.current,
+        url: `${streamUrl(player.infoHash, player.fileIndex)}${resume ? `#t=${resume}` : ''}`,
+        autoplay: true,
+        theme: '#e879f9',
+        lang: 'en',
+        // smooth, consistent control set on every platform
+        setting: true,
+        playbackRate: true,
+        aspectRatio: true,
+        flip: true,
+        pip: true,
+        airplay: true,
+        fullscreen: true,
+        fullscreenWeb: true,
+        miniProgressBar: true,
+        // phone-first ergonomics
+        lock: true,
+        fastForward: true,
+        autoOrientation: true,
+        autoPlayback: false,
+        autoSize: false,
+        playsInline: true,
+        moreVideoAttr: { preload: 'auto' },
+      })
+      if (destroyed) {
+        art.destroy(false)
+        return
+      }
+      artRef.current = art
+      // the rest of the component (watchdog, closeAndSave, retry) speaks to
+      // this element exactly like it did with the bare <video>
+      videoRef.current = art.video
+
+      art.on('video:waiting', () => {
+        setWaiting(true)
+        setWaitingSince((s) => s ?? Date.now())
+      })
+      art.on('video:playing', () => setWaiting(false))
+      art.on('video:canplay', () => setWaiting(false))
+
+      // Transient races (engine restart / eviction / pending metadata / slow
+      // tail-range piece fetches) used to kill playback permanently — auto
+      // retry a few times before showing the diagnostics card.
+      art.on('video:error', () => {
+        if (retryCount.current < 3) {
+          const attempt = retryCount.current++
+          if (retryTimer.current) clearTimeout(retryTimer.current)
+          retryTimer.current = setTimeout(
+            () => {
+              const v = videoRef.current
+              if (!v) return
+              v.load()
+              void v.play().catch(() => {})
+            },
+            [1500, 4000, 8000][attempt] ?? 8000,
+          )
+          return
+        }
+        setWaiting(false)
+        setError('The browser could not decode this file — it may use an unsupported codec/container, or the torrent has no seeds. Try another quality below.')
+      })
+
+      // periodic progress save (10s) — attached per-instance so it can never
+      // miss the (late-mounted) video element like the old effect did
+      art.on('video:timeupdate', () => {
+        const now = Date.now()
+        if (now - lastSave.current > 10_000 && !art.video.paused) {
+          lastSave.current = now
+          void saveHistory(player, art.video.currentTime, art.video.duration)
+        }
+      })
+    })()
+    return () => {
+      destroyed = true
+      try {
+        artRef.current?.destroy(true)
+      } catch { /* already gone */ }
+      artRef.current = null
+      videoRef.current = null
+    }
+  }, [player, ready])
 
   // stall watchdog: if we never get playable data, surface a diagnosis
   useEffect(() => {
@@ -389,12 +480,10 @@ export function PlayerOverlay() {
           </Button>
         </div>
 
-        {/* video — mounted only once the engine has resolved the torrent metadata,
-            so it can never hit a 404/503 and die with MEDIA_ERR_SRC_NOT_SUPPORTED */}
-        <div
-          className="relative flex-1 flex items-center justify-center min-h-0"
-          onDoubleClick={toggleFullscreen}
-        >
+        {/* video — Artplayer owns this area (double-click toggles its own
+            fullscreen; the top-bar button still fullscreens the whole ROOT so
+            the stats bar stays visible) */}
+        <div className="relative flex-1 flex items-center justify-center min-h-0">
           {showDiagnostics ? (
             <div
               className="absolute inset-0 z-20 m-auto flex max-h-[85%] w-[min(92%,560px)] flex-col gap-3 overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950/95 p-5 text-zinc-200 shadow-2xl otama-scroll"
@@ -523,41 +612,12 @@ export function PlayerOverlay() {
             </div>
           ) : null}
           {ready ? (
-            <video
-              ref={videoRef}
-              src={`${streamUrl(player.infoHash, player.fileIndex)}${resumeAt ? `#t=${Math.floor(resumeAt)}` : ''}`}
-              controls
-              autoPlay
-              playsInline
-              preload="auto"
-              className="h-full w-full object-contain"
-              onWaiting={() => {
-                setWaiting(true)
-                setWaitingSince((s) => s ?? Date.now())
-              }}
-              onPlaying={() => setWaiting(false)}
-              onCanPlay={() => setWaiting(false)}
-              onError={() => {
-                // Transient races (engine restart / eviction / pending metadata /
-                // slow tail-range piece fetches) used to kill playback permanently
-                // — auto retry a few times before showing the diagnostics card.
-                if (retryCount.current < 3) {
-                  const attempt = retryCount.current++
-                  if (retryTimer.current) clearTimeout(retryTimer.current)
-                  retryTimer.current = setTimeout(
-                    () => {
-                      const v = videoRef.current
-                      if (!v) return
-                      v.load()
-                      void v.play().catch(() => {})
-                    },
-                    [1500, 4000, 8000][attempt] ?? 8000,
-                  )
-                  return
-                }
-                setWaiting(false)
-                setError('The browser could not decode this file — it may use an unsupported codec/container, or the torrent has no seeds. Try another quality below.')
-              }}
+            /* Artplayer mounts here (constructed in the effect above) — it
+               needs a plain div it can own; React never touches its children. */
+            <div
+              ref={containerRef}
+              className="h-full w-full"
+              aria-label={`Video player for ${player.title}`}
             />
           ) : null}
         </div>
