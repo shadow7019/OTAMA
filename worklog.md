@@ -895,3 +895,30 @@ Work Log:
 Stage Summary:
 - OTAMA now ships 5 platform artifacts; the iOS IPA is UNSIGNED by design (no Apple Developer account available) — install path is AltStore/SideStore/Sideloadly (free Apple ID, 7-day resign) or Xcode for users with a Mac; paid account would enable TestFlight/App Store later
 - iOS app matches the Android zero-config direct-host experience exactly; error overlay diagnostics pattern (CI commits build log to repo) is reusable for future CI debugging without API access
+
+---
+Task ID: 40
+Agent: Z.ai Code (main)
+Task: Phone screen-fit (notch/bars/keyboard) + back button walks overlays instead of exiting (v1.3.1)
+
+Work Log:
+- User: "fix the android and iPhone screen issue it doesn't auto adjust as per the screen also the phone back button directly close the app it shouldn't be doing that as it should just back the process"
+- Diagnosis: web layout already responsive (agent-browser iPhone-14 viewport: hamburger, single-column, card rows OK); root causes are (a) Android targetSdk 35 enforced edge-to-edge → UI drawn under status/nav bars + keyboard no longer resizes; (b) SPA never pushed history → Android back = canGoBack()==false = finish()
+- Web (helps both platforms after platform republish):
+  - viewport export: width=device-width, initialScale=1, viewportFit=cover
+  - safe-area CSS: NavBar header pt-[env(safe-area-inset-top)], Footer pb-[env(safe-area-inset-bottom)], player overlay root pt/pb env(), detail sheet paddingBottom env()
+  - app-store: overlay history integration — openDetail/openPlayer pushState({otamaOverlay}), popstate closes top overlay (player first), UI closes consume the entry (expectingPop guard); guarded close actions; window.__otamaOverlayOpen() global for native shells
+  - detail-overlay Escape: skips when player or a Radix dialog is open (one back press = one layer)
+- Android (immediate fix, works against the current published snapshot):
+  - contentBox FrameLayout wraps webview/splash/error/server overlays; root inset listener pads it by systemBars|displayCutout|ime (API 30+ Type API, legacy getSystemWindowInset* below); explicit edge-to-edge flags pre-35 → uniform behavior on all versions, keyboard included
+  - fullscreen video: custom view added to ROOT (full-bleed) + immersive sticky (WindowInsetsController hide systemBars on 30+, legacy flags below)
+  - back: serverOverlay → fullscreen video → canGoBack() → dispatchPageBack(): JS probe (window.__otamaOverlayOpen + [data-otama-overlay] + Radix [data-state=open] + z-40/z-50 fixed heuristics) dispatches synthetic Escape when an overlay is open, finish() only when the page returns 'exit'
+- iOS: explicit contentInsetAdjustmentBehavior=.automatic, keyboardDismissMode=.interactive; swipe-back + web history covers back
+- Verified in browser: pushState lands (otamaOverlay:1), history.back() closes overlay, probe returns 'handled' + Escape closes layer, 'exit' when idle; lint clean
+- Versions: android 15/1.3.1 (UA 1.3.1), iOS 1.3.1, desktop 1.3.1; commit 2948790, tag v1.3.1 created
+- BLOCKER: sandbox rollback wiped ~/.ssh + ssh-tools again → re-extracted openssh 10.0p2 to ~/ssh-tools, generated deploy key v4 (fingerprint not yet registered), core.sshCommand reset; push pending user adding the v4 public key to GitHub with write access
+
+Stage Summary:
+- Phone UI now respects every screen edge (notch, status bar, nav bar, keyboard) on both platforms; Android fix works immediately against the old published snapshot, safe-area CSS lands after the next platform republish
+- Back button now walks out of player → details → sheets one layer per press and only exits when the app is back at its root state
+- Push of v1.3.1 pending deploy key v4 registration
