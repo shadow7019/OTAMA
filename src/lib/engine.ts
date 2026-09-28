@@ -129,6 +129,16 @@ export async function engineList(): Promise<EngineTorrent[]> {
   }
 }
 
+/**
+ * Add a torrent to the engine.
+ *
+ * The engine lives behind the gateway (?XTransformPort=3003). When the
+ * gateway answers 502/HTML (engine booting right after a deployment, brief
+ * restart, or cold container) the response body is not JSON — we RETRY with
+ * a short backoff instead of failing the Play tap immediately. The server
+ * side supervisor (engine-supervisor.ts) brings the engine up at boot; this
+ * retry bridges the remaining boot window.
+ */
 export async function addTorrent(opts: {
   source: string
   title?: string
@@ -136,20 +146,34 @@ export async function addTorrent(opts: {
   refId?: string
   kind?: string
 }): Promise<EngineTorrent> {
-  const res = await fetch(engineUrl('/torrents'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
-  })
-  let data: { error?: string } & EngineTorrent
-  try {
-    data = await res.json()
-  } catch {
-    // HTML/empty body -> the engine was not reachable through the gateway
-    throw new Error('Streaming engine unreachable — try reloading the page')
+  let unreachable: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt === 1 ? 1500 : 3500))
+    let res: Response
+    try {
+      res = await fetch(engineUrl('/torrents'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+      })
+    } catch {
+      unreachable = new Error('Streaming engine unreachable — the server may be starting up. Try again in a moment.')
+      continue
+    }
+    let data: { error?: string } & EngineTorrent
+    try {
+      data = await res.json()
+    } catch {
+      // HTML/empty body -> the engine was not reachable through the gateway
+      unreachable = new Error('Streaming engine unreachable — the server may be starting up. Try again in a moment.')
+      continue
+    }
+    // A real JSON answer means the engine IS reachable — surface its own
+    // errors immediately (no retry: dead magnet etc. won't fix itself).
+    if (!res.ok) throw new Error(data.error || 'Failed to add torrent')
+    return data
   }
-  if (!res.ok) throw new Error(data.error || 'Failed to add torrent')
-  return data
+  throw unreachable || new Error('Streaming engine unreachable — try reloading the page')
 }
 
 export async function destroyTorrent(infoHash: string, wipe = false): Promise<void> {

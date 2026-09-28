@@ -15,6 +15,12 @@ export const dynamic = 'force-dynamic'
  *  detail opens stay sub-second once warm. */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ imdb: string }> }) {
   const { imdb } = await params
+  // Belt-and-braces: make sure the streaming engine exists before the user
+  // hits Play (no-op when instrumentation already booted it).
+  try {
+    const { ensureEngineSupervisor } = await import('@/lib/server/engine-supervisor')
+    void ensureEngineSupervisor().catch(() => {})
+  } catch { /* streaming stays optional */ }
   try {
     const item = await withTimeout(cineMeta('movie', imdb), 15_000, 'metadata')
 

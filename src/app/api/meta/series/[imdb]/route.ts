@@ -14,6 +14,12 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest, { params }: { params: Promise<{ imdb: string }> }) {
   const { imdb } = await params
   const anime = new URL(req.url).searchParams.get('anime') === '1'
+  // Belt-and-braces: make sure the streaming engine exists before the user
+  // hits Play (no-op when instrumentation already booted it).
+  try {
+    const { ensureEngineSupervisor } = await import('@/lib/server/engine-supervisor')
+    void ensureEngineSupervisor().catch(() => {})
+  } catch { /* streaming stays optional */ }
   try {
     const detail = await seriesDetail(imdb)
     try {
