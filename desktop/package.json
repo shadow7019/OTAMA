@@ -2,7 +2,7 @@
   "name": "otama-desktop",
   "productName": "OTAMA",
   "version": "1.5.2",
-  "description": "OTAMA \u2014 torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
+  "description": "OTAMA — torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
   "main": "src/main.mjs",
   "author": "OTAMA Project",
   "license": "MIT",

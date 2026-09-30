@@ -20,7 +20,8 @@ export const metadata: Metadata = {
     "OTAMA is a modern web UI for streaming torrents: movies, TV and anime with live swarm stats, resume playback and ThePirateBay search. Use responsibly — stream only content you have rights to.",
   keywords: ["OTAMA", "torrent", "streaming", "webtorrent", "next.js", "peerflix"],
   icons: {
-    icon: "/logo.svg",
+    icon: "/logo.png",
+    apple: "/logo.png",
   },
   openGraph: {
     title: "OTAMA — Torrent Streaming for the Web",

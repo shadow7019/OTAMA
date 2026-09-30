@@ -1051,3 +1051,18 @@ Work Log:
 
 Stage Summary:
 - The #1 hosted-deployment killer is gone: every web deployment now self-hosts its streaming engine via the Next.js instrumentation hook (reuse-or-spawn + watchdog), and the client retries across the boot window. Verified end-to-end with the user's exact failing title streaming in-browser. NOTE: otama.space-z.ai serves the OLD snapshot until the project is re-published from the Z.ai UI — after republish the hosted instance will boot its own engine and Play works there too.
+
+---
+Task ID: 45
+Agent: main (orchestrator)
+Task: Replace OTAMA logo everywhere with the user's new artwork (swirl + play + torii scene)
+
+Work Log:
+- Source: upload/ChatGPT Image Sep 30, 2026 at 06_44_12 PM.png (1254x1254, pure-black margins). Luminance bbox (lum>14) = 98,94..1155,1143; center-square crop 1058px with 0.988 inset to kill edge halo; 1024 lanczos3 master.
+- Regenerated ALL platform assets via sharp script (.cache/make-logo.mjs): desktop/build icon-master/icon/icon-512 (1024/1024/512), icon.icns (rebuilt by hand — ic07/128 + ic08/256 + ic09/512 + ic10/1024 PNG-embedded entries), icon.ico via desktop/scripts/make-ico.mjs (reinstalled desktop dep png-to-ico@^3.0.2, 7 sizes 16..256), iOS AppIcon.appiconset/AppIcon.png (1024, Contents.json untouched), Android mipmaps mdpi..xxxhdpi (48/72/96/144/192), public/logo.png (512).
+- Web: layout.tsx metadata icons icon+apple -> /logo.png; OtamaLogo component (nav/footer/about) swapped from inline SVG recreation to <img src="/logo.png"> (rounded-[10px], 36px); stale public/logo.svg removed (git rm).
+- Verified via agent-browser: favicon link resolves /logo.png (200, 436KB), desktop nav renders new mark, About dialog img present, mobile 390px nav logo visible (36px), lint 0 errors 0 warnings.
+- Folded into release v1.5.2 (tag not yet pushed — deploy key v5 still unregistered): local tag moved to include this commit, so the CI APK/IPA/EXE/DMG of v1.5.2 all carry the new icon.
+
+Stage Summary:
+- New brand artwork is live on all 5 platforms from one 1024 master: web (favicon + nav/footer/about + og), Android launcher, iOS app icon, Windows .ico, macOS .icns. Release v1.5.2 (engine self-hosting + logo) ready to push as soon as deploy key v5 is registered.
