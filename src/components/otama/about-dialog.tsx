@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import * as VisuallyHidden from '@radix-ui/react-visually-hidden'
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden'
 import { OtamaLogo } from '@/components/otama/logo'
 import { useAppStore } from '@/store/app-store'
 import { useEngineState } from '@/hooks/use-engine-state'

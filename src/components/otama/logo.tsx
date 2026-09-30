@@ -3,8 +3,8 @@
 import { cn } from '@/lib/utils'
 
 /**
- * OTAMA wordmark — the official app artwork (neon swirl + play + torii
- * scene) served from /public/logo-mark.png (full art with wordmark: /public/logo.png), matching the v1.5.2 icons on
+ * OTAMA wordmark — the official app artwork (neon swirl + torii + Mt. Fuji
+ * night scene) served from /public/logo-mark.png (full art with wordmark: /public/logo.png), matching the v1.5.2 icons on
  * Android/iOS/desktop. Kept as <img> so brand updates ship as one file.
  */
 export function OtamaLogo({ className }: { className?: string }) {

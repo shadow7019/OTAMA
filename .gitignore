@@ -34,3 +34,4 @@ android/app/build/
 android/local.properties
 tool-results/
 .deploy/
+upload/
