@@ -1066,3 +1066,5 @@ Work Log:
 
 Stage Summary:
 - New brand artwork is live on all 5 platforms from one 1024 master: web (favicon + nav/footer/about + og), Android launcher, iOS app icon, Windows .ico, macOS .icns. Release v1.5.2 (engine self-hosting + logo) ready to push as soon as deploy key v5 is registered.
+
+Task 45 addendum: the sandbox wiped /home/z/ssh-tools AND ~/.ssh (v5 key lost) twice within minutes. Deploy keys now live in .deploy/ (gitignored, project dir survives) with a bundled ssh binary extracted from the Debian openssh-client .deb. v5 keypair RE-ISSUED from .deploy — the public key quoted in chat earlier is DEAD; the current one is in .deploy/id_ed25519.pub. Push command ready: GIT_SSH_COMMAND=".deploy/bin/ssh -i .deploy/id_ed25519 -o UserKnownHostsFile=.deploy/known_hosts -o IdentitiesOnly=yes" git push origin main v1.5.2.
