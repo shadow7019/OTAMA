@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import * as VisuallyHidden from '@radix-ui/react-visually-hidden'
 import { OtamaLogo } from '@/components/otama/logo'
 import { useAppStore } from '@/store/app-store'
 import { useEngineState } from '@/hooks/use-engine-state'
@@ -30,6 +31,10 @@ export function AboutDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto otama-scroll">
+        {/* Accessible dialog title — visually hidden, the logo row is the visual header */}
+        <VisuallyHidden>
+          <DialogTitle>About OTAMA</DialogTitle>
+        </VisuallyHidden>
         <DialogHeader>
           <div className="flex items-center gap-3">
             <OtamaLogo />
