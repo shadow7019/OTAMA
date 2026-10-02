@@ -519,8 +519,15 @@ async function startRendererServer() {
   const port = await findFreePort(3001)
   rendererPortNum = port
   // Writable SQLite database inside the user profile (Prisma DATABASE_URL).
+  // Prisma `file:` URLs MUST be percent-encoded: on macOS the userData dir is
+  // "~/Library/Application Support/OTAMA" and the SPACE in "Application
+  // Support" silently broke every Prisma query (all /api/* → 500, so the
+  // app flagged "local API answered unexpectedly" on every launch). Windows
+  // paths rarely contain spaces, which is why only macOS builds were hit.
   const dbPath = path.join(app.getPath('userData'), 'otama.db').replace(/\\/g, '/')
+  const dbUrl = `file:${encodeURI(dbPath)}`
   ensureDatabaseFile(dbPath)
+  log(`renderer database: ${dbUrl}`)
   const tmdbKeys = loadRendererTmdbEnv(dir)
   if (tmdbKeys.length) log(`renderer TMDB credentials loaded: ${tmdbKeys.join(', ')}`)
 
@@ -529,7 +536,7 @@ async function startRendererServer() {
     env: {
       PORT: String(port),
       HOSTNAME: '127.0.0.1',
-      DATABASE_URL: `file:${dbPath}`,
+      DATABASE_URL: dbUrl,
       OTAMA_DESKTOP: '1',
     },
   })
@@ -588,6 +595,9 @@ const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
 
 function buildMenu() {
   const pub = readPublicUrl()
+  // The public-address/domain feature (phones over the internet) is Windows
+  // only — macOS users reported the "enter your domain" nags as unwanted.
+  const showDomainItems = process.platform !== 'darwin'
   const template = [
     {
       label: 'OTAMA',
@@ -604,14 +614,20 @@ function buildMenu() {
         ...(lanMode
           ? [{ label: 'Turn LAN access off (restarts OTAMA)', click: toggleLanMode }]
           : []),
-        ...(lanMode
+        ...(lanMode && showDomainItems
           ? [{ label: pub ? `Public address: ${pub}` : 'Public address: not set', enabled: false }]
           : []),
-        ...(httpsActive ? [{ label: `HTTPS: ${pub} — automatic certificate (ports 80+443)`, enabled: false }] : []),
-        {
-          label: pub ? 'Edit public address…' : 'Set public address (domain)…',
-          click: promptPublicUrl,
-        },
+        ...(httpsActive && showDomainItems
+          ? [{ label: `HTTPS: ${pub} — automatic certificate (ports 80+443)`, enabled: false }]
+          : []),
+        ...(showDomainItems
+          ? [
+              {
+                label: pub ? 'Edit public address…' : 'Set public address (domain)…',
+                click: promptPublicUrl,
+              },
+            ]
+          : []),
         { type: 'separator' },
         { role: 'minimize' },
         { role: 'quit', label: 'Quit OTAMA' },
@@ -703,7 +719,6 @@ async function apiSmokeCheck(base) {
     message: 'OTAMA started, but its local API answered unexpectedly.',
     detail:
       `HTTP ${smoke.status} (expected JSON)${bodyStart ? ` — got: ${bodyStart}` : ''}\n\n` +
-      'Phones connecting over LAN will not be able to browse metadata.\n' +
       'Try restarting OTAMA once; if it keeps happening, reinstall the app.',
     buttons: ['OK'],
   })
@@ -769,35 +784,29 @@ if (!app.requestSingleInstanceLock()) {
       if (lanMode && !DEV_URL) {
         const lan = lanAddress()
         lanPhoneUrl = lan ? `http://${lan}:${gwPortNum}` : ''
-        const pub = readPublicUrl()
         buildMenu()
         if (lanPhoneUrl) {
           log(`LAN mode — phones on the same Wi-Fi connect to ${lanPhoneUrl}`)
-          dialog.showMessageBox({
-            type: 'info',
-            title: 'OTAMA — LAN access is ON',
-            message: 'Phones can now use OTAMA.',
-            detail:
-              `SAME WI-FI — enter this in the OTAMA Android app:
+          if (process.platform === 'darwin') {
+            // macOS: no startup nag. The menu bar already shows the LAN
+            // address; users reported the "set your domain" instruction as
+            // unwanted, so the desktop app stays silent and local-first.
+          } else {
+            dialog.showMessageBox({
+              type: 'info',
+              title: 'OTAMA — LAN access is ON',
+              message: 'Phones can now use OTAMA.',
+              detail:
+                `SAME WI-FI — enter this in the OTAMA Android app:
 
 ${lanPhoneUrl}
 
 ` +
-              (pub
-                ? `INTERNET (anywhere) — enter this instead:
-
-${pub}
-
-One-time setup: forward TCP port ${gwPortNum} on your router to this PC, ` +
-                  `and make sure your domain (otama.linkpc.net or your own) points at this network's public IP.
-
-`
-                : 'INTERNET (anywhere) — set your domain via menu:\nOTAMA → "Set public address (domain)…"\n\n') +
-              'If Windows Firewall asks, allow OTAMA on private AND public networks.',
-            buttons: ['OK'],
-          })
+                'If Windows Firewall asks, allow OTAMA on private AND public networks.',
+              buttons: ['OK'],
+            })
+          }
         } else {
-          buildMenu()
           log('LAN mode — no LAN IPv4 address found (offline?)')
         }
       } else {
