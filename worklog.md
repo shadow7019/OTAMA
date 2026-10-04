@@ -1112,3 +1112,18 @@ Work Log:
 
 Stage Summary:
 - v1.5.3 fixes the macOS API 500s (Prisma file: URL encoding) and removes every automatic domain/address nag from the desktop app. Push pending user registering deploy key v6; push command: cd /home/z/my-project && .git/otama-deploy/bin/ssh is referenced via GIT_SSH_COMMAND=".git/otama-deploy/bin/ssh -i .git/otama-deploy/id_ed25519 -o UserKnownHostsFile=.git/otama-deploy/known_hosts -o IdentitiesOnly=yes" git push origin main v1.5.3.
+
+---
+Task ID: 47
+Agent: main (orchestrator)
+Task: Use otama.com (Freehostia NS) as the OTAMA domain
+
+Work Log:
+- User provided otama.com DNS facts: NS dns1/dns2.freehostia.com, Freehostia Default Route 162.210.102.232, Shared SSL IP 162.210.101.174. Live check from the sandbox: otama.com currently resolves to Linode IPs (74.207.241.245 / 23.239.4.93) — the NS switch to Freehostia has NOT propagated yet (or hasn't been submitted at the registrar).
+- desktop/src/main.mjs PROMPT_HTML ("Set public address" dialog, Windows): examples switched otama.linkpc.net → otama.com, input now PRE-FILLS https://otama.com, hint explains the required A record (otama.com → THIS network's public IP, not the web host's). Doc comment updated too.
+- NEW website/index.html — single-file, zero-dependency, brand-styled landing page for Freehostia public_html: hero + "Open OTAMA" → https://otama.space-z.ai + per-platform download links → GitHub releases. Upload via Freehostia File Manager; works over the Default-Route HTTP and SSL.
+- Domain topology notes recorded: the hosted web instance (otama.space-z.ai) is mapped at the Z.ai platform edge — custom hostnames for it cannot be configured from inside the sandbox; otama.com can (a) serve the Freehostia landing page after NS propagation, and/or (b) drive the desktop app's HTTPS public-address feature via an A record to the user's home IP.
+- v1.5.3 (commit 8f66784 + tag) still unpushed: deploy key v6 NOT yet registered on GitHub (ssh -T still returns Permission denied). All work staged locally on main (9cf586a + this commit).
+
+Stage Summary:
+- otama.com is wired as the app's official domain (desktop dialog default) and a ready-to-upload landing page ships in website/. Pending: user registers deploy key v6 → push main + v1.5.3; user submits the NS change at the registrar → Freehostia hosting (upload website/index.html to public_html); optional: A record → home IP for the desktop HTTPS feature.

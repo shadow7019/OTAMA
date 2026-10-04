@@ -1,0 +1,114 @@
+<!doctype html>
+<!--
+  OTAMA landing page for otama.com (Freehostia hosting).
+
+  Upload this single file as index.html into your Freehostia public_html
+  (File Manager → public_html → Upload). No PHP, no build step, no external
+  assets — works on every Freehostia plan over HTTP and SSL.
+
+  Edit APP_URL (the "Open OTAMA" button) below if the hosted instance URL
+  ever changes.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OTAMA — stream torrents, beautifully</title>
+<meta name="description" content="OTAMA is a self-hosted streaming app: search, stream and download torrents with a beautiful WebUI on the web, Windows, macOS, Android and iOS.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; padding:0; }
+  body{
+    min-height:100vh; background:#09090b; color:#fafafa;
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .glow{position:fixed;inset:0;pointer-events:none;
+    background:
+      radial-gradient(600px 300px at 50% -50px, rgba(217,70,239,.18), transparent 70%),
+      radial-gradient(500px 260px at 85% 110%, rgba(245,158,11,.10), transparent 70%);}
+  header{width:100%;max-width:1040px;display:flex;align-items:center;gap:12px;
+    padding:22px 24px;}
+  .mark{width:40px;height:40px;border-radius:12px;
+    background:linear-gradient(135deg,#d946ef,#a21caf);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 10px 30px rgba(217,70,239,.35);flex:none}
+  .mark svg{display:block}
+  header h1{font-size:18px;letter-spacing:.35em;margin:0;font-weight:700;text-indent:.05em}
+  header span{margin-left:auto;font-size:12px;color:#a1a1aa}
+  main{width:100%;max-width:1040px;padding:36px 24px 24px;text-align:center;
+    display:flex;flex-direction:column;align-items:center;gap:26px}
+  .hero-mark{width:104px;height:104px;border-radius:28px;
+    background:linear-gradient(135deg,#d946ef,#a21caf);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 24px 80px rgba(217,70,239,.4)}
+  h2{font-size:clamp(30px,6vw,52px);line-height:1.08;margin:0;font-weight:800;letter-spacing:-.02em}
+  h2 em{font-style:normal;background:linear-gradient(90deg,#d946ef,#f59e0b);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  p.lead{color:#a1a1aa;font-size:clamp(14px,2.4vw,17px);max-width:640px;margin:0;line-height:1.6}
+  .cta{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:6px}
+  .btn{display:inline-flex;align-items:center;gap:10px;padding:14px 26px;border-radius:12px;
+    font-weight:700;font-size:15px;text-decoration:none;transition:transform .15s ease, box-shadow .15s ease}
+  .btn:hover{transform:translateY(-2px)}
+  .primary{background:linear-gradient(135deg,#d946ef,#a21caf);color:#fff;
+    box-shadow:0 14px 40px rgba(217,70,239,.35)}
+  .ghost{background:#18181b;color:#fafafa;border:1px solid #27272a}
+  .platforms{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;
+    width:100%;max-width:760px;margin-top:12px}
+  .card{background:#111113;border:1px solid #1f1f23;border-radius:14px;padding:16px 14px;text-align:center}
+  .card b{display:block;font-size:14px;margin-bottom:4px}
+  .card a{color:#d946ef;font-size:12.5px;text-decoration:none}
+  .card a:hover{text-decoration:underline}
+  footer{margin-top:auto;width:100%;max-width:1040px;
+    padding:26px 24px calc(26px + env(safe-area-inset-bottom));
+    border-top:1px solid #18181b;display:flex;gap:14px;flex-wrap:wrap;
+    align-items:center;justify-content:center;color:#71717a;font-size:12.5px;text-align:center}
+  footer a{color:#a1a1aa;text-decoration:none}
+  footer a:hover{color:#d946ef}
+</style>
+</head>
+<body>
+<div class="glow"></div>
+
+<header>
+  <div class="mark" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#09090b"/></svg>
+  </div>
+  <h1>OTAMA</h1>
+  <span>otama.com</span>
+</header>
+
+<main>
+  <div class="hero-mark" aria-hidden="true">
+    <svg width="46" height="46" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#09090b"/></svg>
+  </div>
+
+  <h2>Stream torrents,<br><em>beautifully.</em></h2>
+  <p class="lead">OTAMA pairs a sleek WebUI with a built-in streaming engine — search anything,
+    start watching while it downloads, keep favorites and history. Self-hosted on your desktop,
+    reachable from every screen you own.</p>
+
+  <div class="cta">
+    <a class="btn primary" href="https://otama.space-z.ai">Open OTAMA
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <a class="btn ghost" href="https://github.com/shadow7019/OTAMA/releases">Get the apps</a>
+  </div>
+
+  <div class="platforms">
+    <div class="card"><b>🌐 Web</b><a href="https://otama.space-z.ai">otama.space-z.ai</a></div>
+    <div class="card"><b>🪟 Windows</b><a href="https://github.com/shadow7019/OTAMA/releases">Installer / portable</a></div>
+    <div class="card"><b>🍎 macOS</b><a href="https://github.com/shadow7019/OTAMA/releases">DMG (Apple silicon)</a></div>
+    <div class="card"><b>🤖 Android</b><a href="https://github.com/shadow7019/OTAMA/releases">APK</a></div>
+    <div class="card"><b>📱 iOS</b><a href="https://github.com/shadow7019/OTAMA/releases">IPA (sideload)</a></div>
+  </div>
+</main>
+
+<footer>
+  <span>© OTAMA Project — open source (MIT)</span>
+  <a href="https://github.com/shadow7019/OTAMA">GitHub</a>
+  <a href="https://github.com/shadow7019/OTAMA/releases">Releases</a>
+</footer>
+</body>
+</html>
