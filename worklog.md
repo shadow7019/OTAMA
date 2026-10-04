@@ -1156,3 +1156,19 @@ Work Log:
 
 Stage Summary:
 - DKIM key validated and ready to paste; the single blocking action for ALL otama.com DNS records (DKIM included) is the registrar-side NS switch GiantPanda → Freehostia.
+
+---
+Task ID: 49
+Agent: main (orchestrator)
+Task: FTP-deploy the landing page to Freehostia with the user's credentials ("do it for me")
+
+Work Log:
+- FTP host discovery: ftp.freehostia.com refused; swaupa0.freehostia.com does not resolve; ftp.otama.com dead (GiantPanda/Linode). SUCCESS on 162.210.102.232:21 (the user's "Default Route" IP) — user swaupa0 login OK (230).
+- FTP data channel flaky (EPSV worked intermittently; STOR stalled once) — retry with --ftp-pasv succeeded: index.html (5789 bytes) uploaded to /otama.com/index.html, verified via FTP listing (size/date match).
+- LIVE CHECK with Host header: http://162.210.102.232/ + Host: otama.com → HTTP 200, 5789 bytes = our landing page byte-exact. The site is ALREADY SERVED on Freehostia; public visibility still gated on the NS switch (GiantPanda still authoritative).
+- Docroot discovery: /otama.com/ contains a dormant Podcast Generator install (Nov 2022, open-source podcast CMS) — NOT deleted. Our index.html wins DirectoryIndex at / (verified); the podcast app stays reachable at /index.php.
+- Oddity noted: a workspace folder named after THIS chat's session id (workspace-4a8edc00-…-3) plus buttons.xml/config.php/freebox-content.txt touched today 17:53 UTC — flagged to the user, not touched by me.
+- Shared SSL IP (162.210.101.174) test pending in same command; v6 deploy key still unregistered; main + v1.5.3 staged locally.
+
+Stage Summary:
+- otama.com's Freehostia-side hosting is DONE: landing page live server-side, old podcast app preserved. Remaining for public launch: registrar NS switch GiantPanda → dns1/dns2.freehostia.com; then the world resolves otama.com to 162.210.102.232 and sees the OTAMA landing.
