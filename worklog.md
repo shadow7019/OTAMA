@@ -1127,3 +1127,18 @@ Work Log:
 
 Stage Summary:
 - otama.com is wired as the app's official domain (desktop dialog default) and a ready-to-upload landing page ships in website/. Pending: user registers deploy key v6 → push main + v1.5.3; user submits the NS change at the registrar → Freehostia hosting (upload website/index.html to public_html); optional: A record → home IP for the desktop HTTPS feature.
+
+---
+Task ID: 47-addendum ("do it for me")
+Agent: main (orchestrator)
+Task: Automate everything automatable for the otama.com + v1.5.3 rollout
+
+Work Log:
+- otama.com live audit (DoH): NS = damao/yangguang.ns.giantpanda.com (domain-marketplace parking), A = 3 Linode IPs, HTTP body literally "OK". The Freehostia NS the user pasted are NOT authoritative yet — registrar-side NS change still pending.
+- Deploy key v6 re-tested: still unregistered (Permission denied). Push of main + tag v1.5.3 (HEAD 20e4e82) remains staged locally.
+- website/otama-landing.zip created (2.4 KB) for one-click Freehostia upload.
+- Landing page E2E via agent-browser: file:// render at 1280x800 and 390x844 — hero/CTA/platform cards/footer all correct, footer naturally at bottom, zero page errors. Screenshots in /tmp/landing-*.png.
+- Hosted instance check: otama.space-z.ai engine self-boot CONFIRMED LIVE in production (health ok, uptime 1s→20s growing — user republished; v1.5.2 instrumentation works on the hosted instance).
+
+Stage Summary:
+- Everything automatable is done. Remaining 3 steps all need the user's own account logins: (1) register deploy key v6 OR paste a fine-grained PAT (Contents R/W, this repo) for HTTPS push; (2) submit the NS change GiantPanda→dns1/dns2.freehostia.com at the registrar; (3) upload otama-landing.zip to Freehostia public_html (or hand me FTP creds and I'll push it via curl -T).
