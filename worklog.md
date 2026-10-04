@@ -1142,3 +1142,17 @@ Work Log:
 
 Stage Summary:
 - Everything automatable is done. Remaining 3 steps all need the user's own account logins: (1) register deploy key v6 OR paste a fine-grained PAT (Contents R/W, this repo) for HTTPS push; (2) submit the NS change GiantPanda→dns1/dns2.freehostia.com at the registrar; (3) upload otama-landing.zip to Freehostia public_html (or hand me FTP creds and I'll push it via curl -T).
+
+---
+Task ID: 48
+Agent: main (orchestrator)
+Task: DKIM record for otama.com (default selector) — validate + readiness
+
+Work Log:
+- User pasted default._domainkey.otama.com TXT: "k=rsa; p=MIGf…IDAQAB". Validated: base64 decodes to a 162-byte DER SPKI, openssl confirms a valid RSA 1024-bit public key — record is well-formed (classic OpenDKIM default-selector style; v=DKIM1 tag omitted, which is legal per RFC 6376).
+- Live DNS (DoH): NS still GiantPanda (damao/yangguang.ns.giantpanda.com); A still 3 Linode IPs; default._domainkey.otama.com currently returns GiantPanda's parking SPF ("v=spf1 ip6:fd43:c0d1:c090::/48 -all") — the user's DKIM is NOT live and CANNOT go live until NS moves to dns1/dns2.freehostia.com.
+- Guidance recorded for the Freehostia DNS panel: host `default._domainkey`, type TXT, value quoted "k=rsa; p=…"; DKIM is for @otama.com mailbox signing, independent of the website landing page.
+- Deploy key v6 re-tested: still unregistered; main + tag v1.5.3 (HEAD 98de4f1) remain staged.
+
+Stage Summary:
+- DKIM key validated and ready to paste; the single blocking action for ALL otama.com DNS records (DKIM included) is the registrar-side NS switch GiantPanda → Freehostia.
