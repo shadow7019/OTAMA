@@ -12,7 +12,7 @@ import WebKit
 /// server is always the default and only visible destination.
 final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
-    private static let defaultServer = URL(string: "https://otama.space-z.ai")!
+    private static let defaultServer = URL(string: "https://otama.netlify.app")!
     private static let serverKey = "otama.server_url"
 
     private static let accent = UIColor(red: 0xE8 / 255.0, green: 0x79 / 255.0, blue: 0xF9 / 255.0, alpha: 1)
@@ -250,7 +250,7 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private func presentServerDialog() {
         let alert = UIAlertController(
             title: "OTAMA server address",
-            message: "Leave empty to always use the hosted server (otama.space-z.ai).",
+            message: "Leave empty to always use the hosted server (otama.netlify.app).",
             preferredStyle: .alert
         )
         alert.addTextField { tf in

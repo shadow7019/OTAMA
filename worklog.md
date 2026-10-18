@@ -1191,3 +1191,24 @@ Stage Summary:
 - otama.linkpc.net is THE OTAMA domain everywhere (dialogs, landing). DNS live against home broadband; single blocker for public access = user-side port forwarding/inbound firewall.
 - builder.dnsexit.com cannot be driven end-to-end without the user's DNSExit login; if used for a landing site, its domain binding would conflict with pointing otama.linkpc.net at the home broadband instance.
 - Pending user actions: (1) register v6 deploy key to GitHub → push main+v1.5.3 → CI builds; (2) port-forward TCP 3000 (or 443) on the ACT Fibernet router to the OTAMA machine.
+
+---
+Task ID: 51
+Agent: main (orchestrator)
+Task: otama.netlify.app is now the hosted OTAMA instance — "DO THE SAME AND UPDATE EVERYTHING"
+
+Work Log:
+- Probed https://otama.netlify.app: live, HTTP/2 200, Next.js app, title "OTAMA — Torrent Streaming for the Web" — user's own Netlify deployment of the OTAMA WebUI.
+- Switched ALL domain references repo-wide (rg-verified zero residuals of linkpc.net / otama.space-z.ai / otama.com outside worklog history):
+  - desktop/src/main.mjs (5): dialog example "https://otama.netlify.app (hosted) or http://your-machine:3000"; prefill → https://otama.netlify.app; hint rewritten "Default is the hosted app otama.netlify.app — live over HTTPS, no setup. Self-hosting? Enter your own address instead."
+  - ios/OTAMA/ViewController.swift (2): defaultServer = https://otama.netlify.app + server-dialog message.
+  - android/.../MainActivity.java (2): DEFAULT_SERVER_URL = https://otama.netlify.app + dialog note.
+  - desktop/scripts/prepare-caddy.mjs (1): doc-comment example.
+  - website/index.html (4): comment now documents Netlify deploy (app.netlify.com/drop or Git); brand footer → otama.netlify.app; "Open OTAMA" button → https://otama.netlify.app (was space-z.ai); Web platform card → otama.netlify.app.
+- Rebuilt website/otama-landing.zip (5,796 B) for Netlify drag-and-drop redeploy.
+
+Stage Summary:
+- otama.netlify.app is THE hosted instance everywhere: Android/iOS open it by default, desktop dialog prefills it, landing page links to it.
+- Freehostia (dropped in Task 50) and otama.space-z.ai sandbox references fully retired from code.
+- Landing page redeploy on Netlify = drag website/ folder (or refreshed otama-landing.zip) onto Netlify Deploys.
+- Push still blocked on v6 deploy key registration; once pushed, tag v1.5.3 fires CI 4-platform builds.

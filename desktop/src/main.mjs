@@ -269,7 +269,7 @@ function toggleLanMode() {
 
 /**
  * The address phones use when they are NOT on the same Wi-Fi — e.g.
- * https://otama.linkpc.net. Resolution order:
+ * https://otama.netlify.app. Resolution order:
  *   1. OTAMA_SERVER_URL / SERVER_URL / API_URL environment variable
  *   2. public-url.txt inside the user profile (editable in-app via the
  *      "Set public address" menu item — no terminal knowledge required)
@@ -315,10 +315,10 @@ const PROMPT_HTML = `<!doctype html><html><head><meta charset="utf-8">
 </style></head><body>
   <h2>Public address</h2>
   <p>The address phones use when they are <b>not</b> on your Wi-Fi — for example<br>
-  <code>https://otama.linkpc.net</code> (https) or <code>http://otama.linkpc.net:3000</code></p>
-  <input id="u" spellcheck="false" placeholder="https://your-domain" value="https://otama.linkpc.net">
-  <p class="hint">Your domain: <b>otama.linkpc.net</b> — in its DNS panel add an A record pointing
-  otama.linkpc.net at THIS network's public IP (not the web-host's IP).
+  <code>https://otama.netlify.app</code> (hosted) or <code>http://your-machine:3000</code></p>
+  <input id="u" spellcheck="false" placeholder="https://your-domain" value="https://otama.netlify.app">
+  <p class="hint">Default is the hosted app <b>otama.netlify.app</b> — live over HTTPS, no setup.
+  Self-hosting? Enter your own address instead.
   https://… enables automatic HTTPS (Let's Encrypt; router must forward TCP 80+443).
   http://…:3000 is plain HTTP (forward TCP 3000).
   Leave empty + Save to clear. OTAMA_SERVER_URL / SERVER_URL / API_URL environment variables override this file.</p>

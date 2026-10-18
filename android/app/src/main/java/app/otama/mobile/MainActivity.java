@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
     /** Direct host: the hosted OTAMA instance (web UI + torrent engine,
      *  fully live). Reachable from any network — this is where the app
      *  opens, always, with zero configuration. */
-    private static final String DEFAULT_SERVER_URL = "https://otama.space-z.ai";
+    private static final String DEFAULT_SERVER_URL = "https://otama.netlify.app";
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -437,7 +437,7 @@ public class MainActivity extends Activity {
 
         TextView note = new TextView(this);
         note.setText("Leave empty to always use the hosted server\n"
-                + "(otama.space-z.ai) — recommended.");
+                + "(otama.netlify.app) — recommended.");
         note.setTextSize(12);
         note.setTextColor(ZINC_400);
         note.setPadding(0, dp(8), 0, dp(12));
