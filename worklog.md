@@ -1172,3 +1172,22 @@ Work Log:
 
 Stage Summary:
 - otama.com's Freehostia-side hosting is DONE: landing page live server-side, old podcast app preserved. Remaining for public launch: registrar NS switch GiantPanda → dns1/dns2.freehostia.com; then the world resolves otama.com to 162.210.102.232 and sees the OTAMA landing.
+
+---
+Task ID: 50
+Agent: main (orchestrator)
+Task: Switch OTAMA domain to otama.linkpc.net; evaluate builder.dnsexit.com publishing; drop Freehostia per user
+
+Work Log:
+- Code switch (user: "otama.linkpc.net use this domain for OTAMA"): desktop/src/main.mjs public-address dialog prefills https://otama.linkpc.net + example text + A-record hint now says "in its DNS panel add an A record pointing otama.linkpc.net at THIS network's public IP" (4 spots); website/index.html brand footer + header comment (2 spots). rg-verified zero otama.com residue.
+- Git hygiene: UUID auto-commit 422c62a had swallowed the domain switch + auth scaffold (4 /api/auth routes + lib/auth.ts + auth-screen.tsx) + public/logo.svg; squashed via soft reset into readable 9405b31; tag v1.5.3 re-pointed 20e4e82 → 9405b31. Auth scaffold verified zero-dependency (Node crypto scrypt) and build-safe (auth-screen.tsx unreferenced); kept.
+- DNS verified: otama.linkpc.net → 183.82.160.228 on 8.8.8.8/1.1.1.1/system. PTR = broadband.actcorp.in → user's ACT Fibernet home broadband (IP drifted .156 → .228 = dynamic; DDNS working).
+- Public reachability: ports 80/443/3000/8080 all closed/filtered on 183.82.160.228 — OTAMA instance unreachable from internet; needs user-side router port-forward (TCP 3000 or 443) + ISP inbound allowance.
+- builder.dnsexit.com reverse-engineered (SPA, /assets/index-CpNDFfTx.js): endpoints /api/auth/{session,claim,connect}, /api/projects/{id}[/{versions,assets,deploy,restore}], /api/sites, /api/ai/rewrite. Established guest cookie session (dnsexit_builder_guest, 7d JWT). PUT /api/projects/{id} rejects raw HTML ("A valid site document is required" — expects sections JSON; templates are dental/restaurant verticals); POST deploy rejects guests ("Connect a free DNSExit account before publishing") — final publish REQUIRES the user's DNSExit login, cannot be done on their behalf.
+- User directive: "WE ARENT USING FREE HOSTIA" — Freehostia FTP path abandoned; Task 49's uploaded copy no longer maintained (Host: otama.com currently returns "hostname not configured" there anyway).
+- Push attempt: v6 deploy key still unregistered — git@github.com Permission denied (publickey). main 9405b31 + tag v1.5.3 remain local.
+
+Stage Summary:
+- otama.linkpc.net is THE OTAMA domain everywhere (dialogs, landing). DNS live against home broadband; single blocker for public access = user-side port forwarding/inbound firewall.
+- builder.dnsexit.com cannot be driven end-to-end without the user's DNSExit login; if used for a landing site, its domain binding would conflict with pointing otama.linkpc.net at the home broadband instance.
+- Pending user actions: (1) register v6 deploy key to GitHub → push main+v1.5.3 → CI builds; (2) port-forward TCP 3000 (or 443) on the ACT Fibernet router to the OTAMA machine.
