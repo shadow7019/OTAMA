@@ -77,7 +77,7 @@ export function HomeView() {
   return (
     <div className="pb-10">
       <Hero items={movieItems} loading={movies.isLoading} />
-      <div className="mx-auto max-w-7xl space-y-9 px-4 pt-6 md:px-8">
+      <div className="space-y-9 px-4 pt-6 md:px-12">
         <ContinueWatchingRow />
         <MediaRow
           ranked

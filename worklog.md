@@ -1233,3 +1233,20 @@ Work Log:
 Stage Summary:
 - WebUI is now a Netflix-style template: #141414 canvas, #E50914 brand, white Play CTAs, red Top-10 numerals, sharp 4px radii — all prior features intact (search, catalogs, TPB view, favorites, history, player, downloads, dialogs).
 - Note for user: otama.netlify.app deployment will pick this up on next deploy (drag & drop or Git-connected auto-deploy).
+
+---
+Task ID: 53
+Agent: main (orchestrator)
+Task: "I need the whole interface be like Netflix" — structural Netflix rebuild beyond the palette
+
+Work Log:
+- nav-bar.tsx rewritten: scroll-aware Netflix bar — transparent black gradient floating over the hero at top, turns solid #141414/95 + shadow + border at scrollY>32 (window scroll listener); search collapses to a magnifier icon and expands into an input on click (autoFocus, collapses on empty blur — Netflix behavior); nav links = plain text buttons with white active state; downloads badge red/white; mobile menu solid panel + 44px touch targets.
+- hero.tsx: TRENDING badge → Netflix "TOP 10" red square + "#N in Movies Today" (N tracks the rotating slide); bottom fade lands on exact #141414; added right-edge "16+" maturity tag (border-l white, black/40 backdrop) above the slides row.
+- media-row.tsx: row headers demoted to text-base/semibold (Netflix row title scale); "Explore more" outline button → Netflix "Explore All ›" text link, hidden until row hover (group/row + opacity transition, focus-visible keeps it accessible); chevron scrollers also hover-reveal only.
+- home-view.tsx: rows container max-w-7xl removed → edge-to-edge px-4 md:px-12 (Netflix full-bleed rows).
+- footer.tsx rebuilt Netflix-style: centered max-w-3xl muted column — "Questions? Contact us", 4 social icons (GitHub real link + X/YouTube/Instagram), 2/4-column link grid (About/Help/Terms/Privacy/Cookies/Corporate/Contact/Legal — real repo links or open the About dialog), bordered "Service Code" button, legal + TMDB lines. Logo dropped from footer (Netflix has none).
+- Verification: lint clean; agent-browser — transparent-over-hero at top, solid nav after scroll, search expansion, TOP-10 badge + #1 in Movies Today + 16+ tag visible, hover-reveal row controls present in DOM, footer matches Netflix layout, mobile hamburger menu + search fine; zero console/page errors.
+
+Stage Summary:
+- Interface structure now matches Netflix end-to-end: floating nav, full-bleed red-accented rows, Top-10 hero badge, maturity tag, expanding search, Netflix footer. All prior functionality intact.
+- Ready for otama.netlify.app redeploy; GitHub push still gated on v6 deploy key registration.

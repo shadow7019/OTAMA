@@ -40,10 +40,10 @@ export function MediaRow({
   }
   if (!loading && items.length === 0) return null
   return (
-    <section className="space-y-3" aria-label={title}>
+    <section className="group/row space-y-3" aria-label={title}>
       <div className="flex items-start justify-between gap-4 px-1">
         <div className="min-w-0">
-          <h2 className="text-lg font-bold tracking-tight md:text-xl">
+          <h2 className="text-base font-semibold tracking-tight md:text-lg">
             {title}
             {accent ? <span className="text-[#e50914]"> {accent}</span> : null}
           </h2>
@@ -53,16 +53,15 @@ export function MediaRow({
         </div>
         <div className="hidden shrink-0 items-center gap-2 sm:flex">
           {exploreTo ? (
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => setView(exploreTo)}
-              className="h-9 border-white/15 bg-transparent px-3 text-sm text-zinc-200 hover:bg-white/10 hover:text-white"
+              className="hidden items-center gap-0.5 text-sm font-medium text-zinc-300 opacity-0 transition-opacity hover:text-white focus-visible:opacity-100 group-hover/row:opacity-100 sm:flex"
+              aria-label={`Explore all ${title}`}
             >
-              {exploreLabel || 'Explore more'}
-            </Button>
+              {exploreLabel || 'Explore All'} <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
           ) : null}
-          <div className="flex gap-1">
+          <div className="flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => scrollBy(-1)} aria-label={`Scroll ${title} left`}>
               <ChevronLeft className="h-5 w-5" />
             </Button>

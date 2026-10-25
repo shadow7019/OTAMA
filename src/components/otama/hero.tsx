@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Star, Play, Info, Flame } from 'lucide-react'
+import { Star, Play, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAppStore } from '@/store/app-store'
@@ -60,7 +60,7 @@ export function Hero({ items, loading }: { items: MetaItem[]; loading?: boolean 
       {/* chillflix overlays: linear to page bg + brand-tinted radials + grain */}
       <div
         className="pointer-events-none absolute inset-0 z-[1]"
-        style={{ background: 'linear-gradient(180deg, rgba(10,10,10,.06), rgba(10,10,10,.45) 58%, hsl(0 0% 6%) 96%)' }}
+        style={{ background: 'linear-gradient(180deg, rgba(10,10,10,.06), rgba(10,10,10,.45) 58%, #141414 96%)' }}
         aria-hidden
       />
       <div
@@ -89,9 +89,10 @@ export function Hero({ items, loading }: { items: MetaItem[]; loading?: boolean 
         <div className="w-full px-5 pb-10 pt-28 sm:px-6 md:px-12 md:pb-14">
           <div className="flex max-w-2xl flex-col items-start text-left">
             <div className="mb-3 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-500">
-              <span className="inline-flex items-center gap-1 bg-[#e50914] px-1.5 py-0.5 text-[11px] font-extrabold tracking-wide text-white">
-                <Flame className="h-3.5 w-3.5 fill-white" aria-hidden /> TRENDING
+              <span className="flex flex-col items-center justify-center rounded-sm bg-[#e50914] px-1 py-0.5 text-[9px] font-black leading-[1.05] text-white">
+                TOP<br />10
               </span>
+              <span className="text-sm font-semibold text-zinc-100">#{(index % featured.length) + 1} in Movies Today</span>
             </div>
 
             <h1 className="text-4xl font-black leading-[1.04] tracking-tight drop-shadow-xl md:text-6xl">
@@ -142,6 +143,13 @@ export function Hero({ items, loading }: { items: MetaItem[]; loading?: boolean 
           </div>
         </div>
       </motion.div>
+
+      <div
+        className="absolute bottom-24 right-0 z-10 hidden border-l-2 border-zinc-200/80 bg-black/40 px-3 py-1.5 text-sm text-zinc-100 backdrop-blur-sm md:block"
+        aria-hidden
+      >
+        16+
+      </div>
 
       <div className="absolute bottom-3 right-6 z-10 flex gap-1.5 md:right-12" role="tablist" aria-label="Featured slides">
         {featured.map((f, i) => (
