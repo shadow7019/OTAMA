@@ -33,12 +33,13 @@ import android.widget.Toast;
 import java.net.URI;
 
 /**
- * OTAMA for Android — a focused WebView shell that opens the user's own
- * OTAMA server. There is no hosted instance: on first launch the app asks
- * for the server address (e.g. http://192.168.1.20:3000 on the same Wi-Fi,
- * or the user's own https:// domain), remembers it, and renders the exact
- * same UI as the browser. The address can be changed anytime via
- * "Use another server" on the connection-error screen.
+ * OTAMA for Android — a focused WebView shell that opens the user's
+ * OTAMA server. By default it connects to the hosted instance at
+ * https://otama.space-z.ai; self-hosters can point it at their own server
+ * instead (e.g. http://192.168.1.20:3000 on the same Wi-Fi, or the user's
+ * own https:// domain) via "Use another server" on the connection-error
+ * screen. The choice is remembered and renders the exact same UI as the
+ * browser.
  */
 public class MainActivity extends Activity {
 
@@ -47,11 +48,16 @@ public class MainActivity extends Activity {
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
 
-    /** Connection policy: OTAMA connects ONLY to a server the user runs
-     *  themselves — the desktop app on their PC (same Wi-Fi, e.g.
-     *  http://192.168.1.20:3000) or their own https:// domain. There is no
-     *  built-in hosted server: the address is asked for on first launch
-     *  (see resolveTargetUrl / showServerOverlay) and remembered. */
+    /** Hosted OTAMA instance — used when the user has not configured their
+     *  own server. Self-hosted addresses (LAN or custom domain) are saved in
+     *  prefs and always win over this default. */
+    private static final String DEFAULT_SERVER_URL = "https://otama.space-z.ai";
+
+    /** Connection policy: OTAMA connects to the hosted instance by default
+     *  (DEFAULT_SERVER_URL). Users who run their own server — the desktop
+     *  app on their PC (same Wi-Fi, e.g. http://192.168.1.20:3000) or their
+     *  own https:// domain — enter its address via "Use another server"
+     *  (see resolveTargetUrl / showServerOverlay); the choice is remembered. */
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -93,7 +99,7 @@ public class MainActivity extends Activity {
 
         String target = resolveTargetUrl();
         if (target.isEmpty()) {
-            showServerOverlay(); // first launch: ask for the OTAMA server address
+            showServerOverlay(); // safety net: default + nothing saved should never land here
         } else {
             enterWebView(target);
         }
@@ -161,14 +167,14 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Returns the configured server address, or "" when nothing valid is
-     * saved (first launch / stale entry) — the caller then shows the setup
-     * dialog. LAN addresses are honored: the typical setup is the desktop
-     * app running on the same Wi-Fi.
+     * Returns the server address to connect to: the user's saved choice if
+     * valid, otherwise the hosted instance (DEFAULT_SERVER_URL). LAN
+     * addresses are honored: self-hosters typically point this at the
+     * desktop app running on the same Wi-Fi.
      */
     private String resolveTargetUrl() {
         String saved = prefs.getString("server_url", null);
-        if (saved == null || saved.isEmpty()) return "";
+        if (saved == null || saved.isEmpty()) return DEFAULT_SERVER_URL;
         boolean validHost = false;
         try {
             String h = URI.create(saved).getHost();
@@ -178,7 +184,7 @@ public class MainActivity extends Activity {
         }
         if (!validHost) {
             prefs.edit().remove("server_url").apply(); // one-time cleanup
-            return "";
+            return DEFAULT_SERVER_URL;
         }
         return saved;
     }
@@ -362,10 +368,11 @@ public class MainActivity extends Activity {
 
         TextView detail = new TextView(this);
         detail.setText(connectedUrl + "\n\n"
-                + "OTAMA streams from YOUR OWN OTAMA server — run it on\n"
-                + "a PC (desktop app or 'bun run dev'), then connect from\n"
-                + "the same Wi-Fi, e.g. http://192.168.1.20:3000, or use\n"
-                + "your own https:// domain.\n\n"
+                + "OTAMA streams from an OTAMA server. The hosted instance\n"
+                + "(https://otama.space-z.ai) is down or unreachable right now.\n\n"
+                + "Self-hosting instead? Run OTAMA on a PC (desktop app or\n"
+                + "'bun run dev'), then connect from the same Wi-Fi, e.g.\n"
+                + "http://192.168.1.20:3000, or use your own https:// domain.\n\n"
                 + "Check that the server is running and the address is\n"
                 + "right, then Try again.\n\n"
                 + "Need to change the address?\n"
@@ -413,10 +420,11 @@ public class MainActivity extends Activity {
 
     /* ------------------------- advanced: custom server ------------------------- */
 
-    /** Ask for the OTAMA server address. With no hosted instance, the app
-     *  connects only to servers the user runs — on the same Wi-Fi (e.g.
-     *  http://192.168.1.20:3000) or their own https:// domain. The dialog
-     *  is mandatory on first launch: no way out until a server is saved. */
+    /** Ask for the OTAMA server address. The hosted instance
+     *  (https://otama.space-z.ai) is the default; users who run their own
+     *  server — on the same Wi-Fi (e.g. http://192.168.1.20:3000) or their
+     *  own https:// domain — enter it here. Until a first page loads the
+     *  dialog cannot be dismissed (nothing to fall back to). */
     private void showServerOverlay() {
         if (serverOverlay != null) return;
         serverOverlay = new LinearLayout(this);
@@ -439,18 +447,21 @@ public class MainActivity extends Activity {
         card.addView(title);
 
         TextView note = new TextView(this);
-        note.setText("Run OTAMA on a PC (desktop app or 'bun run dev'),\n"
-                + "then enter its address — e.g. http://192.168.1.20:3000\n"
-                + "(same Wi-Fi) or your own https:// domain.");
+        note.setText("Using the hosted instance (https://otama.space-z.ai)?\n"
+                + "Just tap Save. Self-hosting? Run OTAMA on a PC\n"
+                + "(desktop app or 'bun run dev') and enter its address —\n"
+                + "e.g. http://192.168.1.20:3000 (same Wi-Fi) or your own\n"
+                + "https:// domain.");
         note.setTextSize(12);
         note.setTextColor(ZINC_400);
         note.setPadding(0, dp(8), 0, dp(12));
         card.addView(note);
 
         final EditText input = new EditText(this);
-        input.setHint("http://192.168.1.20:3000");
+        input.setHint(DEFAULT_SERVER_URL);
         String current = prefs.getString("server_url", "");
         if (current.isEmpty()) current = connectedUrl;
+        if (current.isEmpty()) current = DEFAULT_SERVER_URL;
         input.setText(current);
         input.setTextSize(15);
         input.setTextColor(0xFFFAFAFA);
@@ -500,11 +511,12 @@ public class MainActivity extends Activity {
     private void applyServerInput(EditText input) {
         String raw = input.getText().toString().trim();
         if (raw.isEmpty()) {
-            // empty = forget the saved server
+            // empty = forget the saved server and fall back to the hosted instance
             prefs.edit().remove("server_url").apply();
             if (firstPageDone) {
                 hideServerOverlay();
-                toast("Saved server cleared");
+                toast("Saved server cleared — reconnecting to the hosted instance");
+                enterWebView(DEFAULT_SERVER_URL);
             } else {
                 toast("Enter your OTAMA server address to continue");
             }

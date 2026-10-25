@@ -1377,3 +1377,34 @@ Work Log:
 
 Stage Summary:
 - OTAMA no longer advertises or defaults to any hosted instance: the landing sells the desktop app / self-hosting, mobile shells cold-start into a mandatory "your server address" setup (LAN-friendly), and the desktop public-URL prompt is optional by default. otama-landing.zip refreshed — re-drag website/ onto Netlify to ship the new landing.
+
+---
+Task ID: 58-recover
+Agent: main (orchestrator)
+Task: restore workspace after snapshot rollback wiped Tasks 52-57 ("workspace is showing older ui")
+
+Work Log:
+- Workspace had been restored to a pre-Task-52 checkpoint: local HEAD was a sandbox checkpoint (f162faf) on the old netlify-era line; /home/z/ssh-tools was gone so the sshCommand in .git/config pointed at a dead path; GitHub main/v1.5.3 had ALSO been reset back to 1d6840b (verified via both ssh and https ls-remote).
+- Found the lost commits still alive server-side via the GitHub commits API (f37372b, a3fcfa8); GitHub allows fetch-by-SHA, so `git fetch origin f37372bfdfa...` recovered the entire lost history in one shot.
+- Repaired .git/config core.sshCommand to use the bundled deploy ssh (.git/otama-deploy/bin/ssh + id_ed25519, chmod 600).
+- git reset --hard f37372b; re-pointed v1.5.3 at f37372b; force-pushed main + v1.5.3 — remote restored and verified via ls-remote (both = f37372b).
+- Killed stale dev processes (old Next dev + two duplicate otama-engine instances fighting over port 3003), cleared .next, relaunched via .zscripts/dev.sh: Next dev fresh on 3000, otama-engine healthy on 3003.
+- Verified the "old UI" complaint resolved: home page HTML no longer contains the removed anime/Pirate-Bay rows; served page fetches only catalog/history APIs.
+
+Stage Summary:
+- Full recovery of Tasks 52-57 work (Netflix UI rebuild, branding, intro ident, Home row removal, netlify retirement) — local and remote both back at f37372b. Root cause documented: workspace snapshot rollback + remote reset; recovery path = GitHub fetch-by-SHA.
+
+---
+Task ID: 58
+Agent: main (orchestrator)
+Task: "https://otama.space-z.ai use this" — adopt the new hosted OTAMA instance everywhere
+
+Work Log:
+- website/index.html: header NOTE now documents the hosted instance at https://otama.space-z.ai; primary CTA restored to "Open OTAMA" (→ https://otama.space-z.ai); lead paragraph mentions streaming from the hosted instance or self-hosting; 🌐 Web card now links to https://otama.space-z.ai (was "Run your own server" → repo). The generic app.netlify.com/drop deploy instruction remains the only Netlify mention. Rebuilt otama-landing.zip (15,310 B).
+- Android MainActivity.java: restored DEFAULT_SERVER_URL = "https://otama.space-z.ai" — resolveTargetUrl() returns saved server if valid, else the hosted default (first launch auto-connects, no more mandatory setup dialog; it stays as a safety net). Setup dialog + hint prefilled with saved → connected → default; note text explains "tap Save for hosted, or enter your own"; empty input now clears the saved server AND falls back to the hosted instance (reconnects immediately); error screen text updated (hosted unreachable + self-host instructions). LAN/BYOS fully honored — saved address always wins.
+- iOS ViewController.swift: restored defaultServer = URL(string: "https://otama.space-z.ai")! — resolveTargetURL() falls back to it (with one-time cleanup of stale saves); viewDidAppear dialog now a safety net; dialog message/placeholder/prefill follow saved → connected → default; empty input clears + reconnects to hosted; error text updated. BYOS/LAN honored as on Android.
+- desktop: intentionally unchanged — the public-address prompt is about the user's own domain and stays optional; no hosted-instance comments existed to update.
+- Verification: rg sweep — zero otama.netlify refs anywhere; otama.space-z.ai wired in landing (3), Android (5), iOS (4); bun run lint clean; agent-browser — landing (file://) shows "Open OTAMA" → https://otama.space-z.ai, Web card → https://otama.space-z.ai, "View source" → repo, hosted-instance copy present, console clean; web app home renders exactly the 7 expected rows with zero page errors; 390px viewport has no horizontal scroll.
+
+Stage Summary:
+- https://otama.space-z.ai is now the hosted OTAMA instance end to end: landing opens it directly, mobile shells default to it (BYOS/LAN still fully respected via "Use another server"), desktop self-host flow untouched. otama-landing.zip refreshed.

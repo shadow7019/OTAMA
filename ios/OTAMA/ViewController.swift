@@ -1,15 +1,21 @@
 import UIKit
 import WebKit
 
-/// OTAMA for iPhone — a focused WKWebView shell that opens the user's own
-/// OTAMA server. There is no hosted instance: on first launch the app asks
-/// for the server address (e.g. http://192.168.1.20:3000 on the same Wi-Fi,
-/// or the user's own https:// domain), remembers it, and renders the exact
-/// same UI as the browser. The address can be changed anytime via
-/// "Use another server" on the connection-error screen.
+/// OTAMA for iPhone — a focused WKWebView shell that opens the user's
+/// OTAMA server. By default it connects to the hosted instance at
+/// https://otama.space-z.ai; self-hosters can point it at their own server
+/// instead (e.g. http://192.168.1.20:3000 on the same Wi-Fi, or the user's
+/// own https:// domain) via "Use another server" on the connection-error
+/// screen. The choice is remembered and renders the exact same UI as the
+/// browser.
 final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     private static let serverKey = "otama.server_url"
+
+    /// Hosted OTAMA instance — used when the user has not configured their
+    /// own server. Self-hosted addresses (LAN or custom domain) are saved in
+    /// UserDefaults and always win over this default.
+    private static let defaultServer = URL(string: "https://otama.space-z.ai")!
 
     private static let accent = UIColor(red: 0xE8 / 255.0, green: 0x79 / 255.0, blue: 0xF9 / 255.0, alpha: 1)
     private static let bg = UIColor(red: 0x09 / 255.0, green: 0x09 / 255.0, blue: 0x0B / 255.0, alpha: 1)
@@ -37,8 +43,8 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // First launch (nothing configured): ask for the OTAMA server
-        // address. No way past this until a server is saved.
+        // Safety net: resolveTargetURL always yields something (saved server
+        // or the hosted instance), so this only fires if loading never began.
         if connectedURL == nil && presentedViewController == nil {
             presentServerDialog()
         }
@@ -46,16 +52,19 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
 
     // MARK: - target url
 
-    /// Returns the configured server address, or nil when nothing valid is
-    /// saved (first launch / stale entry) — the caller then shows the setup
-    /// dialog. LAN addresses are honored: the typical setup is the desktop
-    /// app running on the same Wi-Fi.
+    /// Returns the server address to connect to: the user's saved choice if
+    /// valid, otherwise the hosted instance (defaultServer). LAN addresses
+    /// are honored: self-hosters typically point this at the desktop app
+    /// running on the same Wi-Fi.
     private func resolveTargetURL() -> URL? {
         guard let raw = UserDefaults.standard.string(forKey: Self.serverKey),
-              !raw.isEmpty,
-              let url = URL(string: raw),
+              !raw.isEmpty else {
+            return Self.defaultServer
+        }
+        guard let url = URL(string: raw),
               let host = url.host, !host.isEmpty else {
-            return nil
+            UserDefaults.standard.removeObject(forKey: Self.serverKey) // one-time cleanup
+            return Self.defaultServer
         }
         return url
     }
@@ -173,11 +182,12 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         detail.textAlignment = .center
         detail.font = .systemFont(ofSize: 13)
         detail.textColor = ViewController.zinc400
-        detail.text = "\(connectedURL?.absoluteString ?? "No server configured")\n\n"
-            + "OTAMA streams from YOUR OWN OTAMA server — run it on\n"
-            + "a PC (desktop app or 'bun run dev'), then connect from\n"
-            + "the same Wi-Fi, e.g. http://192.168.1.20:3000, or use\n"
-            + "your own https:// domain.\n\n"
+        detail.text = "\(connectedURL?.absoluteString ?? "No server connected")\n\n"
+            + "OTAMA streams from an OTAMA server. The hosted instance\n"
+            + "(https://otama.space-z.ai) is down or unreachable right now.\n\n"
+            + "Self-hosting instead? Run OTAMA on a PC (desktop app or\n"
+            + "'bun run dev'), then connect from the same Wi-Fi, e.g.\n"
+            + "http://192.168.1.20:3000, or use your own https:// domain.\n\n"
             + "Check that the server is running and the address is\n"
             + "right, then Try again.\n\n"
             + "Need to change the address?\n"
@@ -242,15 +252,17 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private func presentServerDialog() {
         let alert = UIAlertController(
             title: "OTAMA server address",
-            message: "Run OTAMA on a PC (desktop app or 'bun run dev'), then enter its address — e.g. http://192.168.1.20:3000 (same Wi-Fi) or your own https:// domain.",
+            message: "Using the hosted instance (https://otama.space-z.ai)? Just tap Save. Self-hosting? Run OTAMA on a PC (desktop app or 'bun run dev') and enter its address — e.g. http://192.168.1.20:3000 (same Wi-Fi) or your own https:// domain.",
             preferredStyle: .alert
         )
         alert.addTextField { tf in
-            tf.placeholder = "http://192.168.1.20:3000"
+            tf.placeholder = ViewController.defaultServer.absoluteString
             tf.keyboardType = .URL
             tf.autocapitalizationType = .none
             tf.autocorrectionType = .no
-            tf.text = UserDefaults.standard.string(forKey: ViewController.serverKey) ?? ""
+            tf.text = UserDefaults.standard.string(forKey: ViewController.serverKey)
+                ?? self.connectedURL?.absoluteString
+                ?? ViewController.defaultServer.absoluteString
         }
         alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self] _ in
             self?.applyServerInput(alert.textFields?.first?.text ?? "")
@@ -264,8 +276,9 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private func applyServerInput(_ rawInput: String) {
         let raw = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty {
-            // empty = forget the saved server; viewDidAppear re-prompts
+            // empty = forget the saved server and fall back to the hosted instance
             UserDefaults.standard.removeObject(forKey: Self.serverKey)
+            loadServer(Self.defaultServer)
             return
         }
         var s = raw
