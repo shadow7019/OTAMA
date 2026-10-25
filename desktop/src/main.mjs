@@ -37,6 +37,10 @@ import { startOtamaGateway } from './gateway.mjs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESKTOP_ROOT = path.resolve(__dirname, '..') // .../desktop
 
+// Let the Netflix-style intro ident play its synthesized "ta-dum" on launch
+// without needing a prior user gesture (browsers block autoplay otherwise).
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
 const ENGINE_PORT = 3003
 const DEV_URL = process.env.OTAMA_DEV_URL || '' // e.g. http://localhost:3000 while developing the web UI
 const APP_VERSION = readOwnVersion()
@@ -579,19 +583,23 @@ async function startGatewayServer() {
 
 /* ------------------------------ window ------------------------------ */
 
+/**
+ * Boot splash (data URL) shown while the engine + Next.js server start.
+ * Netflix-brand minimal: #141414 canvas, red OTAMA wordmark, red spinner.
+ * The full intro ident (ribbons → flash → zoom) plays in the renderer right
+ * after this, via src/components/otama/intro-splash.tsx.
+ */
 const SPLASH_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <style>
-  html,body{height:100%;margin:0;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+  html,body{height:100%;margin:0;background:#141414;color:#fafafa;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
     display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;user-select:none}
-  .mark{width:84px;height:84px;border-radius:22px;background:linear-gradient(135deg,#d946ef,#a21caf);
-    display:flex;align-items:center;justify-content:center;box-shadow:0 12px 40px rgba(245,158,11,.25)}
-  .tri{width:0;height:0;border-left:26px solid #09090b;border-top:16px solid transparent;border-bottom:16px solid transparent;margin-left:6px}
-  h1{font-size:26px;letter-spacing:.35em;margin:0;font-weight:700;text-indent:.35em}
+  h1{font-size:30px;margin:0;font-weight:800;letter-spacing:-.02em;color:#e50914;
+    text-shadow:0 0 26px rgba(229,9,20,.55);animation:pulse 1.6s ease-in-out infinite}
   p{color:#a1a1aa;font-size:13px;margin:0}
-  .spin{width:18px;height:18px;border:2px solid #3f3f46;border-top-color:#d946ef;border-radius:50%;animation:s .8s linear infinite}
+  .spin{width:18px;height:18px;border:2px solid #303030;border-top-color:#e50914;border-radius:50%;animation:s .8s linear infinite}
   @keyframes s{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
 </style></head><body>
-  <div class="mark"><div class="tri"></div></div>
   <h1>OTAMA</h1><p>starting torrent engine…</p><div class="spin"></div>
 </body></html>`
 
@@ -661,7 +669,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     show: false,
-    backgroundColor: '#09090b',
+    backgroundColor: '#141414',
     autoHideMenuBar: true,
     title: 'OTAMA',
     icon: path.join(DESKTOP_ROOT, 'build', 'icon.png'),

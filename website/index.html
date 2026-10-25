@@ -6,6 +6,9 @@
   to a Git repo connected to the site. Single file, no build step, no external
   assets — served over HTTPS by the global CDN.
 
+  The page opens with a Netflix-style ident (red light ribbons → OTAMA
+  wordmark flash → zoom into the page), inline below — zero dependencies.
+
   Edit APP_URL (the "Open OTAMA" button) below if the hosted instance URL
   ever changes.
 -->
@@ -20,60 +23,177 @@
   * { box-sizing: border-box; }
   html,body { margin:0; padding:0; }
   body{
-    min-height:100vh; background:#09090b; color:#fafafa;
+    min-height:100vh; background:#141414; color:#f5f5f5;
     font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
     display:flex; flex-direction:column; align-items:center;
   }
   .glow{position:fixed;inset:0;pointer-events:none;
     background:
-      radial-gradient(600px 300px at 50% -50px, rgba(217,70,239,.18), transparent 70%),
-      radial-gradient(500px 260px at 85% 110%, rgba(245,158,11,.10), transparent 70%);}
+      radial-gradient(600px 300px at 50% -50px, rgba(229,9,20,.16), transparent 70%),
+      radial-gradient(500px 260px at 85% 110%, rgba(229,9,20,.07), transparent 70%);}
   header{width:100%;max-width:1040px;display:flex;align-items:center;gap:12px;
     padding:22px 24px;}
-  .mark{width:40px;height:40px;border-radius:12px;
-    background:linear-gradient(135deg,#d946ef,#a21caf);
+  .mark{width:40px;height:40px;border-radius:8px;background:#e50914;
     display:flex;align-items:center;justify-content:center;
-    box-shadow:0 10px 30px rgba(217,70,239,.35);flex:none}
+    box-shadow:0 10px 30px rgba(229,9,20,.35);flex:none}
   .mark svg{display:block}
-  header h1{font-size:18px;letter-spacing:.35em;margin:0;font-weight:700;text-indent:.05em}
-  header span{margin-left:auto;font-size:12px;color:#a1a1aa}
+  header h1{font-size:19px;letter-spacing:-.02em;margin:0;font-weight:800;color:#e50914;
+    text-shadow:0 1px 2px rgba(0,0,0,.9)}
+  header span{margin-left:auto;font-size:12px;color:#b3b3b3}
   main{width:100%;max-width:1040px;padding:36px 24px 24px;text-align:center;
     display:flex;flex-direction:column;align-items:center;gap:26px}
-  .hero-mark{width:104px;height:104px;border-radius:28px;
-    background:linear-gradient(135deg,#d946ef,#a21caf);
+  .hero-mark{width:104px;height:104px;border-radius:12px;background:#e50914;
     display:flex;align-items:center;justify-content:center;
-    box-shadow:0 24px 80px rgba(217,70,239,.4)}
+    box-shadow:0 24px 80px rgba(229,9,20,.4)}
   h2{font-size:clamp(30px,6vw,52px);line-height:1.08;margin:0;font-weight:800;letter-spacing:-.02em}
-  h2 em{font-style:normal;background:linear-gradient(90deg,#d946ef,#f59e0b);
-    -webkit-background-clip:text;background-clip:text;color:transparent}
-  p.lead{color:#a1a1aa;font-size:clamp(14px,2.4vw,17px);max-width:640px;margin:0;line-height:1.6}
+  h2 em{font-style:normal;color:#e50914}
+  p.lead{color:#b3b3b3;font-size:clamp(14px,2.4vw,17px);max-width:640px;margin:0;line-height:1.6}
   .cta{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:6px}
-  .btn{display:inline-flex;align-items:center;gap:10px;padding:14px 26px;border-radius:12px;
-    font-weight:700;font-size:15px;text-decoration:none;transition:transform .15s ease, box-shadow .15s ease}
+  .btn{display:inline-flex;align-items:center;gap:10px;padding:14px 26px;border-radius:4px;
+    font-weight:700;font-size:15px;text-decoration:none;transition:background .15s ease, transform .15s ease}
   .btn:hover{transform:translateY(-2px)}
-  .primary{background:linear-gradient(135deg,#d946ef,#a21caf);color:#fff;
-    box-shadow:0 14px 40px rgba(217,70,239,.35)}
-  .ghost{background:#18181b;color:#fafafa;border:1px solid #27272a}
+  .primary{background:#e50914;color:#fff;box-shadow:0 14px 40px rgba(229,9,20,.35)}
+  .primary:hover{background:#f6121d}
+  .ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3)}
+  .ghost:hover{background:rgba(255,255,255,.2)}
   .platforms{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;
     width:100%;max-width:760px;margin-top:12px}
-  .card{background:#111113;border:1px solid #1f1f23;border-radius:14px;padding:16px 14px;text-align:center}
+  .card{background:#181818;border:1px solid #303030;border-radius:4px;padding:16px 14px;text-align:center;
+    transition:transform .15s ease, border-color .15s ease}
+  .card:hover{transform:translateY(-2px);border-color:#4d4d4d}
   .card b{display:block;font-size:14px;margin-bottom:4px}
-  .card a{color:#d946ef;font-size:12.5px;text-decoration:none}
+  .card a{color:#e50914;font-size:12.5px;text-decoration:none}
   .card a:hover{text-decoration:underline}
   footer{margin-top:auto;width:100%;max-width:1040px;
     padding:26px 24px calc(26px + env(safe-area-inset-bottom));
-    border-top:1px solid #18181b;display:flex;gap:14px;flex-wrap:wrap;
-    align-items:center;justify-content:center;color:#71717a;font-size:12.5px;text-align:center}
-  footer a{color:#a1a1aa;text-decoration:none}
-  footer a:hover{color:#d946ef}
+    border-top:1px solid #303030;display:flex;gap:14px;flex-wrap:wrap;
+    align-items:center;justify-content:center;color:#8c8c8c;font-size:12.5px;text-align:center}
+  footer a{color:#b3b3b3;text-decoration:none}
+  footer a:hover{color:#e50914;text-decoration:underline}
+
+  /* ─────────── Netflix-style intro ident (inline, zero dependencies) ─────────── */
+  .intro-overlay{position:fixed;inset:0;z-index:9999;background:#000;overflow:hidden;
+    animation:intro-out .5s ease 3.35s forwards}
+  @keyframes intro-out{to{opacity:0;visibility:hidden;pointer-events:none}}
+  .intro-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    will-change:transform,opacity;animation:intro-zoom 1.3s cubic-bezier(.66,0,.85,.35) 2.05s forwards}
+  @keyframes intro-zoom{to{transform:scale(16);opacity:0}}
+  .intro-shake{position:absolute;inset:0;animation:intro-shake .16s ease-out 1.12s 3}
+  @keyframes intro-shake{0%,100%{transform:translate(0,0)}25%{transform:translate(3px,-2px)}60%{transform:translate(-3px,2px)}}
+  .intro-ribbon{position:absolute;top:50%;height:175vh;width:clamp(28px,5.5vw,60px);opacity:0;
+    transform:translate(0,-50%) skewX(-14deg);will-change:transform,opacity;
+    background:linear-gradient(180deg,rgba(229,9,20,0) 0%,#8f060e 20%,#e50914 45%,#ff5058 52%,#e50914 60%,#8f060e 80%,rgba(229,9,20,0) 100%);
+    box-shadow:0 0 70px 18px rgba(229,9,20,.4)}
+  .intro-r1{left:36%;animation:intro-r1 1s cubic-bezier(.72,0,.28,1) .1s forwards}
+  .intro-r2{left:50%;animation:intro-r2 .9s cubic-bezier(.72,0,.28,1) .18s forwards}
+  .intro-r3{left:64%;animation:intro-r3 1s cubic-bezier(.72,0,.28,1) .12s forwards}
+  @keyframes intro-r1{0%{opacity:0;transform:translate(-52vw,-50%) skewX(-14deg)}14%{opacity:1}
+    72%{opacity:1;transform:translate(0,-50%) skewX(-14deg)}100%{opacity:0;transform:translate(0,-50%) skewX(-14deg)}}
+  @keyframes intro-r2{0%{opacity:0;transform:translate(0,-50%) scaleY(0) skewX(-14deg)}25%{opacity:1}
+    70%{opacity:1;transform:translate(0,-50%) scaleY(1) skewX(-14deg)}100%{opacity:0;transform:translate(0,-50%) scaleY(1) skewX(-14deg)}}
+  @keyframes intro-r3{0%{opacity:0;transform:translate(52vw,-50%) skewX(-14deg)}14%{opacity:1}
+    72%{opacity:1;transform:translate(0,-50%) skewX(-14deg)}100%{opacity:0;transform:translate(0,-50%) skewX(-14deg)}}
+  .intro-flash{position:absolute;inset:0;opacity:0;pointer-events:none;
+    background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.9) 0%,rgba(229,9,20,.5) 22%,transparent 55%);
+    animation:intro-flash .5s ease-out .88s forwards}
+  @keyframes intro-flash{0%{opacity:0}18%{opacity:1}100%{opacity:0}}
+  .intro-word{position:relative;z-index:3;display:flex;align-items:baseline;color:#e50914;
+    font-weight:800;letter-spacing:-.03em;line-height:1;font-size:clamp(52px,13vw,148px);
+    user-select:none;text-shadow:0 0 28px rgba(229,9,20,.5),0 0 90px rgba(229,9,20,.35)}
+  .intro-word i{font-style:normal;opacity:0;transform:scale(1.7);filter:blur(16px) brightness(4);
+    will-change:opacity,filter,transform;animation:intro-letter .5s cubic-bezier(.19,.75,.28,1) forwards}
+  .intro-word i:nth-child(1){animation-delay:.88s}
+  .intro-word i:nth-child(2){animation-delay:.94s}
+  .intro-word i:nth-child(3){animation-delay:1s}
+  .intro-word i:nth-child(4){animation-delay:1.06s}
+  .intro-word i:nth-child(5){animation-delay:1.12s}
+  @keyframes intro-letter{to{opacity:1;transform:scale(1);filter:blur(0) brightness(1)}}
+  .intro-rays{position:absolute;z-index:1;width:60vmax;height:60vmax;opacity:0;
+    background:repeating-conic-gradient(from 0deg,rgba(229,9,20,.16) 0deg 6deg,transparent 6deg 14deg);
+    -webkit-mask-image:radial-gradient(closest-side,#000 18%,transparent 70%);
+    mask-image:radial-gradient(closest-side,#000 18%,transparent 70%);
+    animation:intro-rays 1.15s ease-out .95s forwards}
+  @keyframes intro-rays{0%{opacity:0;transform:scale(.4) rotate(-8deg)}22%{opacity:.9}100%{opacity:0;transform:scale(1.5) rotate(6deg)}}
+  .intro-ring{position:absolute;z-index:2;width:40vmin;height:40vmin;border-radius:50%;
+    border:2px solid rgba(255,255,255,.65);
+    box-shadow:0 0 40px rgba(229,9,20,.8),inset 0 0 40px rgba(229,9,20,.4);opacity:0;
+    animation:intro-ring 1s cubic-bezier(.2,.7,.3,1) 1s forwards}
+  @keyframes intro-ring{0%{opacity:.95;transform:scale(.25)}100%{opacity:0;transform:scale(2.6)}}
+  .intro-skip{position:absolute;right:4%;bottom:7%;z-index:4;cursor:pointer;
+    font:600 14px/1 system-ui,-apple-system,'Segoe UI',sans-serif;color:#fff;
+    background:rgba(20,20,20,.55);border:1px solid rgba(255,255,255,.35);border-radius:4px;
+    padding:15px 22px;backdrop-filter:blur(4px);opacity:0;animation:intro-skip-in .4s ease 1.2s forwards}
+  .intro-skip:hover{background:rgba(255,255,255,.15)}
+  .intro-skip:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  @keyframes intro-skip-in{to{opacity:1}}
+  @media (prefers-reduced-motion: reduce){.intro-overlay{display:none}}
 </style>
 </head>
 <body>
+
+<!-- Netflix-style ident: ribbons sweep in → OTAMA flashes in with a ta-dum →
+     zoom through the wordmark into the page. Skippable; fades itself out at
+     ~3.4s even if JavaScript never runs; removed for reduced-motion users. -->
+<div class="intro-overlay" id="intro" role="presentation">
+  <div class="intro-shake" aria-hidden="true">
+    <div class="intro-stage">
+      <span class="intro-ribbon intro-r1"></span>
+      <span class="intro-ribbon intro-r2"></span>
+      <span class="intro-ribbon intro-r3"></span>
+      <span class="intro-rays"></span>
+      <span class="intro-ring"></span>
+      <span class="intro-flash"></span>
+      <span class="intro-word"><i>O</i><i>T</i><i>A</i><i>M</i><i>A</i></span>
+    </div>
+  </div>
+  <button type="button" class="intro-skip" id="intro-skip" aria-label="Skip the intro animation">Skip Intro</button>
+</div>
+<script>
+(function () {
+  var overlay = document.getElementById('intro')
+  if (!overlay) return
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    overlay.remove(); return
+  }
+  try { document.body.style.overflow = 'hidden' } catch (e) {}
+  var finish = function () {
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay)
+    try { document.body.style.overflow = '' } catch (e) {}
+  }
+  document.getElementById('intro-skip').addEventListener('click', finish)
+  window.setTimeout(finish, 4200)
+  /* Synthesized "ta-dum" — two low hits. Silent when the browser blocks
+     autoplay (no gesture yet); plays on desktop wrappers that allow it. */
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext
+    if (AC) {
+      var ctx = new AC()
+      if (ctx.resume) { try { ctx.resume() } catch (e) {} }
+      var boom = function (at, from, dur, vol) {
+        var osc = ctx.createOscillator(), g = ctx.createGain()
+        osc.type = 'sine'
+        osc.frequency.setValueAtTime(from, at)
+        osc.frequency.exponentialRampToValueAtTime(Math.max(30, from * 0.45), at + dur)
+        g.gain.setValueAtTime(0.0001, at)
+        g.gain.exponentialRampToValueAtTime(vol, at + 0.025)
+        g.gain.exponentialRampToValueAtTime(0.0001, at + dur)
+        osc.connect(g); g.connect(ctx.destination)
+        osc.start(at); osc.stop(at + dur + 0.1)
+      }
+      var t0 = ctx.currentTime + 0.9
+      boom(t0, 185, 0.24, 0.22)
+      boom(t0 + 0.22, 112, 1.2, 0.42)
+      window.setTimeout(function () { if (ctx.close) try { ctx.close() } catch (e) {} }, 4400)
+    }
+  } catch (e) { /* no Web Audio — visual-only intro */ }
+})()
+</script>
+
 <div class="glow"></div>
 
 <header>
   <div class="mark" aria-hidden="true">
-    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#09090b"/></svg>
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#141414"/></svg>
   </div>
   <h1>OTAMA</h1>
   <span>otama.netlify.app</span>
@@ -81,7 +201,7 @@
 
 <main>
   <div class="hero-mark" aria-hidden="true">
-    <svg width="46" height="46" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#09090b"/></svg>
+    <svg width="46" height="46" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#141414"/></svg>
   </div>
 
   <h2>Stream torrents,<br><em>beautifully.</em></h2>

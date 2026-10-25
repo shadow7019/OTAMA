@@ -1250,3 +1250,23 @@ Work Log:
 Stage Summary:
 - Interface structure now matches Netflix end-to-end: floating nav, full-bleed red-accented rows, Top-10 hero badge, maturity tag, expanding search, Netflix footer. All prior functionality intact.
 - Ready for otama.netlify.app redeploy; GitHub push still gated on v6 deploy key registration.
+
+---
+Task ID: 54
+Agent: main (orchestrator)
+Task: Netflix-style intro ident when OTAMA opens ("I need an animation for otama just like Netflix when we open it")
+
+Work Log:
+- Built src/components/otama/intro-splash.tsx — a Netflix-style opening ident that plays on every app open, mounted in src/app/layout.tsx (one implementation covers ALL platforms: web otama.netlify.app, desktop Electron, Android WebView, iOS WebView).
+- Choreography (pure CSS in globals.css, ~0% JS dependency for the visuals): black screen → 3 red light ribbons sweep in from the edges (0.1s, the Netflix-N homage) → convergence flash (0.88s) → OTAMA wordmark materializes letter-by-letter from white-hot blur → radial rays + expanding shockwave ring + camera shake at the "dum" (1.1s) → camera zooms THROUGH the wordmark (scale 16, 2.05s) → overlay self-fades (3.35s) → JS removes node (4.2s).
+- Synthesized "ta-dum" with Web Audio (two pitch-dropping sine booms, no audio files) — scheduled via intro-splash.tsx; silent on the web when autoplay is blocked (graceful), always audible in desktop (main.mjs now sets autoplay-policy=no-user-gesture-required).
+- Netflix's own "Skip Intro" button bottom-right (appears 1.2s, 44px touch target); prefers-reduced-motion users never see the ident (CSS media query); timeline is CSS-driven so it plays pre-hydration and self-fades even without JS.
+- Bug caught in browser E2E: `return null` on finish does NOT unmount the component, so the effect cleanup never ran and body stayed overflow:hidden (app unscrollable). Fixed with a keyed effect on `gone` that restores scroll + closes the AudioContext for both the natural end and Skip paths.
+- desktop/src/main.mjs: stale fuchsia boot splash rebuilt Netflix-brand (#141414 canvas, glowing red OTAMA wordmark + red spinner); mainWindow backgroundColor #09090b → #141414; autoplay switch added.
+- website/index.html: fuchsia landing finally retired — full Netflix restyle (#141414 canvas, #E50914 marks/buttons/accents, sharp 4px radii, neutral #303030 borders) + the SAME intro ident inlined (zero external deps, single file preserved); all links intact (Open OTAMA → otama.netlify.app, platform cards → otama.netlify.app / GitHub releases). Rebuilt otama-landing.zip (4,682 B) for Netlify drag-and-drop.
+- Verification: bun run lint clean; agent-browser E2E — desktop 1280px ident frames captured (glowing wordmark + rays + ring, zoom-through phase), overlay auto-removes at 4.2s, body scroll restored, app beneath fully intact; Skip Intro click removes overlay instantly + restores scroll; mobile 390px ident centered with reachable skip; landing page file:// ident + reveal verified (btn href → otama.netlify.app); zero page errors; dev.log clean (all API 200).
+
+Stage Summary:
+- OTAMA now opens like Netflix everywhere: red ribbons → ta-dum → wordmark flash → zoom into the app — one shared ident on web/desktop/Android/iOS, skippable, reduced-motion-safe, zero assets.
+- Landing page + boot splash fuchsia debt retired; otama-landing.zip refreshed — re-drag website/ onto Netlify to ship the new landing + ident.
+- v1.5.3 re-pointed to include this work; push still gated on v6 deploy key registration.
