@@ -1,7 +1,7 @@
 /**
  * Downloads the platform-matched Caddy web server into resources/caddy/ so
  * the packaged desktop app can serve AUTOMATIC HTTPS (Let's Encrypt) for a
- * user-configured public domain, e.g. https://otama.netlify.app.
+ * user-configured public domain, e.g. https://otama.your-domain.com.
  *
  * - Runs everywhere Node runs; uses only Node stdlib + tar/PowerShell.
  * - Fail-soft: if the download fails (offline runner, GitHub hiccup), the

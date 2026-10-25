@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * OTAMA intro ident — the Netflix-style opening animation that plays when the
- * app opens. Web (otama.netlify.app), the desktop Electron shell and the
+ * app opens. The web app, the desktop Electron shell and the
  * Android/iOS WebViews all render this same component, so every OTAMA launch
  * opens with the same moment: black screen → red light ribbons sweep in →
  * the OTAMA wordmark flashes into existence with a "ta-dum" → light burst →

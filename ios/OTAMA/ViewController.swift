@@ -1,18 +1,14 @@
 import UIKit
 import WebKit
 
-/// OTAMA for iPhone — a focused WKWebView shell that opens the hosted OTAMA
-/// server DIRECTLY. No address screen, no LAN pairing, no router setup: the
-/// app works on any internet connection (Wi-Fi or cellular) because all
-/// streaming happens on the hosted server; the app renders the exact same UI
-/// as the browser.
-///
-/// Self-hosters can still point the app at their own domain via
-/// "Use another server" on the connection-error screen — but the hosted
-/// server is always the default and only visible destination.
+/// OTAMA for iPhone — a focused WKWebView shell that opens the user's own
+/// OTAMA server. There is no hosted instance: on first launch the app asks
+/// for the server address (e.g. http://192.168.1.20:3000 on the same Wi-Fi,
+/// or the user's own https:// domain), remembers it, and renders the exact
+/// same UI as the browser. The address can be changed anytime via
+/// "Use another server" on the connection-error screen.
 final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
-    private static let defaultServer = URL(string: "https://otama.netlify.app")!
     private static let serverKey = "otama.server_url"
 
     private static let accent = UIColor(red: 0xE8 / 255.0, green: 0x79 / 255.0, blue: 0xF9 / 255.0, alpha: 1)
@@ -27,51 +23,41 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private let refreshControl = UIRefreshControl()
     private var firstPageDone = false
     private var serverHost = ""
-    private var connectedURL: URL = ViewController.defaultServer
+    private var connectedURL: URL?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = ViewController.bg
         buildWebView()
         buildSplash()
-        loadServer(resolveTargetURL())
+        if let target = resolveTargetURL() {
+            loadServer(target)
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // First launch (nothing configured): ask for the OTAMA server
+        // address. No way past this until a server is saved.
+        if connectedURL == nil && presentedViewController == nil {
+            presentServerDialog()
+        }
     }
 
     // MARK: - target url
 
-    /// The hosted server is the default (and only visible) destination.
-    /// A previously saved CUSTOM address is honored only if it is a public
-    /// host — stale LAN/IP entries are dropped so the app can never
-    /// cold-start trying to reach a machine that isn't there.
-    private func resolveTargetURL() -> URL {
+    /// Returns the configured server address, or nil when nothing valid is
+    /// saved (first launch / stale entry) — the caller then shows the setup
+    /// dialog. LAN addresses are honored: the typical setup is the desktop
+    /// app running on the same Wi-Fi.
+    private func resolveTargetURL() -> URL? {
         guard let raw = UserDefaults.standard.string(forKey: Self.serverKey),
               !raw.isEmpty,
               let url = URL(string: raw),
               let host = url.host, !host.isEmpty else {
-            return Self.defaultServer
-        }
-        if Self.isPrivateHost(host) {
-            UserDefaults.standard.removeObject(forKey: Self.serverKey) // one-time cleanup
-            return Self.defaultServer
+            return nil
         }
         return url
-    }
-
-    /// Private/LAN hosts are never honored on cold start — the app is a
-    /// direct-host client of the hosted server, not a same-WiFi remote.
-    static func isPrivateHost(_ host: String) -> Bool {
-        let h = host.lowercased()
-        if h == "localhost" || h == "127.0.0.1" || h.hasSuffix(".local") || h.hasSuffix(".lan") { return true }
-        let parts = h.split(separator: ".")
-        if parts.count == 4,
-           let a = Int(parts[0]), let b = Int(parts[1]),
-           parts.allSatisfy({ Int($0).map({ $0 >= 0 && $0 <= 255 }) == true }) {
-            if a == 10 || a == 127 || a == 0 { return true }
-            if a == 192 && b == 168 { return true }
-            if a == 172 && b >= 16 && b <= 31 { return true }
-            if a == 169 && b == 254 { return true }
-        }
-        return false
     }
 
     // MARK: - webview
@@ -187,13 +173,15 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
         detail.textAlignment = .center
         detail.font = .systemFont(ofSize: 13)
         detail.textColor = ViewController.zinc400
-        detail.text = "\(connectedURL.absoluteString)\n\n"
-            + "OTAMA streams from a hosted server that should be\n"
-            + "reachable on ANY internet connection — Wi-Fi or\n"
-            + "cellular data, no setup needed.\n"
-            + "Check that your internet is on, then Try again.\n\n"
-            + "Running your own OTAMA server on a domain?\n"
-            + "Tap \"Use another server\" to point the app at it.\n\n"
+        detail.text = "\(connectedURL?.absoluteString ?? "No server configured")\n\n"
+            + "OTAMA streams from YOUR OWN OTAMA server — run it on\n"
+            + "a PC (desktop app or 'bun run dev'), then connect from\n"
+            + "the same Wi-Fi, e.g. http://192.168.1.20:3000, or use\n"
+            + "your own https:// domain.\n\n"
+            + "Check that the server is running and the address is\n"
+            + "right, then Try again.\n\n"
+            + "Need to change the address?\n"
+            + "Tap \"Use another server\".\n\n"
             + "(\(systemMessage))"
 
         let retry = UIButton(type: .system)
@@ -237,8 +225,12 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     }
 
     @objc private func retryTapped() {
+        guard let url = connectedURL else {
+            presentServerDialog() // nothing configured yet
+            return
+        }
         hideErrorOverlay()
-        webView.reload()
+        webView.load(URLRequest(url: url))
     }
 
     @objc private func otherServerTapped() {
@@ -250,34 +242,30 @@ final class ViewController: UIViewController, WKNavigationDelegate, WKUIDelegate
     private func presentServerDialog() {
         let alert = UIAlertController(
             title: "OTAMA server address",
-            message: "Leave empty to always use the hosted server (otama.netlify.app).",
+            message: "Run OTAMA on a PC (desktop app or 'bun run dev'), then enter its address — e.g. http://192.168.1.20:3000 (same Wi-Fi) or your own https:// domain.",
             preferredStyle: .alert
         )
         alert.addTextField { tf in
-            tf.placeholder = ViewController.defaultServer.absoluteString
+            tf.placeholder = "http://192.168.1.20:3000"
             tf.keyboardType = .URL
             tf.autocapitalizationType = .none
             tf.autocorrectionType = .no
-            let current = UserDefaults.standard.string(forKey: ViewController.serverKey) ?? ""
-            tf.text = (current.isEmpty || current == ViewController.defaultServer.absoluteString) ? "" : current
+            tf.text = UserDefaults.standard.string(forKey: ViewController.serverKey) ?? ""
         }
         alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self] _ in
             self?.applyServerInput(alert.textFields?.first?.text ?? "")
         })
-        alert.addAction(UIAlertAction(title: "Use hosted server", style: .default) { [weak self] _ in
-            guard let self else { return }
-            UserDefaults.standard.removeObject(forKey: Self.serverKey)
-            self.loadServer(Self.defaultServer)
-        })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if connectedURL != nil { // no way out until a server is configured
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        }
         present(alert, animated: true)
     }
 
     private func applyServerInput(_ rawInput: String) {
         let raw = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty {
+            // empty = forget the saved server; viewDidAppear re-prompts
             UserDefaults.standard.removeObject(forKey: Self.serverKey)
-            loadServer(Self.defaultServer)
             return
         }
         var s = raw

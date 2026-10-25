@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  OTAMA landing page for otama.netlify.app (Netlify hosting).
+  OTAMA landing page — static, single file, host it anywhere.
 
   Deploy on Netlify: drag & drop this folder at app.netlify.com/drop, or push
   to a Git repo connected to the site. Single file, no build step, no external
@@ -9,8 +9,9 @@
   The page opens with a Netflix-style ident (red light ribbons → OTAMA
   wordmark flash → zoom into the page), inline below — zero dependencies.
 
-  Edit APP_URL (the "Open OTAMA" button) below if the hosted instance URL
-  ever changes.
+  NOTE: there is no hosted OTAMA instance — streaming runs on a server you
+  host yourself (desktop app or `bun run dev`), so the buttons point at the
+  GitHub repo / releases.
 -->
 <html lang="en">
 <head>
@@ -198,7 +199,7 @@
     </svg>
   </div>
   <h1>OTAMA</h1>
-  <span>otama.netlify.app</span>
+  <span>Torrent streaming for the web</span>
 </header>
 
 <main>
@@ -224,14 +225,14 @@
     reachable from every screen you own.</p>
 
   <div class="cta">
-    <a class="btn primary" href="https://otama.netlify.app">Open OTAMA
+    <a class="btn primary" href="https://github.com/shadow7019/OTAMA/releases">Get the desktop app
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
     </a>
-    <a class="btn ghost" href="https://github.com/shadow7019/OTAMA/releases">Get the apps</a>
+    <a class="btn ghost" href="https://github.com/shadow7019/OTAMA">View source</a>
   </div>
 
   <div class="platforms">
-    <div class="card"><b>🌐 Web</b><a href="https://otama.netlify.app">otama.netlify.app</a></div>
+    <div class="card"><b>🌐 Web</b><a href="https://github.com/shadow7019/OTAMA">Run your own server</a></div>
     <div class="card"><b>🪟 Windows</b><a href="https://github.com/shadow7019/OTAMA/releases">Installer / portable</a></div>
     <div class="card"><b>🍎 macOS</b><a href="https://github.com/shadow7019/OTAMA/releases">DMG (Apple silicon)</a></div>
     <div class="card"><b>🤖 Android</b><a href="https://github.com/shadow7019/OTAMA/releases">APK</a></div>

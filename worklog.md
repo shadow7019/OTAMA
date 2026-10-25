@@ -1361,3 +1361,19 @@ Work Log:
 
 Stage Summary:
 - Remote fully synced: main + v1.5.3 both at a3fcfa8 (includes Home row removal). CI release build for the tag, if triggered, now covers the latest commit.
+
+---
+Task ID: 57
+Agent: main (orchestrator)
+Task: "remove otama.netlify.com as we are unable to stream content" — retire every reference to the hosted instance
+
+Work Log:
+- Sweep found the hosted instance referenced in: landing page (CTA + Web card + header + comments), Android DEFAULT_SERVER_URL (+ dialog/error text, "Use hosted server" buttons, private-host dropping), iOS defaultServer (same surfaces), desktop public-address prompt (prefill + hint), desktop/caddy comments, intro-splash comment.
+- Android MainActivity.java: DEFAULT_SERVER_URL deleted → resolveTargetUrl() returns "" when nothing is saved; onCreate shows the server-address overlay on first launch (mandatory — Cancel/back nudge until configured); LAN addresses now honored (the desktop-on-same-Wi-Fi setup is the new primary path); "Use hosted server" button removed; empty input = forget saved server; error/dialog texts rewritten ("run OTAMA on a PC — http://192.168.1.20:3000 same Wi-Fi or your own https:// domain"); isPrivateHost + regex imports deleted; repaired a self-caught regression where the cancel Button declaration was swallowed mid-edit.
+- iOS ViewController.swift: defaultServer deleted → resolveTargetURL() -> URL? (nil = unconfigured); viewDidLoad loads only when configured; new viewDidAppear presents the mandatory server dialog on first launch (no Cancel until saved); connectedURL now optional; retryTapped reopens the dialog when nothing is configured; "Use hosted server" action removed; texts rewritten; isPrivateHost deleted.
+- desktop/src/main.mjs: public-address prompt prefill emptied, hint now "Optional — only needed to reach OTAMA from OUTSIDE your Wi-Fi", example domain → otama.your-domain.com; prepare-caddy comment updated.
+- website/index.html: header span → "Torrent streaming for the web"; primary CTA "Open OTAMA" → "Get the desktop app" (GitHub releases); ghost → "View source" (repo); 🌐 Web card → "Run your own server" (repo); header comment documents there is NO hosted instance; rebuilt otama-landing.zip (15,282 B). The only remaining Netlify mention is the generic app.netlify.com/drop deploy instruction.
+- Verification: rg confirms zero otama.netlify refs outside worklog; bun run lint clean; agent-browser — landing (file://) shows all new CTAs/texts with ZERO otama.netlify occurrences and the ident still plays; web app healthy (7 rows, APIs 200, no page errors).
+
+Stage Summary:
+- OTAMA no longer advertises or defaults to any hosted instance: the landing sells the desktop app / self-hosting, mobile shells cold-start into a mandatory "your server address" setup (LAN-friendly), and the desktop public-URL prompt is optional by default. otama-landing.zip refreshed — re-drag website/ onto Netlify to ship the new landing.

@@ -31,19 +31,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.net.URI;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * OTAMA for Android — a focused WebView shell that opens the hosted OTAMA
- * server DIRECTLY. No address screen, no LAN pairing, no router setup: the
- * app works on any internet connection (Wi-Fi or mobile data) because all
- * streaming happens on the hosted server; the app renders the exact same UI
- * as the browser.
- *
- * Self-hosters can still point the app at their own domain via
- * "Use another server" on the connection-error screen — but the hosted
- * server is always the default and only visible destination.
+ * OTAMA for Android — a focused WebView shell that opens the user's own
+ * OTAMA server. There is no hosted instance: on first launch the app asks
+ * for the server address (e.g. http://192.168.1.20:3000 on the same Wi-Fi,
+ * or the user's own https:// domain), remembers it, and renders the exact
+ * same UI as the browser. The address can be changed anytime via
+ * "Use another server" on the connection-error screen.
  */
 public class MainActivity extends Activity {
 
@@ -52,10 +47,11 @@ public class MainActivity extends Activity {
     private static final int ZINC_800 = 0xFF27272A;
     private static final int ZINC_400 = 0xFFA1A1AA;
 
-    /** Direct host: the hosted OTAMA instance (web UI + torrent engine,
-     *  fully live). Reachable from any network — this is where the app
-     *  opens, always, with zero configuration. */
-    private static final String DEFAULT_SERVER_URL = "https://otama.netlify.app";
+    /** Connection policy: OTAMA connects ONLY to a server the user runs
+     *  themselves — the desktop app on their PC (same Wi-Fi, e.g.
+     *  http://192.168.1.20:3000) or their own https:// domain. There is no
+     *  built-in hosted server: the address is asked for on first launch
+     *  (see resolveTargetUrl / showServerOverlay) and remembered. */
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -95,7 +91,12 @@ public class MainActivity extends Activity {
         buildWebView();
         applyEdgeToEdge();
 
-        enterWebView(resolveTargetUrl());
+        String target = resolveTargetUrl();
+        if (target.isEmpty()) {
+            showServerOverlay(); // first launch: ask for the OTAMA server address
+        } else {
+            enterWebView(target);
+        }
     }
 
     /** Draw edge-to-edge on EVERY Android version (targetSdk 35 enforces it
@@ -160,14 +161,14 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * The hosted server is the default (and only visible) destination.
-     * A previously saved CUSTOM address is honored only if it is a public
-     * host — stale LAN/IP entries from older app versions are dropped once
-     * so the app can never cold-start trying to reach a PC that isn't there.
+     * Returns the configured server address, or "" when nothing valid is
+     * saved (first launch / stale entry) — the caller then shows the setup
+     * dialog. LAN addresses are honored: the typical setup is the desktop
+     * app running on the same Wi-Fi.
      */
     private String resolveTargetUrl() {
         String saved = prefs.getString("server_url", null);
-        if (saved == null || saved.isEmpty()) return DEFAULT_SERVER_URL;
+        if (saved == null || saved.isEmpty()) return "";
         boolean validHost = false;
         try {
             String h = URI.create(saved).getHost();
@@ -175,9 +176,9 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             validHost = false;
         }
-        if (!validHost || isPrivateHost(saved)) {
+        if (!validHost) {
             prefs.edit().remove("server_url").apply(); // one-time cleanup
-            return DEFAULT_SERVER_URL;
+            return "";
         }
         return saved;
     }
@@ -341,8 +342,8 @@ public class MainActivity extends Activity {
 
     /* --------------------------- connection error --------------------------- */
 
-    /** Shown when the hosted (or custom) server cannot be reached — without
-     *  this, a network hiccup would brick the app on a dead error page. */
+    /** Shown when the configured server cannot be reached — without this,
+     *  a network hiccup would brick the app on a dead error page. */
     private void showErrorOverlay() {
         if (errorOverlay != null) return;
         errorOverlay = new LinearLayout(this);
@@ -361,12 +362,14 @@ public class MainActivity extends Activity {
 
         TextView detail = new TextView(this);
         detail.setText(connectedUrl + "\n\n"
-                + "OTAMA streams from a hosted server that should be\n"
-                + "reachable on ANY internet connection — Wi-Fi or\n"
-                + "mobile data, no setup needed.\n"
-                + "Check that your internet is on, then Try again.\n\n"
-                + "Running your own OTAMA server on a domain?\n"
-                + "Tap \"Use another server\" to point the app at it.");
+                + "OTAMA streams from YOUR OWN OTAMA server — run it on\n"
+                + "a PC (desktop app or 'bun run dev'), then connect from\n"
+                + "the same Wi-Fi, e.g. http://192.168.1.20:3000, or use\n"
+                + "your own https:// domain.\n\n"
+                + "Check that the server is running and the address is\n"
+                + "right, then Try again.\n\n"
+                + "Need to change the address?\n"
+                + "Tap \"Use another server\".");
         detail.setTextSize(13);
         detail.setTextColor(ZINC_400);
         detail.setGravity(Gravity.CENTER);
@@ -410,10 +413,10 @@ public class MainActivity extends Activity {
 
     /* ------------------------- advanced: custom server ------------------------- */
 
-    /** Out-of-the-way advanced escape hatch for self-hosters. The hosted
-     *  server stays the default; anything typed here is only remembered
-     *  when it is a public host (private LAN entries are dropped on the
-     *  next cold start so the app can never get stuck reaching for a PC). */
+    /** Ask for the OTAMA server address. With no hosted instance, the app
+     *  connects only to servers the user runs — on the same Wi-Fi (e.g.
+     *  http://192.168.1.20:3000) or their own https:// domain. The dialog
+     *  is mandatory on first launch: no way out until a server is saved. */
     private void showServerOverlay() {
         if (serverOverlay != null) return;
         serverOverlay = new LinearLayout(this);
@@ -436,18 +439,19 @@ public class MainActivity extends Activity {
         card.addView(title);
 
         TextView note = new TextView(this);
-        note.setText("Leave empty to always use the hosted server\n"
-                + "(otama.netlify.app) — recommended.");
+        note.setText("Run OTAMA on a PC (desktop app or 'bun run dev'),\n"
+                + "then enter its address — e.g. http://192.168.1.20:3000\n"
+                + "(same Wi-Fi) or your own https:// domain.");
         note.setTextSize(12);
         note.setTextColor(ZINC_400);
         note.setPadding(0, dp(8), 0, dp(12));
         card.addView(note);
 
         final EditText input = new EditText(this);
-        input.setHint(DEFAULT_SERVER_URL);
+        input.setHint("http://192.168.1.20:3000");
         String current = prefs.getString("server_url", "");
         if (current.isEmpty()) current = connectedUrl;
-        input.setText(DEFAULT_SERVER_URL.equals(current) ? "" : current);
+        input.setText(current);
         input.setTextSize(15);
         input.setTextColor(0xFFFAFAFA);
         input.setHintTextColor(0xFF71717A);
@@ -473,27 +477,15 @@ public class MainActivity extends Activity {
         sp.topMargin = dp(16);
         card.addView(save, sp);
 
-        Button hosted = new Button(this);
-        hosted.setText("Use hosted server");
-        hosted.setTextColor(0xFFFAFAFA);
-        hosted.getBackground().setColorFilter(BG, android.graphics.PorterDuff.Mode.SRC_IN);
-        hosted.setOnClickListener(v -> {
-            prefs.edit().remove("server_url").apply();
-            hideServerOverlay();
-            toast("Using the hosted OTAMA server");
-            enterWebView(DEFAULT_SERVER_URL);
-        });
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        hp.topMargin = dp(8);
-        card.addView(hosted, hp);
-
         Button cancel = new Button(this);
         cancel.setText("Cancel");
         cancel.setTextSize(13);
         cancel.setTextColor(ZINC_400);
         cancel.getBackground().setColorFilter(ZINC_800, android.graphics.PorterDuff.Mode.SRC_IN);
-        cancel.setOnClickListener(v -> hideServerOverlay());
+        cancel.setOnClickListener(v -> {
+            if (firstPageDone) hideServerOverlay();
+            else toast("Enter your OTAMA server address to continue");
+        });
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
         cp.topMargin = dp(4);
@@ -508,11 +500,14 @@ public class MainActivity extends Activity {
     private void applyServerInput(EditText input) {
         String raw = input.getText().toString().trim();
         if (raw.isEmpty()) {
-            // empty = reset to the hosted server
+            // empty = forget the saved server
             prefs.edit().remove("server_url").apply();
-            hideServerOverlay();
-            toast("Using the hosted OTAMA server");
-            enterWebView(DEFAULT_SERVER_URL);
+            if (firstPageDone) {
+                hideServerOverlay();
+                toast("Saved server cleared");
+            } else {
+                toast("Enter your OTAMA server address to continue");
+            }
             return;
         }
         if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
@@ -545,31 +540,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Private/LAN hosts are never honored on cold start — the app is a
-     *  direct-host client of the hosted server, not a same-WiFi remote. */
-    private static boolean isPrivateHost(String url) {
-        String host;
-        try {
-            host = URI.create(url).getHost();
-        } catch (Exception e) {
-            return false;
-        }
-        if (host == null) return false;
-        String h = host.toLowerCase();
-        if (h.equals("localhost") || h.equals("127.0.0.1")
-                || h.endsWith(".local") || h.endsWith(".lan")) return true;
-        Matcher m = Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$").matcher(h);
-        if (m.matches()) {
-            int a = Integer.parseInt(m.group(1));
-            int b = Integer.parseInt(m.group(2));
-            if (a == 10 || a == 127 || a == 0) return true;
-            if (a == 192 && b == 168) return true;
-            if (a == 172 && b >= 16 && b <= 31) return true;
-            if (a == 169 && b == 254) return true;
-        }
-        return false;
-    }
-
     /* ----------------------------- lifecycle ----------------------------- */
 
     @Override
@@ -587,8 +557,9 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (serverOverlay != null) { // close the advanced dialog first
-                hideServerOverlay();
+            if (serverOverlay != null) { // close the server dialog first
+                if (firstPageDone) hideServerOverlay();
+                else toast("Enter your OTAMA server address to continue");
                 return true;
             }
             if (customView != null) { // leave fullscreen video first
