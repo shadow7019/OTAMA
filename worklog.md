@@ -1337,3 +1337,27 @@ Work Log:
 Stage Summary:
 - Home Screen is now catalog-only: the two torrent-strip rows are gone; that content stays one click away in the Anime and Pirate Bay tabs.
 - v1.5.3 re-pointed to include this work; push still gated on v6 deploy key registration.
+
+---
+Task ID: 56-push
+Agent: main (orchestrator)
+Task: "push it"
+
+Work Log:
+- First attempt failed differently than before: OpenSSH refused the deploy key — "bad permissions" (id_ed25519 was 755). chmod 600 fixed it; the key itself was already registered on GitHub.
+- Push succeeded: main force-updated bee11d4 → a3fcfa8 (all accumulated local work), v1.5.3 tag pushed as new tag; verified via git ls-remote (both refs match a3fcfa8).
+
+Stage Summary:
+- Remote is now fully in sync with all v1.5.3 work (Netflix UI rebuild, unskippable ident, Ribbon-O branding, Early Bird Watching, trimmed Home). Root cause of the long push outage was key file permissions, not GitHub registration.
+
+---
+Task ID: 56-push-fix
+Agent: main (orchestrator)
+Task: v1.5.3 tag was one commit behind after push
+
+Work Log:
+- ls-remote check exposed v1.5.3 pointing at 5972f29 (Task 55-c commit) instead of a3fcfa8 — the earlier `git tag -f v1.5.3 -q 2>/dev/null` had failed silently.
+- Re-pointed the tag (`git tag -f v1.5.3` → a3fcfa8), force-pushed it, verified via ls-remote: refs/tags/v1.5.3 = a3fcfa8, refs/heads/main = a3fcfa8.
+
+Stage Summary:
+- Remote fully synced: main + v1.5.3 both at a3fcfa8 (includes Home row removal). CI release build for the tag, if triggered, now covers the latest commit.
