@@ -1322,3 +1322,18 @@ Work Log:
 
 Stage Summary:
 - Home screen now shows the brand exactly twice (nav + hero monogram) like Netflix; "Coming soon" renamed to "Early Bird Watching".
+
+---
+Task ID: 56
+Agent: main (orchestrator)
+Task: "remove latest anime episodes and fresh from pirate bay from Home Screen"
+
+Work Log:
+- Confirmed both strips lived only on Home: AnimeFreshRow ("Latest anime episodes", live Nyaa feed) and PirateBayFreshRow ("Fresh from Pirate Bay", TPB cat=201) were imported solely by home-view.tsx.
+- home-view.tsx: removed both imports + JSX renders; updated the rows comment (dropped the Nyaa mention). Home order is now: Continue Watching → Today's Top Picks for You → Popular on OTAMA → Top 10 TV Shows → New episodes → New in theaters → Popular anime → Early Bird Watching.
+- Deleted the orphaned components src/components/otama/anime-fresh-row.tsx and src/components/otama/tpb-fresh-row.tsx (recoverable from git history). /api/nyaa and /api/tpb endpoints untouched — the Anime and Pirate Bay tabs keep all torrent functionality.
+- Verification: bun run lint clean; agent-browser E2E — desktop 1280px: exactly the 7 expected rows (h2 audit), zero trace of both removed titles, hero/nav unchanged; Anime + Pirate Bay tabs still render their catalogs; mobile 390px: hero + 7 rows correct; zero page errors, console clean, dev.log compiled clean.
+
+Stage Summary:
+- Home Screen is now catalog-only: the two torrent-strip rows are gone; that content stays one click away in the Anime and Pirate Bay tabs.
+- v1.5.3 re-pointed to include this work; push still gated on v6 deploy key registration.

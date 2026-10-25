@@ -5,8 +5,6 @@ import { toast } from 'sonner'
 import { Hero } from '@/components/otama/hero'
 import { MediaRow } from '@/components/otama/media-row'
 import { ContinueWatchingRow } from '@/components/otama/favorites-view'
-import { PirateBayFreshRow } from '@/components/otama/tpb-fresh-row'
-import { AnimeFreshRow } from '@/components/otama/anime-fresh-row'
 import { useAppStore } from '@/store/app-store'
 import type { MetaItem } from '@/lib/types'
 import { fetchJson } from '@/lib/fetch-json'
@@ -15,8 +13,8 @@ export function HomeView() {
   const openDetail = useAppStore((s) => s.openDetail)
 
   // All rows below are LIVE provider feeds (TMDB trending / now_playing /
-  // airing_today / upcoming + Nyaa's newest uploads) — new movies, new
-  // episodes and new seasons appear here automatically, no manual curation.
+  // airing_today / upcoming) — new movies, new episodes and new seasons
+  // appear here automatically, no manual curation.
   const movies = useQuery({
     queryKey: ['home', 'movies'],
     queryFn: () => fetchJson<{ items: MetaItem[] }>('/api/catalog?type=movie&sort=top&source=tmdb'),
@@ -134,8 +132,6 @@ export function HomeView() {
           onSelect={openFor}
           exploreTo="anime"
         />
-        <AnimeFreshRow />
-        <PirateBayFreshRow />
         <MediaRow
           tile
           title="Early Bird"
