@@ -20,10 +20,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  *
  * The timeline is CSS-driven on purpose: it plays even before React
  * hydrates, and the overlay fades itself out via `animation-fill-mode:
- * forwards` even if JS never runs. JavaScript adds exactly three things:
+ * forwards` even if JS never runs. JavaScript adds exactly two things:
  * the ta-dum sound (Web Audio — silently skipped when autoplay is blocked,
  * always audible in the desktop app thanks to the no-user-gesture switch),
- * the Netflix-style "Skip Intro" button, and node cleanup.
+ * and node cleanup. The ident is unskippable, like Netflix's TV idents.
  * Users with `prefers-reduced-motion: reduce` never see it (CSS media query).
  */
 

@@ -8,9 +8,9 @@ import { useAppStore, type View } from '@/store/app-store'
 import type { MetaItem } from '@/lib/types'
 
 /**
- * chillflix-style carousel row: title + accent + optional subtitle, an
- * "Explore more" outline button and arrow scrollers on the right. Set
- * `ranked` to render a Top-10 row with big gradient rank numbers.
+ * Netflix-style carousel row. `tile` renders the 2025 landscape 16:9 cards
+ * from the reference photo (no text underneath, TOP-10 ribbon on ranked rows);
+ * the classic portrait poster row is still available for compact contexts.
  */
 export function MediaRow({
   title,
@@ -22,6 +22,7 @@ export function MediaRow({
   exploreTo,
   exploreLabel,
   ranked,
+  tile,
 }: {
   title: string
   items: MetaItem[]
@@ -32,6 +33,7 @@ export function MediaRow({
   exploreTo?: View
   exploreLabel?: string
   ranked?: boolean
+  tile?: boolean
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const setView = useAppStore((s) => s.setView)
@@ -39,11 +41,14 @@ export function MediaRow({
     scroller.current?.scrollBy({ left: dir * scroller.current.clientWidth * 0.85, behavior: 'smooth' })
   }
   if (!loading && items.length === 0) return null
+
+  const cardWidth = tile ? 'w-[236px] shrink-0 sm:w-[272px] md:w-[300px]' : 'w-[130px] shrink-0 sm:w-[150px]'
+
   return (
     <section className="group/row space-y-3" aria-label={title}>
-      <div className="flex items-start justify-between gap-4 px-1">
+      <div className="flex items-end justify-between gap-4 px-1">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold tracking-tight md:text-lg">
+          <h2 className={tile ? 'text-xl font-bold tracking-tight md:text-2xl' : 'text-base font-semibold tracking-tight md:text-lg'}>
             {title}
             {accent ? <span className="text-[#e50914]"> {accent}</span> : null}
           </h2>
@@ -74,12 +79,16 @@ export function MediaRow({
       <div ref={scroller} className="no-scrollbar -mx-1 flex gap-3 overflow-x-auto scroll-smooth px-1 pb-1">
         {loading
           ? Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="w-[130px] shrink-0 sm:w-[150px]">
-                <div className="aspect-[2/3] animate-pulse rounded-lg bg-zinc-800/60" />
+              <div key={i} className={cardWidth}>
+                <div className={tile ? 'aspect-video animate-pulse rounded-xl bg-zinc-800/60' : 'aspect-[2/3] animate-pulse rounded-lg bg-zinc-800/60'} />
               </div>
             ))
           : items.map((item, i) =>
-              ranked ? (
+              tile ? (
+                <div key={`${item.refId}-${item.title}`} className={cardWidth}>
+                  <MediaCard item={item} variant="tile" rank={ranked ? i + 1 : undefined} onClick={() => onSelect?.(item)} />
+                </div>
+              ) : ranked ? (
                 <div key={`${item.refId}-${item.title}`} className="flex w-[168px] shrink-0 items-end sm:w-[196px]">
                   <span
                     aria-hidden
@@ -92,7 +101,7 @@ export function MediaRow({
                   </div>
                 </div>
               ) : (
-                <div key={`${item.refId}-${item.title}`} className="w-[130px] shrink-0 sm:w-[150px]">
+                <div key={`${item.refId}-${item.title}`} className={cardWidth}>
                   <MediaCard item={item} onClick={() => onSelect?.(item)} />
                 </div>
               ),

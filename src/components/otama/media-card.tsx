@@ -50,21 +50,83 @@ export function Poster({
   )
 }
 
+/** Red "TOP 10" ribbon badge pinned to the tile's top-left corner (reference photo). */
+export function TopTenBadge({ rank, className }: { rank: number; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'absolute left-0 top-0 z-10 flex flex-col items-center justify-center rounded-tl-xl rounded-br-xl bg-[#e50914] px-1.5 py-1 leading-none text-white shadow-md shadow-black/40',
+        className,
+      )}
+      aria-label={`Number ${rank} today`}
+    >
+      <span className="text-[8px] font-bold tracking-[0.08em]">TOP</span>
+      <span className="text-base font-black">{rank}</span>
+    </span>
+  )
+}
+
 const KIND_LABEL: Record<string, string> = { movie: 'Movie', tv: 'TV', anime: 'Anime' }
 
 /**
- * chillflix-style card: framed poster with hover play chip, and the meta
- * (title, rating, year, type) rendered UNDER the poster.
+ * Two card shapes:
+ *  - `tile` — the Netflix 2025 landscape 16:9 thumbnail (reference photo): no
+ *    text underneath, title reveals on hover, optional TOP-10 corner ribbon.
+ *  - `poster` (default) — framed portrait poster with meta underneath.
  */
 export function MediaCard({
   item,
   onClick,
   className,
+  variant = 'poster',
+  rank,
 }: {
   item: MetaItem
   onClick?: () => void
   className?: string
+  variant?: 'poster' | 'tile'
+  rank?: number
 }) {
+  if (variant === 'tile') {
+    return (
+      <button
+        onClick={onClick}
+        className={cn(
+          'group relative w-full min-h-[44px] text-left focus-visible:outline-none',
+          className,
+        )}
+        aria-label={`${item.title}${item.year ? ` (${item.year})` : ''}`}
+      >
+        <div className="relative overflow-hidden rounded-xl bg-card ring-1 ring-white/10 transition-all duration-200 group-hover:scale-[1.03] group-hover:ring-white/40 group-hover:shadow-xl group-hover:shadow-black/50 group-focus-visible:ring-2 group-focus-visible:ring-[#e50914]">
+          <Poster src={item.backdrop || item.poster} alt={item.title} ratio="aspect-video" />
+          {rank ? <TopTenBadge rank={rank} /> : null}
+          {/* hover reveal: gradient + title + play chip; always visible on
+              touch devices where hover never fires (@media hover:none) */}
+          <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/90 via-black/30 to-transparent p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+            <div className="flex items-end justify-between gap-2">
+              <div className="min-w-0">
+                <p className="line-clamp-2 text-sm font-bold leading-tight text-white drop-shadow">{item.title}</p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-medium text-zinc-300">
+                  {item.year ? <span>{item.year}</span> : null}
+                  {item.rating ? (
+                    <span className="inline-flex items-center gap-0.5">
+                      <Star className="h-3 w-3 fill-emerald-400 text-emerald-400" aria-hidden />
+                      {item.rating.toFixed(1)}
+                    </span>
+                  ) : null}
+                  <span className="uppercase tracking-wide text-zinc-400">{KIND_LABEL[item.kind] || 'Movie'}</span>
+                </p>
+              </div>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white shadow-lg">
+                <Play className="h-4 w-4 fill-black text-black" aria-hidden />
+              </span>
+            </div>
+          </div>
+        </div>
+      </button>
+    )
+  }
+
   return (
     <button
       onClick={onClick}
@@ -102,10 +164,10 @@ export function MediaCard({
   )
 }
 
-export function MediaCardSkeleton() {
+export function MediaCardSkeleton({ variant = 'poster' }: { variant?: 'poster' | 'tile' }) {
   return (
     <div className="overflow-hidden rounded-lg ring-1 ring-white/5">
-      <div className="aspect-[2/3] animate-pulse bg-zinc-800/60" />
+      <div className={variant === 'tile' ? 'aspect-video animate-pulse bg-zinc-800/60' : 'aspect-[2/3] animate-pulse bg-zinc-800/60'} />
     </div>
   )
 }

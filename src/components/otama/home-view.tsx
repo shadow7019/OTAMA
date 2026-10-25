@@ -77,22 +77,21 @@ export function HomeView() {
   return (
     <div className="pb-10">
       <Hero items={movieItems} loading={movies.isLoading} />
-      <div className="space-y-9 px-4 pt-6 md:px-12">
+      <div className="space-y-9 px-4 pt-8 md:px-6 md:pt-10">
         <ContinueWatchingRow />
         <MediaRow
           ranked
-          title="Top 10 Movies"
-          accent="Today"
-          subtitle="The films everyone is streaming right now — updated live."
+          tile
+          title="Today's Top Picks for You"
           items={movieItems.slice(0, 10)}
           loading={movies.isLoading}
           onSelect={openFor}
           exploreTo="movies"
         />
         <MediaRow
+          tile
           title="Popular on OTAMA"
           accent="now"
-          subtitle="Fan favorites and critically acclaimed films — the ones audiences can't stop talking about."
           items={movieItems.slice(10, 30)}
           loading={movies.isLoading}
           onSelect={openFor}
@@ -100,36 +99,36 @@ export function HomeView() {
         />
         <MediaRow
           ranked
+          tile
           title="Top 10 TV Shows"
           accent="Today"
-          subtitle="Series riding the top of the charts today."
           items={seriesItems.slice(0, 10)}
           loading={series.isLoading}
           onSelect={openFor}
           exploreTo="tv"
         />
         <MediaRow
+          tile
           title="New episodes"
           accent="airing today"
-          subtitle="Fresh episodes landing today — keep up with your shows."
           items={(airingToday.data?.items || []).slice(0, 20)}
           loading={airingToday.isLoading}
           onSelect={openFor}
           exploreTo="tv"
         />
         <MediaRow
+          tile
           title="New in"
           accent="theaters"
-          subtitle="Just released on the big screen — now streaming."
           items={(nowPlaying.data?.items || []).slice(0, 20)}
           loading={nowPlaying.isLoading}
           onSelect={openFor}
           exploreTo="movies"
         />
         <MediaRow
+          tile
           title="Popular"
           accent="anime"
-          subtitle="The seasons and series the anime community is watching."
           items={(anime.data?.items || []).slice(0, 20)}
           loading={anime.isLoading}
           onSelect={openFor}
@@ -138,9 +137,9 @@ export function HomeView() {
         <AnimeFreshRow />
         <PirateBayFreshRow />
         <MediaRow
+          tile
           title="Coming"
           accent="soon"
-          subtitle="Get ahead of the hype — upcoming releases to watch for."
           items={(upcoming.data?.items || []).slice(0, 20)}
           loading={upcoming.isLoading}
           onSelect={openFor}

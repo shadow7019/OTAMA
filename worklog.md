@@ -1287,3 +1287,24 @@ Work Log:
 Stage Summary:
 - OTAMA's identity is now fully Netflix-consistent: Ribbon-O mark + condensed red wordmark across web nav, favicon, landing page, Windows .ico, macOS .icns, Android mipmaps and iOS AppIcon; intro ident is unskippable (Netflix-style) and self-terminates.
 - otama-landing.zip refreshed — re-drag onto Netlify to ship. Desktop/mobile icons ship with the next CI build (v1.5.3 re-pointed); push still gated on v6 deploy key registration.
+
+---
+Task ID: 55-b
+Agent: main (orchestrator)
+Task: "we need OTAMA to look like this as in photo" — rebuild the OTAMA home screen to match the user's Netflix home-page screenshot (pill nav, rounded inset hero billboard, 16:9 tile rows with TOP-10 ribbons)
+
+Work Log:
+- hero.tsx rewritten as the Netflix 2025 billboard from the photo: a rounded-[28px] card inset from the page edges (px-3/md:px-6) with aspect 5/6 → 16/10 → 21/9 by breakpoint; red gradient Ribbon-O monogram top-left (the red "N" counterpart), circular backdrop-blur shuffle button top-right wired to pick a random featured title; crossfading artwork kept (framer-motion) + new bottom-left/76° legibility gradients + grain.
+- Hero content now photo-exact: dot-separated meta line (Kind • Genre • Year • ★rating • 16+ chip), huge black title, 3-line summary, and pill CTAs — white rounded-full Play + translucent #3a3a3a More Info; bottom-right corner chips ("{match}% Match" with mini O glyph, "We think you'll love this!" with ThumbsUp) hidden below lg. Old TOP-10 ribbon/16+ side tab/dots removed.
+- nav-bar.tsx: active nav item is now a dark rounded-full pill (bg-white/15) exactly like the photo's "Home"; inactive items get hover pills; renames (TV Shows, My List); right side = expanding search, engine chip, downloads bell with red badge, and a NEW profile avatar (Ribbon-O mark + caret) opening a Netflix account-style DropdownMenu (engine status, Downloads, Metadata settings, About OTAMA, Get the desktop app). Local state replaced the store's about-open flag; mobile menu items are pills too.
+- media-card.tsx: new `tile` variant — 16:9 rounded-xl landscape card using backdrop-first art, hover-reveal gradient with title/year/★/kind + white play chip, and a red TOP-N corner ribbon (TopTenBadge, rounded-br-xl like the photo); overlay also forces visible under @media(hover:none) so touch devices always see titles. Poster variant untouched for catalog views.
+- media-row.tsx: `tile` mode with w-[236/272/300px] cards, bigger bold headings (text-xl→2xl) with red accents; ranked+tile renders TOP-N ribbons instead of giant gradient numerals; skeletons match shape.
+- home-view.tsx: first row retitled "Today's Top Picks for You" (ranked tiles), every home row switched to tiles, subtitles dropped to match the photo; AnimeFresh/PirateBay strips untouched.
+- intro-splash.tsx comment updated (no more Skip Intro mention).
+- E2E (agent-browser, 1440×900 + 390×844): intro plays with ZERO .intro-skip nodes; desktop screenshot matches the reference (pill nav / rounded billboard / monogram / shuffle / meta dots / pill CTAs / corner chips / TOP-1..5 ribbons); shuffle button rotates hero; avatar dropdown opens with all items; Movies view switch works; footer sticks; mobile hero + rows correct; body overflow restored post-intro.
+- Debugged a red herring mid-E2E: hover styles "dead" — root cause is the sandbox browser emulating (hover:none)+(pointer:coarse), so Tailwind 4's @media(hover:hover)-guarded hover variants were off by design; confirmed rules + :is(:where(.group):hover *) matching, then shipped the hover:none always-reveal for tiles as a real touch-UX win.
+- Zero console errors; all APIs 200; bun run lint clean.
+
+Stage Summary:
+- OTAMA's home screen now mirrors the user's Netflix reference 1:1: pill navigation, inset rounded hero billboard with brand monogram + shuffle + corner chips, and TOP-10 ribbon tile rows — while keeping every OTAMA capability (search, engine chip, downloads, TMDB settings, About) reachable, now organized under the profile avatar.
+- Landing page untouched this round (already Netflix-branded); no zip rebuild needed. Push still gated on v6 deploy key registration.
