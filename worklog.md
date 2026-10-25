@@ -1308,3 +1308,17 @@ Work Log:
 Stage Summary:
 - OTAMA's home screen now mirrors the user's Netflix reference 1:1: pill navigation, inset rounded hero billboard with brand monogram + shuffle + corner chips, and TOP-10 ribbon tile rows — while keeping every OTAMA capability (search, engine chip, downloads, TMDB settings, About) reachable, now organized under the profile avatar.
 - Landing page untouched this round (already Netflix-branded); no zip rebuild needed. Push still gated on v6 deploy key registration.
+
+---
+Task ID: 55-c
+Agent: main (orchestrator)
+Task: "two many logos of otama on Home Screen" + "change coming soon to early bird watching"
+
+Work Log:
+- Logo audit of the first viewport found FOUR OTAMA marks: nav brand lockup (mark + wordmark), the profile avatar reusing logo-mark.png, the hero billboard monogram, and a mini O glyph inside the "% Match" chip.
+- Kept the two Netflix-equivalent marks (nav brand ↔ NETFLIX wordmark, hero monogram ↔ red N) and removed the other two: avatar is now a neutral Netflix-style profile tile (red gradient + User icon, no brand mark), "% Match" chip lost its mini-O glyph; unused HeroMarkSmall deleted from hero.tsx.
+- home-view.tsx: "Coming soon" row retitled "Early Bird Watching" (accent red on "Watching", upcoming TMDB feed unchanged).
+- Verified in browser at 1440×900: exactly two OTAMA marks visible on the home screen, "Early Bird Watching" renders with tiles, zero page errors; bun run lint clean.
+
+Stage Summary:
+- Home screen now shows the brand exactly twice (nav + hero monogram) like Netflix; "Coming soon" renamed to "Early Bird Watching".

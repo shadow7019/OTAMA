@@ -199,7 +199,6 @@ export function Hero({ items, loading }: { items: MetaItem[]; loading?: boolean 
           <div className="hidden shrink-0 items-center gap-3 pb-1 lg:flex">
             {match ? (
               <span className="flex items-center gap-2 rounded-md bg-black/60 px-3 py-2 text-sm font-semibold text-white backdrop-blur">
-                <HeroMarkSmall />
                 {match}% Match
               </span>
             ) : null}
@@ -211,15 +210,5 @@ export function Hero({ items, loading }: { items: MetaItem[]; loading?: boolean 
         </motion.div>
       </div>
     </div>
-  )
-}
-
-function HeroMarkSmall() {
-  return (
-    <svg viewBox="0 0 64 64" className="h-5 w-5 shrink-0" aria-hidden>
-      <g transform="rotate(-14 32 32)">
-        <circle cx="32" cy="32" r="20.5" fill="none" stroke="#e50914" strokeWidth="12" />
-      </g>
-    </svg>
   )
 }

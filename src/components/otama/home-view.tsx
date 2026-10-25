@@ -138,8 +138,8 @@ export function HomeView() {
         <PirateBayFreshRow />
         <MediaRow
           tile
-          title="Coming"
-          accent="soon"
+          title="Early Bird"
+          accent="Watching"
           items={(upcoming.data?.items || []).slice(0, 20)}
           loading={upcoming.isLoading}
           onSelect={openFor}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Search, Download, Menu, X, Wifi, WifiOff, Settings2, Info, ChevronDown, ExternalLink } from 'lucide-react'
+import { Search, Download, Menu, X, Wifi, WifiOff, Settings2, Info, ChevronDown, ExternalLink, User } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
@@ -157,13 +157,14 @@ export function NavBar() {
                 className="flex items-center gap-1.5 rounded-md p-1 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
                 aria-label="Account menu"
               >
-                <img
-                  src="/logo-mark.png"
-                  alt=""
-                  className="h-8 w-8 rounded-md object-cover"
-                  width={32}
-                  height={32}
-                />
+                {/* Netflix-style profile avatar — deliberately NOT the brand mark,
+                    the OTAMA logo already sits top-left; don't repeat it here */}
+                <span
+                  className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-[#e50914]/80 via-[#7a0a0f] to-[#1b1b1b] text-white shadow-inner ring-1 ring-white/15"
+                  aria-hidden
+                >
+                  <User className="h-4.5 w-4.5" />
+                </span>
                 <ChevronDown className="hidden h-4 w-4 text-zinc-300 sm:block" aria-hidden />
               </button>
             </DropdownMenuTrigger>
