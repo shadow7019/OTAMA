@@ -42,6 +42,10 @@ jobs:
         working-directory: desktop
         run: node scripts/prepare-engine.mjs
 
+      - name: Download bundled Caddy (automatic HTTPS for a public domain)
+        working-directory: desktop
+        run: node scripts/prepare-caddy.mjs
+
       - name: Write TMDB credentials for the bundled renderer
         working-directory: desktop
         env:
@@ -64,6 +68,12 @@ jobs:
         env:
           DATABASE_URL: file:./db/build-placeholder.db
         run: node scripts/prepare-renderer.mjs
+
+      # Same patch the npm pre-hooks apply: allows the self-contained
+      # renderer/engine node_modules inside extraResources (electron-builder#867).
+      - name: Patch electron-builder for self-contained extraResources
+        working-directory: desktop
+        run: node scripts/patch-builder.mjs
 
       - name: Build Windows executables (installer + portable)
         working-directory: desktop

@@ -379,11 +379,24 @@ function promptPublicUrl() {
 /* --------------------- automatic HTTPS (bundled Caddy) --------------------- */
 
 function caddyBinPath() {
-  const name = process.platform === 'win32' ? 'caddy.exe' : 'caddy'
+  const name =
+    process.platform === 'win32'
+      ? 'caddy.exe'
+      : process.platform === 'darwin'
+        // The mac build bundles one binary per CPU arch (caddy-arm64 /
+        // caddy-x64) so both the Apple Silicon and Intel DMGs get a working one.
+        ? `caddy-${process.arch}`
+        : 'caddy'
   const base = app.isPackaged
     ? path.join(process.resourcesPath, 'caddy')
     : path.join(DESKTOP_ROOT, 'resources', 'caddy')
-  return path.join(base, name)
+  const bin = path.join(base, name)
+  // Older local builds used an unsuffixed binary — accept it as a fallback.
+  if (process.platform === 'darwin' && !fs.existsSync(bin)) {
+    const legacy = path.join(base, 'caddy')
+    if (fs.existsSync(legacy)) return legacy
+  }
+  return bin
 }
 
 /**

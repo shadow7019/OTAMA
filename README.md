@@ -181,6 +181,27 @@ Faster iteration while developing the web UI (loads your dev server instead of t
 
 ---
 
+## 🍎 The macOS `.dmg` (Apple Silicon + Intel)
+
+GitHub Actions builds **two** DMGs on every `v*` tag (Actions → Build macOS DMG): `OTAMA-*-arm64.dmg` for Apple Silicon (M1–M4) and `OTAMA-*-x64.dmg` for Intel Macs. Both are **ad-hoc code-signed** but not notarized (that requires a paid Apple Developer certificate), so Gatekeeper asks for a **one-time confirmation on first launch** — this is expected for any non-App-Store app and is not a virus warning:
+
+- **macOS 15 Sequoia or newer** (right-click → Open was removed there): launch OTAMA once (it gets blocked), then **System Settings → Privacy & Security → Open Anyway → Open**. From then on it starts normally.
+- **macOS 13–14**: right-click OTAMA → **Open** → **Open**.
+- Any version, terminal one-liner after dragging to Applications: `xattr -cr /Applications/OTAMA.app`
+
+Downloading the wrong file for your CPU also produces "damaged"-style errors: Apple Silicon needs `arm64.dmg`, Intel needs `x64.dmg`.
+
+### Desktop data locations (macOS)
+
+| Data | Path |
+|---|---|
+| Database (favorites/history) | `~/Library/Application Support/otama-desktop/otama.db` |
+| Torrent downloads | `~/Library/Application Support/otama-desktop/downloads/` |
+
+Local build (on a Mac): `cd desktop && npm install && npm run dist:mac` → DMGs in `desktop/dist/`.
+
+---
+
 ## Script map
 
 | Where | Script | Purpose |
@@ -191,6 +212,7 @@ Faster iteration while developing the web UI (loads your dev server instead of t
 | mini-services/otama-engine | `bun run dev` | engine with hot reload (:3003) |
 | desktop | `npm run dev` / `npm start` | Electron against dev server / packaged renderer |
 | desktop | `npm run dist:win` | build NSIS installer + portable .exe |
+| desktop | `npm run dist:mac` | build macOS DMGs (arm64 + x64) |
 | desktop | `npm run make:icon` | regenerate `build/icon.ico` from `build/icon.png` |
 
 ## License

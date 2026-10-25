@@ -58,6 +58,62 @@ cp(path.join(PACK_DIST, 'standalone'), DEST)
 cp(path.join(PACK_DIST, 'static'), path.join(DEST, '.next-pack', 'static'))
 cp(path.join(PROJECT_ROOT, 'public'), path.join(DEST, 'public'))
 
+// --- Symlink sanitation ------------------------------------------------------
+// Next's output tracing can emit symlinks whose target is an ABSOLUTE path on
+// the BUILD machine (seen on the macOS CI runner: .next-pack/node_modules/
+// @prisma/client-<hash> → /Users/runner/work/OTAMA/OTAMA/.next-pack/standalone/
+// node_modules/@prisma/client). Inside a packaged app that path does not exist,
+// so the link dangles forever on every user machine. At THIS point the build
+// machine still holds the referenced content, so replace every absolute (or
+// otherwise escaping) symlink with a real copy of what it points to, and drop
+// symlinks whose target is already gone. Healthy relative symlinks stay.
+function sanitizeSymlinks(root) {
+  let rewritten = 0
+  let dropped = 0
+  const queue = [root]
+  while (queue.length) {
+    const dir = queue.pop()
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        queue.push(full)
+        continue
+      }
+      if (!entry.isSymbolicLink()) continue
+
+      const rawTarget = fs.readlinkSync(full)
+      let realTarget = null
+      try {
+        realTarget = fs.realpathSync(full) // throws when the link dangles
+      } catch {
+        realTarget = null
+      }
+
+      // Healthy link = resolvable AND stays inside the renderer folder.
+      const relFromDest = path.relative(DEST, realTarget || DEST)
+      const insideDest =
+        relFromDest === '' ||
+        (!relFromDest.startsWith('..') && !path.isAbsolute(relFromDest))
+      if (insideDest && realTarget && !path.isAbsolute(rawTarget)) continue // healthy relative link — keep
+
+      const rel = path.relative(DEST, full)
+      fs.rmSync(full, { recursive: true, force: true })
+      if (realTarget) {
+        fs.cpSync(realTarget, full, { recursive: true, dereference: true })
+        rewritten += 1
+        console.log(`[prepare-renderer] symlink fixed: ${rel} (${rawTarget} → real copy)`)
+      } else {
+        dropped += 1
+        console.warn(`[prepare-renderer] dangling symlink dropped: ${rel} (${rawTarget})`)
+      }
+    }
+  }
+  console.log(
+    `[prepare-renderer] symlink scan done: ${rewritten} rewritten, ${dropped} dropped, rest healthy`
+  )
+}
+sanitizeSymlinks(DEST)
+
 if (!fs.existsSync(path.join(DEST, 'server.js'))) {
   throw new Error('Standalone server.js not found after copy — build output format changed?')
 }

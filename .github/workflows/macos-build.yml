@@ -1,4 +1,4 @@
-name: Build macOS DMG (Apple Silicon)
+name: Build macOS DMG (Apple Silicon + Intel)
 
 on:
   workflow_dispatch:
@@ -44,6 +44,10 @@ jobs:
         working-directory: desktop
         run: node scripts/prepare-engine.mjs
 
+      - name: Download bundled Caddy (automatic HTTPS for a public domain)
+        working-directory: desktop
+        run: node scripts/prepare-caddy.mjs
+
       - name: Write TMDB credentials for the bundled renderer
         working-directory: desktop
         env:
@@ -70,14 +74,17 @@ jobs:
         working-directory: desktop
         run: node scripts/patch-builder.mjs
 
-      - name: Build macOS DMG (arm64 — native Apple Silicon runner)
+      # adhoc-sign-mac.cjs (build.afterPack) ad-hoc codesigns every produced
+      # .app so Gatekeeper shows the bypassable "unidentified developer" dialog
+      # instead of the dead-end "damaged" error.
+      - name: Build macOS DMGs (arm64 Apple Silicon + x64 Intel)
         working-directory: desktop
-        run: npx electron-builder --mac dmg --arm64 --publish never
+        run: npx electron-builder --mac dmg --arm64 --x64 --publish never
 
-      - name: Generate SHA-256 checksum
+      - name: Generate SHA-256 checksums
         working-directory: desktop/dist
         run: |
-          shasum -a 256 OTAMA-*-arm64.dmg > SHA256SUMS-macos.txt
+          shasum -a 256 OTAMA-*-arm64.dmg OTAMA-*-x64.dmg > SHA256SUMS-macos.txt
           cat SHA256SUMS-macos.txt
 
       - name: Upload artifacts
@@ -86,6 +93,7 @@ jobs:
           name: OTAMA-macos-dmg
           path: |
             desktop/dist/OTAMA-*-arm64.dmg
+            desktop/dist/OTAMA-*-x64.dmg
             desktop/dist/SHA256SUMS-macos.txt
           if-no-files-found: error
           retention-days: 14
@@ -101,24 +109,46 @@ jobs:
             |---|---|---|
             | 🪟 Windows | `OTAMA-Setup-*.exe` | Run installer (see ⚠️ note below) |
             | 🪟 Windows portable | `OTAMA-*-portable.exe` | Single file, no install |
-            | 🍎 macOS (Apple Silicon M1–M4) | `OTAMA-*-arm64.dmg` | Open DMG, drag OTAMA to Applications. Ad-hoc signed — right-click OTAMA → Open, or run `xattr -cr /Applications/OTAMA.app` once |
+            | 🍎 macOS (Apple Silicon M1–M4) | `OTAMA-*-arm64.dmg` | Open DMG → drag OTAMA to Applications → first launch needs a one-time OK (see 🍎 below) |
+            | 🍎 macOS (Intel) | `OTAMA-*-x64.dmg` | Same as above |
             | 🤖 Android | `OTAMA-*.apk` | Open APK → allow "install unknown apps" → **Install anyway** |
             | 📱 iPhone / iPad | `OTAMA-*.ipa` | Unsigned IPA — sideload via **AltStore / SideStore / Sideloadly** with a free Apple ID (re-sign every 7 days) |
 
-            🔎 **Verify integrity:** SHA-256 checksums for every file are attached as `SHA256SUMS-*.txt`. If your download's hash matches, you hold exactly the file that public CI built — nothing was modified in transit.
+            🔎 **Verify integrity:** SHA-256 checksums for every file are attached as `SHA256SUMS-*.txt`. If your download's hash matches, you hold exactly the file that public CI built — nothing was modified in transit. A *truncated* download (hash mismatch, file smaller than listed) also produces mount/open errors — re-download if in doubt.
 
             ---
+            ### 🍎 macOS first launch — "can't be opened" is normal, one-time, and safe to bypass
+
+            OTAMA is free and open source, so it ships **without Apple's paid notarization** — macOS Gatekeeper therefore asks for a one-time confirmation on first launch. This is not a virus alert; macOS shows it for every app installed outside the App Store without a paid developer certificate.
+
+            Pick the path for your macOS version:
+
+            - **macOS 15 Sequoia or newer** *(Apple removed the right-click → Open trick here — use this instead)*:
+              1. Double-click OTAMA once — it will refuse to open. **This is expected.**
+              2. Open **System Settings → Privacy & Security**, scroll to the security section.
+              3. Click **Open Anyway**, then **Open** (enter your Mac password if asked).
+              4. Done — OTAMA starts normally from now on, no repeats needed.
+              - Can't find the button? You skipped step 1 — try opening OTAMA once first, then revisit this page; it only appears after a blocked attempt.
+            - **macOS 13 Ventura / 14 Sonoma**: right-click OTAMA in Applications → **Open** → **Open**.
+            - **Any macOS version, terminal one-liner** (after dragging OTAMA to Applications):
+              ```bash
+              xattr -cr /Applications/OTAMA.app
+              ```
+            - **"App is damaged and can't be opened"** on an **Intel Mac**: you most likely grabbed the `arm64.dmg` — Intel Macs need **`OTAMA-*-x64.dmg`** (Apple Silicon Macs use the `arm64` file).
+
             ### ⚠️ Why does my browser / antivirus show a warning?
 
-            Those warnings are **not a virus** — they are what Windows, Android and iOS show for **any app installed outside their official app store** without a paid developer certificate. OTAMA is fully open source: every binary on this page was built automatically by **public GitHub Actions runs from the public source code in this repo** (open the *Actions* tab and watch each build yourself). Nothing is obfuscated — no ads, no trackers, no hidden code.
+            Those warnings are **not a virus** — they are what Windows, macOS, Android and iOS show for **any app installed outside their official app store** without a paid developer certificate. OTAMA is fully open source: every binary on this page was built automatically by **public GitHub Actions runs from the public source code in this repo** (open the *Actions* tab and watch each build yourself). Nothing is obfuscated — no ads, no trackers, no hidden code.
 
             How to continue on each platform:
             - **Windows — SmartScreen** ("Windows protected your PC"): click **More info → Run anyway**. SmartScreen warns on *every* unsigned executable until it accumulates download reputation; a certificate that removes the warning outright costs hundreds of $ per year, which a free project can't justify.
             - **Windows — antivirus:** OTAMA is a standard Electron/Node app; some heuristics blanket-flag any torrent-related software. Verify the SHA-256 above, or add an exclusion if you trust it.
+            - **macOS — Gatekeeper:** see the 🍎 section above — one-time bypass, then OTAMA opens like any other app.
             - **Android — Play Protect:** tap **Install anyway** (or *More details → Install anyway*). Chrome's "this file may be harmful" banner during download → **Download anyway**. The APK is release-signed with a stable key that stays identical across versions.
             - **iOS:** Safari may warn about `.ipa` downloads — installs are re-signed by AltStore/Sideloadly with *your own* Apple ID. First launch: Settings → General → VPN & Device Management → trust your Apple ID.
 
-            OTAMA is self-contained: embedded torrent-stream engine + Next.js renderer + template database.
+            OTAMA is self-contained: embedded torrent-stream engine + Next.js renderer + template database. Automatic HTTPS (public-domain remote access) is powered by an embedded Caddy binary.
           files: |
             desktop/dist/OTAMA-*-arm64.dmg
+            desktop/dist/OTAMA-*-x64.dmg
             desktop/dist/SHA256SUMS-macos.txt

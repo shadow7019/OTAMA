@@ -2,8 +2,9 @@ generator client {
   provider      = "prisma-client-js"
   // "windows" bundles the Windows query engine so the Electron desktop build
   // (cross-compiled on Linux / CI) ships a working Prisma+SQLite client.
-  // "darwin-arm64" bundles the Apple Silicon query engine for the macOS DMG.
-  binaryTargets = ["native", "windows", "darwin-arm64"]
+  // "darwin-arm64" (Apple Silicon) + "darwin" (Intel) bundle both Apple CPU
+  // engines so the macOS DMGs each ship a working Prisma client.
+  binaryTargets = ["native", "windows", "darwin-arm64", "darwin"]
 }
 
 datasource db {

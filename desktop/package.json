@@ -1,7 +1,7 @@
 {
   "name": "otama-desktop",
   "productName": "OTAMA",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "OTAMA — torrent streaming desktop app (popcorn-desktop architecture, rebuilt for the web era)",
   "main": "src/main.mjs",
   "author": "OTAMA Project",
@@ -23,7 +23,7 @@
     "predist:win:portable": "node scripts/patch-builder.mjs",
     "dist:win:portable": "npm run prepare:all && electron-builder --win portable",
     "predist:mac": "node scripts/patch-builder.mjs",
-    "dist:mac": "npm run prepare:all && electron-builder --mac --arm64"
+    "dist:mac": "npm run prepare:all && electron-builder --mac --arm64 --x64"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -102,9 +102,10 @@
       "category": "public.app-category.entertainment",
       "target": [
         {
-          "target": "zip",
+          "target": "dmg",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ]

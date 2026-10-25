@@ -1408,3 +1408,22 @@ Work Log:
 
 Stage Summary:
 - https://otama.space-z.ai is now the hosted OTAMA instance end to end: landing opens it directly, mobile shells default to it (BYOS/LAN still fully respected via "Use another server"), desktop self-host flow untouched. otama-landing.zip refreshed.
+
+---
+Task ID: 59
+Agent: main (orchestrator)
+Task: ".dmg for macOS is showing error" — diagnose the shipped v1.5.3 DMG and fix every mac-release defect
+
+Work Log:
+- Forensically downloaded and extracted the released OTAMA-1.5.3-arm64.dmg (SHA-256 matched the release checksums — download integrity fine) and audited the bundle: ad-hoc code signature seal is VALID (0/4014 CodeResources hash mismatches, all helpers + Electron Framework signed) — so the error users hit is macOS Gatekeeper at first launch, aggravated by release notes that recommend right-click → Open, a bypass Apple REMOVED in macOS 15 Sequoia (now System Settings → Privacy & Security → Open Anyway).
+- Found a REAL packaging bug inside the DMG: .next-pack/node_modules/@prisma/client-2c3a283f134fdcb6 is a symlink to /Users/runner/work/... (the CI runner's absolute path) — dangling on every user machine. Root cause: Next output-tracing emits absolute symlinks; runtime was saved only by @prisma/client resolving from the root node_modules.
+- prepare-renderer.mjs: added a sanitizeSymlinks() pass over the assembled renderer — rewrites any symlink whose target is absolute or escapes the renderer folder into a real copy (build machine still holds the content), drops already-dangling links, keeps healthy relative links; logs every rewrite. Verified end-to-end locally: the same @prisma/client-2c3a283f134fdcb6 link was reproduced by the local pack build and rewritten to a real dir with default.js/runtime/package.json; `find renderer -type l` now returns zero.
+- Intel Mac support: the DMG was arm64-only (Intel users get "damaged"-style errors). desktop/package.json mac target → dmg for arm64+x64; dist:mac builds both; prisma schema binaryTargets += "darwin" (Intel engine — note: "darwin-x64" is NOT a valid Prisma target name, learned via generate error) — regenerated client now bundles libquery_engine-darwin.dylib.node; next.config outputFileTracingIncludes picks it up automatically.
+- Caddy was silently missing from EVERY CI desktop build (workflows never ran prepare:caddy — the public-domain automatic-HTTPS feature failed soft). macos + windows workflows now run prepare-caddy.mjs; script reworked to fetch BOTH darwin arches as caddy-arm64/caddy-x64 (temp-dir extract + rename), main.mjs caddyBinPath() picks by process.arch with legacy unsuffixed fallback. Windows workflow also gained the patch-builder step (npm pre-hooks don't run when CI calls electron-builder directly — same extraResources node_modules protection as mac).
+- desktop/package.json + package-lock version → 1.5.4.
+- macos-build.yml release notes rewritten: dedicated "macOS first launch" section (Sequoia Open Anyway flow first, Ventura/Sonoma right-click, universal xattr -cr one-liner, wrong-arch dmg explanation), arm64+x64 rows in the download table, truncated-download note; SHA/upload/attach globs cover both arches.
+- README.md: new "🍎 The macOS .dmg" section (CI build, Gatekeeper bypass per macOS version, mac data locations).
+- Verification: node --check on all three scripts; bun run lint clean; full local prepare:renderer run green (build + copy + sanitize + all 4 prisma engines + template DB); dev server still healthy (HTTP 200).
+
+Stage Summary:
+- v1.5.4 mac releases: valid ad-hoc signature (unchanged — already correct), NO dangling CI-path symlinks, Apple Silicon + Intel DMGs, embedded per-arch Caddy for HTTPS, and release notes that match what Sequoia actually shows. Windows builds gain the node_modules patch + bundled Caddy. Root-cause advice for the user's "error": it was Gatekeeper — bypass via Open Anyway (Sequoia+) or xattr -cr; wrong-arch download also covered.
