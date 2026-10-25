@@ -109,7 +109,8 @@ export function IntroSplash() {
     closeAudio()
   }, [gone, closeAudio])
 
-  const skip = useCallback(() => setGone(true), [])
+  // The ident is intentionally unskippable (like Netflix's TV idents) — it
+  // ends on its own at ~3.85s. prefers-reduced-motion users skip via CSS.
 
   if (gone) return null
 
@@ -132,9 +133,6 @@ export function IntroSplash() {
           </span>
         </div>
       </div>
-      <button type="button" className="intro-skip" onClick={skip} aria-label="Skip the intro animation">
-        Skip Intro
-      </button>
     </div>
   )
 }

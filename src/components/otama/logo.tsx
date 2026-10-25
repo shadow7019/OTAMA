@@ -3,9 +3,10 @@
 import { cn } from '@/lib/utils'
 
 /**
- * OTAMA wordmark — the official app artwork (neon swirl + torii + Mt. Fuji
- * night scene) served from /public/logo-mark.png (full art with wordmark: /public/logo.png), matching the v1.5.2 icons on
- * Android/iOS/desktop. Kept as <img> so brand updates ship as one file.
+ * OTAMA wordmark — v2 brand: the "Ribbon O" mark (black rounded tile, red
+ * folded-ring O with a play-triangle core — echoes the intro ident ribbons),
+ * served from /public/logo-mark.png (full lockup with the condensed OTAMA
+ * wordmark: /public/logo.png). Kept as <img> so brand updates ship as one file.
  */
 export function OtamaLogo({ className }: { className?: string }) {
   return (
@@ -13,7 +14,7 @@ export function OtamaLogo({ className }: { className?: string }) {
       <img
         src="/logo-mark.png"
         alt="OTAMA logo"
-        className="h-9 w-9 shrink-0 rounded-[10px] object-cover"
+        className="h-9 w-9 shrink-0 object-cover"
         width={36}
         height={36}
       />

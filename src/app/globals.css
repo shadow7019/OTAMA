@@ -415,39 +415,6 @@
   }
 }
 
-/* Netflix's own "Skip Intro" button — bottom-right, appears after a beat */
-.intro-skip {
-  position: absolute;
-  right: 4%;
-  bottom: 7%;
-  z-index: 4;
-  cursor: pointer;
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1;
-  color: #fff;
-  background: rgba(20, 20, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 4px;
-  padding: 15px 22px;
-  backdrop-filter: blur(4px);
-  opacity: 0;
-  animation: intro-skip-in 0.4s ease 1.2s forwards;
-}
-.intro-skip:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-.intro-skip:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 2px;
-}
-@keyframes intro-skip-in {
-  to {
-    opacity: 1;
-  }
-}
-
 /* reduced motion — no ident at all, straight into the app */
 @media (prefers-reduced-motion: reduce) {
   .intro-overlay {

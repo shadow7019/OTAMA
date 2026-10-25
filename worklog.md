@@ -1270,3 +1270,20 @@ Stage Summary:
 - OTAMA now opens like Netflix everywhere: red ribbons → ta-dum → wordmark flash → zoom into the app — one shared ident on web/desktop/Android/iOS, skippable, reduced-motion-safe, zero assets.
 - Landing page + boot splash fuchsia debt retired; otama-landing.zip refreshed — re-drag website/ onto Netlify to ship the new landing + ident.
 - v1.5.3 re-pointed to include this work; push still gated on v6 deploy key registration.
+
+---
+Task ID: 55
+Agent: main (orchestrator)
+Task: Remove the Skip Intro button ("its shows skip intro we don't need that there") + redesign the OTAMA logo ("redesign my logo")
+
+Work Log:
+- Skip Intro removed everywhere: intro-splash.tsx (button + unused callback dropped; ident now plays unskippable like Netflix TV idents, ends on its own at ~3.85s; reduced-motion users still skip via CSS), globals.css (.intro-skip styles deleted), website/index.html (button, listener, CSS deleted; verified no #intro-skip in DOM).
+- Logo v2 "Ribbon O" designed as hand-written SVG (masters in /home/z/.logo-build/ outside the repo): black rounded tile (#1b1b1b→#0b0b0b), bold red O ring (r296, stroke 118, #f6121d→#a5060f) rotated -14° with a diagonal ribbon-fold — bright #ff4d57 band + dark #8f060f slit masked to the ring (the intro-ribbons homage) — and a black play-triangle core. Replaces the retired v1.5.2 fuchsia neon-wave/torii/Fuji art.
+- Custom condensed OTAMA wordmark hand-drawn as SVG paths (Bebas-style: cap 100, stroke 16, octagon O, flat-top T, diagonal A with counter+crossbar notch, V-valley M) — used in the full lockup.
+- Rendered via sharp to EVERY brand target: public/logo-mark.png (512), public/logo-mark-192.png (new), public/logo.svg, public/logo.png (1560x720 transparent lockup), desktop/build/icon-master.png + icon.png (1024), icon.ico (16-256, packed with a no-dep PNG-ICO packer since desktop/node_modules isn't installed), icon.icns (ic07/08/09/10 PNG chunks), Android mipmaps 48/72/96/144/192, iOS AppIcon.png (1024).
+- website/index.html header + hero marks swapped to the inline Ribbon-O SVG (unique gradient/mask ids per instance, zero external deps preserved); logo.tsx comment updated + double-rounding dropped.
+- Verification: lint clean; browser E2E — intro plays with NO skip button and self-finishes, nav shows the new mark beside the red OTAMA wordmark, landing header/hero show the new mark, zero page errors; zip rebuilt (4,847 B).
+
+Stage Summary:
+- OTAMA's identity is now fully Netflix-consistent: Ribbon-O mark + condensed red wordmark across web nav, favicon, landing page, Windows .ico, macOS .icns, Android mipmaps and iOS AppIcon; intro ident is unskippable (Netflix-style) and self-terminates.
+- otama-landing.zip refreshed — re-drag onto Netlify to ship. Desktop/mobile icons ship with the next CI build (v1.5.3 re-pointed); push still gated on v6 deploy key registration.

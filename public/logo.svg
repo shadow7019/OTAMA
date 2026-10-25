@@ -1,18 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- OTAMA mark v2 — "Ribbon O": black tile, red O with a diagonal ribbon
+       fold (the intro-ribbons homage) and a play-triangle core. -->
   <defs>
-    <linearGradient id="sw" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#ec4899"/>
-      <stop offset="48%" stop-color="#8b5cf6"/>
-      <stop offset="100%" stop-color="#38bdf8"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1b1b"/>
+      <stop offset="1" stop-color="#0b0b0b"/>
     </linearGradient>
-    <linearGradient id="pl" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#f5d0fe"/>
-      <stop offset="55%" stop-color="#e879f9"/>
-      <stop offset="100%" stop-color="#60a5fa"/>
+    <linearGradient id="ringGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6121d"/>
+      <stop offset="1" stop-color="#a5060f"/>
     </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#e50914" stop-opacity="0.5"/>
+      <stop offset="0.7" stop-color="#e50914" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#e50914" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="ringMask">
+      <rect width="1024" height="1024" fill="black"/>
+      <g transform="rotate(-14 512 512)">
+        <circle cx="512" cy="512" r="296" fill="none" stroke="white" stroke-width="118"/>
+      </g>
+    </mask>
   </defs>
-  <circle cx="24" cy="24" r="15" fill="#0a0b14"/>
-  <path d="M 24 5.5 A 18.5 18.5 0 1 0 41.4 27.5 C 40 33.5, 36 38.4, 30.6 40.6" fill="none" stroke="url(#sw)" stroke-width="5.6" stroke-linecap="round"/>
-  <path d="M 24 5.5 A 18.5 18.5 0 0 1 42.3 21.5" fill="none" stroke="url(#sw)" stroke-width="5.6" stroke-linecap="round" opacity="0.9"/>
-  <path d="M20.6 17.6 L31.8 24 L20.6 30.4 Z" fill="url(#pl)" stroke="url(#pl)" stroke-width="2.6" stroke-linejoin="round"/>
+  <rect width="1024" height="1024" rx="224" fill="url(#tile)"/>
+  <circle cx="512" cy="512" r="430" fill="url(#glow)"/>
+  <g transform="rotate(-14 512 512)">
+    <circle cx="512" cy="512" r="296" fill="none" stroke="url(#ringGrad)" stroke-width="118"/>
+  </g>
+  <g mask="url(#ringMask)">
+    <g transform="rotate(-14 512 512)">
+      <rect x="-200" y="300" width="1424" height="140" fill="#ff4d57" opacity="0.92"/>
+      <rect x="-200" y="440" width="1424" height="54" fill="#8f060f" opacity="0.9"/>
+    </g>
+  </g>
+  <path d="M462 398 L672 512 L462 626 Z" fill="#0d0d0d"/>
 </svg>
