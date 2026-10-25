@@ -1212,3 +1212,24 @@ Stage Summary:
 - Freehostia (dropped in Task 50) and otama.space-z.ai sandbox references fully retired from code.
 - Landing page redeploy on Netlify = drag website/ folder (or refreshed otama-landing.zip) onto Netlify Deploys.
 - Push still blocked on v6 deploy key registration; once pushed, tag v1.5.3 fires CI 4-platform builds.
+
+---
+Task ID: 52
+Agent: main (orchestrator)
+Task: Re-skin the OTAMA WebUI to a Netflix-style template ("change the template to same as Netflix")
+
+Work Log:
+- Palette core (globals.css): .dark block rewritten to Netflix neutrals — background #141414, card #181818, popover #1f1f1f, border/input #303030, primary #E50914 with white foreground, ring #e50914, Netflix-green chart-2 #46d369, IMDb-yellow chart-3 #f5c518; --radius 0.625rem → 0.25rem (sharp Netflix corners, light :root primary aligned); scrollbar thumb neutral #4d4d4d/#6e6e6e.
+- Mechanical accent swap via sed across 19 files: every fuchsia/violet class mapped to #E50914 system (bg-fuchsia-500→bg-[#e50914] + text-white on buttons, hover #f6121d, borders/tints #e50914/N, text accents #e50914, sub-text red-300, 4K quality badge red, poster fallback red-950, Top-10 rank gradient #ff5252→#e50914→#7a0a0f with red glow). rg-verified zero fuchsia/violet/purple/indigo left.
+- Netflix signatures (bespoke edits):
+  - hero.tsx: white Play button (black icon) + glass gray "More info" (white/25), solid red TRENDING badge with white flame, % Match green #46d369, neutral black gradients (hsl 0 0% 6%), red-tinted radial.
+  - nav-bar.tsx: black/75 blurred header, active nav = white semibold (not colored), search inputs bg-black/60 border-white/25, downloads badge red/white.
+  - logo.tsx: OTAMA wordmark in #E50914 with drop shadow (mark artwork kept).
+  - media-card/favorites/history hover play chips: white circle + black play icon (Netflix hover-card style); favorites/history resume progress bars red.
+  - media-row.tsx: red row accent words; Seeds mid-tone amber (green/amber/red scale).
+  - layout.tsx: themeColor #141414.
+- Verification: bun run lint clean; agent-browser E2E — desktop 1280px (hero + red Top-10 rows + "Popular on OTAMA now"), Movies catalog loads real data, mobile 390px 2-col grid + hamburger + controls, detail overlay opens (poster/heart/torrent list), zero console/page errors; footer sticks bottom (mt-auto) at all heights.
+
+Stage Summary:
+- WebUI is now a Netflix-style template: #141414 canvas, #E50914 brand, white Play CTAs, red Top-10 numerals, sharp 4px radii — all prior features intact (search, catalogs, TPB view, favorites, history, player, downloads, dialogs).
+- Note for user: otama.netlify.app deployment will pick this up on next deploy (drag & drop or Git-connected auto-deploy).

@@ -17,7 +17,7 @@ export function OtamaLogo({ className }: { className?: string }) {
         width={36}
         height={36}
       />
-      <span className="text-xl font-extrabold tracking-tight">OTAMA</span>
+      <span className="text-xl font-extrabold uppercase tracking-tight text-[#e50914] drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">OTAMA</span>
     </div>
   )
 }

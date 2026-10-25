@@ -45,7 +45,7 @@ export function MediaRow({
         <div className="min-w-0">
           <h2 className="text-lg font-bold tracking-tight md:text-xl">
             {title}
-            {accent ? <span className="text-fuchsia-400"> {accent}</span> : null}
+            {accent ? <span className="text-[#e50914]"> {accent}</span> : null}
           </h2>
           {subtitle ? (
             <p className="mt-0.5 hidden line-clamp-1 text-xs text-zinc-400 md:block">{subtitle}</p>
@@ -84,7 +84,7 @@ export function MediaRow({
                 <div key={`${item.refId}-${item.title}`} className="flex w-[168px] shrink-0 items-end sm:w-[196px]">
                   <span
                     aria-hidden
-                    className="-mr-4 select-none bg-gradient-to-b from-fuchsia-300/90 via-fuchsia-500/80 to-violet-700/90 bg-clip-text text-[96px] font-black italic leading-[0.78] text-transparent drop-shadow-[0_2px_10px_rgba(217,70,239,0.25)] sm:-mr-5 sm:text-[112px]"
+                    className="-mr-4 select-none bg-gradient-to-b from-[#ff5252] via-[#e50914] to-[#7a0a0f] bg-clip-text text-[96px] font-black italic leading-[0.78] text-transparent drop-shadow-[0_2px_10px_rgba(229,9,20,0.3)] sm:-mr-5 sm:text-[112px]"
                   >
                     {i + 1}
                   </span>

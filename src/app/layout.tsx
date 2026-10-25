@@ -31,7 +31,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f0d0b",
+  themeColor: "#141414",
   width: "device-width",
   initialScale: 1,
   // Draw under the notch / status bar / home indicator; the UI pads itself

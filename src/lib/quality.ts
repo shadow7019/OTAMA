@@ -34,8 +34,8 @@ export const BUCKET_META: Record<QualityBucket, BucketMeta> = {
   '1440p': {
     label: '1440p QHD',
     short: '1440p',
-    badge: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40',
-    chip: 'bg-fuchsia-500 text-white border-fuchsia-400',
+    badge: 'bg-[#e50914]/15 text-red-300 border-[#e50914]/40',
+    chip: 'bg-[#e50914] text-white border-[#e50914]',
   },
   '1080p': {
     label: '1080p Full HD',
@@ -52,8 +52,8 @@ export const BUCKET_META: Record<QualityBucket, BucketMeta> = {
   '480p': {
     label: '480p / SD',
     short: 'SD',
-    badge: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40',
-    chip: 'bg-fuchsia-500 text-black border-fuchsia-400',
+    badge: 'bg-[#e50914]/15 text-red-300 border-[#e50914]/40',
+    chip: 'bg-[#e50914] text-black border-[#e50914]',
   },
   other: {
     label: 'Other / unknown',

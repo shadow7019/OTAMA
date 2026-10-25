@@ -40,7 +40,7 @@ export function NavBar() {
   const activeTorrents = torrents.length
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-background/80 backdrop-blur-lg pt-[env(safe-area-inset-top)]">
+    <header className="sticky top-0 z-30 border-b border-white/5 bg-black/75 backdrop-blur-md pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 md:px-8">
         <button className="md:hidden" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu" aria-expanded={menuOpen}>
           {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
@@ -56,7 +56,7 @@ export function NavBar() {
               variant="ghost"
               size="sm"
               onClick={() => setView(n.id)}
-              className={cn('text-sm font-medium', view === n.id ? 'text-fuchsia-400' : 'text-zinc-300 hover:text-white')}
+              className={cn('text-sm font-medium', view === n.id ? 'font-semibold text-white' : 'text-zinc-300 hover:text-white')}
               aria-current={view === n.id ? 'page' : undefined}
             >
               {n.label}
@@ -71,7 +71,7 @@ export function NavBar() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Search movies, TV, anime…"
-              className="pl-9 h-10 bg-white/5 border-white/10"
+              className="pl-9 h-10 bg-black/60 border-white/25 focus-visible:border-white/50"
               aria-label="Search"
             />
           </form>
@@ -93,7 +93,7 @@ export function NavBar() {
           >
             <Download className="h-5 w-5" />
             {activeTorrents > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-fuchsia-500 px-1 text-[10px] font-bold text-black">
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#e50914] px-1 text-[10px] font-bold text-white">
                 {activeTorrents}
               </span>
             ) : null}
@@ -119,7 +119,7 @@ export function NavBar() {
                 setView(n.id)
                 setMenuOpen(false)
               }}
-              className={cn('w-full justify-start', view === n.id ? 'text-fuchsia-400' : 'text-zinc-300')}
+              className={cn('w-full justify-start', view === n.id ? 'font-semibold text-white' : 'text-zinc-300')}
             >
               {n.label}
             </Button>
@@ -130,7 +130,7 @@ export function NavBar() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Search…"
-              className="pl-9 bg-white/5 border-white/10"
+              className="pl-9 bg-black/60 border-white/25"
               aria-label="Search"
             />
           </form>

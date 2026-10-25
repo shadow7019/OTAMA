@@ -36,12 +36,12 @@ export function Poster({
         />
       ) : (
         <div
-          className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-800 via-zinc-900 to-fuchsia-950/70 p-3 text-center"
+          className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-zinc-800 via-zinc-900 to-red-950/60 p-3 text-center"
           role="img"
           aria-label={`${alt} — no artwork available`}
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10">
-            <Film className="h-5 w-5 text-fuchsia-300/80" aria-hidden />
+          <span className="flex h-10 w-10 items-center justify-center rounded-full border border-[#e50914]/30 bg-[#e50914]/10">
+            <Film className="h-5 w-5 text-red-300/80" aria-hidden />
           </span>
           <span className="line-clamp-4 text-xs font-semibold leading-snug text-zinc-300">{alt}</span>
         </div>
@@ -74,12 +74,12 @@ export function MediaCard({
       )}
       aria-label={`${item.title}${item.year ? ` (${item.year})` : ''}`}
     >
-      <div className="relative overflow-hidden rounded-lg bg-card ring-1 ring-white/10 transition-all duration-200 group-hover:scale-[1.035] group-hover:ring-fuchsia-400/70 group-hover:shadow-lg group-hover:shadow-fuchsia-500/10 group-focus-visible:ring-2 group-focus-visible:ring-fuchsia-400">
+      <div className="relative overflow-hidden rounded-lg bg-card ring-1 ring-white/10 transition-all duration-200 group-hover:scale-[1.035] group-hover:ring-white/40 group-hover:shadow-lg group-hover:shadow-black/40 group-focus-visible:ring-2 group-focus-visible:ring-[#e50914]">
         <Poster src={item.poster} alt={item.title} />
         {/* hover overlay */}
         <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-fuchsia-500 text-white shadow-lg">
-            <Play className="h-5 w-5 fill-white" />
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-lg">
+            <Play className="h-5 w-5 fill-black text-black" />
           </span>
         </div>
         {item.rating ? (
@@ -115,7 +115,7 @@ export function QualityBadge({ quality, className }: { quality?: string; classNa
   const q = quality.toUpperCase()
   const tone =
     q.includes('2160')
-      ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
+      ? 'bg-[#e50914]/20 text-red-300 border-[#e50914]/40'
       : q.includes('1080')
         ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
         : q.includes('720')
@@ -130,7 +130,7 @@ export function QualityBadge({ quality, className }: { quality?: string; classNa
 
 export function Seeds({ count, leechers }: { count?: number; leechers?: number }) {
   const n = count || 0
-  const tone = n >= 50 ? 'text-emerald-400' : n >= 5 ? 'text-fuchsia-400' : 'text-red-400'
+  const tone = n >= 50 ? 'text-emerald-400' : n >= 5 ? 'text-amber-400' : 'text-red-400'
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium">
       <span className={cn('inline-flex items-center gap-1', tone)}>
