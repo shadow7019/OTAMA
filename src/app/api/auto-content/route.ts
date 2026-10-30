@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { MediaItem } from "@/lib/tmdb";
+import { getTitle, getYear } from "@/lib/tmdb";
 import { getImdbId, tmdbServer } from "@/lib/tmdb-server";
-import { quickAvailability } from "@/lib/torrent-sources";
+import { quickAvailability, searchTorrentSources } from "@/lib/torrent-sources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,7 +101,20 @@ export async function GET() {
       if (!imdbId) continue;
       const season = 1;
       const episode = 1;
-      const n = await quickAvailability(type, imdbId, season, episode);
+      let n = await quickAvailability(type, imdbId, season, episode);
+      // Torrentio's TV endpoint has outages — fall back to the full strict
+      // search (PirateBay / BitSearch / EZTV) before dropping a candidate
+      if (n === 0) {
+        const strict = await searchTorrentSources({
+          type,
+          tmdbId: item.id,
+          title: getTitle(item),
+          year: getYear(item),
+          season,
+          episode,
+        });
+        n = strict.filter((s) => s.match === "verified" || s.match === "pack").length;
+      }
       if (n > 0) st.items.push({ ...item, sources: n });
     } catch {
       // unreachable provider — skip this candidate this cycle

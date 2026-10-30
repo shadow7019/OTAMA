@@ -12,24 +12,36 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const TTL = 5 * 60 * 1000; // 5 minutes
+/** Season/detail data goes stale fast: a daily show's next episode is
+ *  published by TMDB any minute, so keep those answers fresh. */
+const FRESH_TTL = 60 * 1000; // 1 minute
 const MAX_CACHE = 500;
+
+function ttlFor(path: string[]): number {
+  const p = path.join("/");
+  return /\/season\/\d+/.test(p) || /^tv\/\d+$/.test(p) ? FRESH_TTL : TTL;
+}
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params;
+  // `_fresh=1` is a client hint to bypass the cache read (auto-refresh).
+  // It is stripped before forwarding and never becomes part of the key.
+  const bypass = req.nextUrl.searchParams.get("_fresh") === "1";
 
   const url = new URL(`${BASE}/${path.join("/")}`);
   req.nextUrl.searchParams.forEach((v, k) => {
-    if (k !== "api_key") url.searchParams.set(k, v);
+    if (k !== "api_key" && k !== "_fresh") url.searchParams.set(k, v);
   });
   url.searchParams.set("api_key", API_KEY);
   url.searchParams.set("language", url.searchParams.get("language") || "en-US");
 
   const cacheKey = url.toString();
+  const ttl = ttlFor(path);
   const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < TTL) {
+  if (!bypass && cached && Date.now() - cached.ts < ttl) {
     return NextResponse.json(cached.data, {
       headers: { "X-Cache": "HIT" },
     });

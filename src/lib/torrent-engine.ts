@@ -280,20 +280,21 @@ export function pickVideoFile(
     }
   }
   let best: { file: TorrentFile; index: number; score: number } | null = null;
-  torrent.files.forEach((file, index) => {
+  for (let index = 0; index < torrent.files.length; index++) {
+    const file = torrent.files[index];
     const name = file.path ?? file.name;
     const ext = extOf(file.name);
     const extScore = VIDEO_EXT_SCORE[ext];
-    if (extScore === undefined) return;
-    if (file.length < 15 * 1024 * 1024) return; // skip samples / intros
-    if (/\bsample\b|\.nfo|\.url|extras?\//.test(name)) return;
+    if (extScore === undefined) continue;
+    if (file.length < 15 * 1024 * 1024) continue; // skip samples / intros
+    if (/\bsample\b|\.nfo|\.url|extras?\//.test(name)) continue;
     // an exact SxxEyy / year-matched file outranks any other candidate;
     // when nothing matches we fall back to plain size/codec ranking
     const epScore = episodeHint ? epMatchScore(name, episodeHint) * 1e15 : 0;
     const yrScore = !episodeHint && yearHint ? yearMatchScore(name, yearHint) * 1e15 : 0;
     const score = epScore + yrScore + extScore * 1e12 + file.length; // prefer episode/year, then playable container, then biggest
     if (!best || score > best.score) best = { file, index, score };
-  });
+  }
   if (best) return { file: best.file, index: best.index };
   // desperate fallback: largest file whatever it is
   let largestIdx = 0;

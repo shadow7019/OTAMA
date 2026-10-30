@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Flame,
   Film,
@@ -82,31 +82,55 @@ function LazyRow({ config, actions }: { config: RowConfig; actions: MediaActions
   const [items, setItems] = useState<MediaItem[]>([]);
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const ref = useRef<HTMLDivElement>(null);
+  const lastLoadRef = useRef(0);
+
+  const load = useCallback(
+    (refresh = false) => {
+      if (!refresh) setState("loading"); // silent refetch on auto-update
+      tmdb<PagedResponse<MediaItem>>(config.path, refresh ? { _fresh: 1 } : {})
+        .then((res) => {
+          const fallbackType = config.path.includes("/tv") ? "tv" : "movie";
+          const media = res.results.filter(
+            (r) => (r.media_type === undefined || r.media_type === "movie" || r.media_type === "tv") && !r.adult && r.poster_path
+          ).map((r) => ({ ...r, media_type: r.media_type ?? fallbackType }));
+          setItems(media.slice(0, 20));
+          setState("done");
+        })
+        .catch(() => setState("error"));
+    },
+    [config.path]
+  );
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && state === "idle") {
-          setState("loading");
-          tmdb<PagedResponse<MediaItem>>(config.path)
-            .then((res) => {
-              const fallbackType = config.path.includes("/tv") ? "tv" : "movie";
-              const media = res.results.filter(
-                (r) => (r.media_type === undefined || r.media_type === "movie" || r.media_type === "tv") && !r.adult && r.poster_path
-              ).map((r) => ({ ...r, media_type: r.media_type ?? fallbackType }));
-              setItems(media.slice(0, 20));
-              setState("done");
-            })
-            .catch(() => setState("error"));
-        }
+        if (entries[0].isIntersecting && state === "idle") load();
       },
       { rootMargin: "400px" }
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [config.path, state]);
+  }, [config.path, state, load]);
+
+  // auto-update: refetch when the tab regains focus / every 10 minutes so
+  // freshly released movies and episodes flow into the rows on their own
+  useEffect(() => {
+    if (state !== "done") return;
+    const bump = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadRef.current < 5 * 60_000) return; // throttle
+      lastLoadRef.current = Date.now();
+      load(true);
+    };
+    const iv = setInterval(bump, 5 * 60_000);
+    document.addEventListener("visibilitychange", bump);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", bump);
+    };
+  }, [state, load]);
 
   return (
     <div ref={ref}>
@@ -146,6 +170,18 @@ function FreshPlayableRow({ actions }: { actions: MediaActions }) {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const ref = useRef<HTMLDivElement>(null);
+  const lastLoadRef = useRef(0);
+
+  const load = useCallback((refresh = false) => {
+    if (!refresh) setState("loading");
+    fetch("/api/auto-content")
+      .then((r) => r.json())
+      .then((j: { results?: MediaItem[] }) => {
+        setItems(Array.isArray(j.results) ? j.results : []);
+        setState("done");
+      })
+      .catch(() => setState("error"));
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -153,21 +189,33 @@ function FreshPlayableRow({ actions }: { actions: MediaActions }) {
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && state === "idle") {
-          setState("loading");
-          fetch("/api/auto-content")
-            .then((r) => r.json())
-            .then((j: { results?: MediaItem[] }) => {
-              setItems(Array.isArray(j.results) ? j.results : []);
-              setState("done");
-            })
-            .catch(() => setState("error"));
+          lastLoadRef.current = Date.now();
+          load();
         }
       },
       { rootMargin: "400px" }
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [state]);
+  }, [state, load]);
+
+  // auto-update: re-verify playable content when the tab regains focus /
+  // every 10 minutes — the backend rebuilds its candidate queue every 30 min
+  useEffect(() => {
+    if (state !== "done") return;
+    const bump = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadRef.current < 9 * 60_000) return; // throttle
+      lastLoadRef.current = Date.now();
+      load(true);
+    };
+    const iv = setInterval(bump, 5 * 60_000);
+    document.addEventListener("visibilitychange", bump);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", bump);
+    };
+  }, [state, load]);
 
   if (state === "error" || (state === "done" && !items.length)) return null;
 

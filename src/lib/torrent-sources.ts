@@ -185,9 +185,10 @@ const LANG_WORD: Record<string, string> = {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** Air date (YYYY-MM-DD) of one episode, cached per show-season for 6h. */
+/** Air date (YYYY-MM-DD) of one episode — short TTL so brand-new daily-show
+ *  episodes (Bigg Boss S20E55…) get their date as soon as TMDB publishes it. */
 const seasonCache = new Map<string, { dates: Map<number, string | null>; ts: number }>();
-const SEASON_TTL = 6 * 60 * 60 * 1000;
+const SEASON_TTL = 30 * 60 * 1000;
 
 async function getEpisodeAirDate(
   tmdbId: number,
@@ -305,6 +306,100 @@ async function providerPirateBay(
     }
   }
   return [...seen.values()];
+}
+
+interface BitsearchCard {
+  hash: string;
+  name: string;
+  seeders: number;
+  peers: number;
+  sizeBytes: number;
+}
+
+/**
+ * BitSearch (bitsearch.eu) — HTML search, the last live indexer when the
+ * JSON APIs are down or blocked. It indexes Indian release groups
+ * (1TamilBlasters, TamilMV, 3MovieRulz…) that upload daily-show episodes
+ * ("Bigg Boss (2026) S09E101 …") hours after broadcast. Every row is
+ * validated with the same strict matcher as the keyword providers.
+ */
+async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
+  const { title, originalTitle, year, season, episode } = ctx;
+  const queries =
+    type === "movie"
+      ? [`${title} ${year ?? ""}`.trim(), title]
+      : [
+          `${title} s${pad(season)}e${pad(episode)}`,
+          `${title} season ${season}`, // dated daily shows + season packs
+        ];
+
+  const cards = new Map<string, BitsearchCard>();
+  const scrape = async (q: string) => {
+    try {
+      const res = await fetch(`https://bitsearch.eu/search?q=${encodeURIComponent(q)}`, {
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        },
+        signal: AbortSignal.timeout(9000),
+        redirect: "follow",
+      });
+      if (!res.ok) return;
+      const html = (await res.text()).replace(/\s+/g, " ");
+      const re = /\/download\/torrent\/([0-9a-fA-F]{40})\?title=([^">]+)/g;
+      for (const m of html.matchAll(re)) {
+        const hash = m[1].toLowerCase();
+        if (cards.has(hash)) continue;
+        let name = m[2];
+        try { name = decodeURIComponent(name); } catch { /* raw text fallback */ }
+        name = name
+          .replace(/&amp;/g, "&")
+          .replace(/&#x3D;|&#61;/gi, "=")
+          .replace(/&quot;/gi, '"')
+          .replace(/&#39;/g, "'")
+          .trim();
+        const win = html.slice(Math.max(0, m.index - 2200), m.index);
+        const seeders = Number(win.match(/font-medium">(\d+)<\/span>\s*<span>\s*seeders/)?.[1] ?? 0);
+        const peers = Number(win.match(/font-medium">(\d+)<\/span>\s*<span>\s*leechers/)?.[1] ?? 0);
+        const sizeBytes = parseSizeBytes(
+          win.match(/fa-download"><\/i>\s*<span>\s*([\d.]+\s*[KMGT]?B)</i)?.[1] ?? null
+        );
+        cards.set(hash, { hash, name, seeders, peers, sizeBytes });
+      }
+    } catch {
+      // blocked / timed out — the other providers still answer
+    }
+  };
+
+  await Promise.all(queries.map(scrape));
+
+  const out: TorrentSource[] = [];
+  for (const c of cards.values()) {
+    const p = parseRelease(c.name);
+    const match =
+      type === "movie"
+        ? matchMovie(p, title, originalTitle, year)
+        : matchTv(p, season, episode, title, originalTitle, {
+            airDate: ctx.airDate,
+            showLang: ctx.showLang,
+          });
+    if (!match) continue; // same name, wrong season/episode/year — reject
+    if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
+    out.push({
+      id: c.hash,
+      releaseName: c.name,
+      seeders: c.seeders,
+      peers: c.peers,
+      sizeBytes: c.sizeBytes,
+      provider: "BitSearch",
+      quality: detectQuality(c.name),
+      fileIdx: null,
+      match,
+      score: 0,
+    });
+  }
+  return out;
 }
 
 interface YtsMovie {
@@ -468,21 +563,28 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   // language versions — both are needed to match them without mixing content
   const airDate = type === "tv" ? await getEpisodeAirDate(tmdbId, season, episode) : null;
   const showLang = meta.originalLanguage ? LANG_WORD[meta.originalLanguage] ?? null : null;
+  // "Bigg Boss Tamil" uploads are named "Bigg Boss (2026) S09E101 [Tamil …]":
+  // the language moves into the tag area, so match against the base title and
+  // let the release's language tag pick the right version (mismatch = reject)
+  const matchTitle =
+    type === "tv" && showLang
+      ? title.replace(new RegExp(`\\s+${showLang}$`, "i"), "").trim() || title
+      : title;
 
   const jobs: Promise<TorrentSource[]>[] = [];
-  if (title) {
-    jobs.push(
-      providerPirateBay(type, {
-        title,
-        originalTitle: meta.originalTitle ?? undefined,
-        year: year || undefined,
-        countries: meta.countries,
-        season,
-        episode,
-        airDate,
-        showLang,
-      })
-    );
+  if (matchTitle) {
+    const bayCtx: BayContext = {
+      title: matchTitle,
+      originalTitle: meta.originalTitle ?? undefined,
+      year: year || undefined,
+      countries: meta.countries,
+      season,
+      episode,
+      airDate,
+      showLang,
+    };
+    jobs.push(providerPirateBay(type, bayCtx));
+    jobs.push(providerBitSearch(type, bayCtx));
   }
   if (imdbId) {
     jobs.push(providerTorrentio(type, imdbId, season, episode, year));

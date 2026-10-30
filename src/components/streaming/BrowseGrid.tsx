@@ -168,6 +168,7 @@ export function BrowseGrid({
             if (kind === "movie") params.primary_release_year = year;
             else params.first_air_date_year = year;
           }
+          if (reloadKey > 0 && page === 1) params._fresh = 1; // auto-update pass
           res = await tmdb<PagedResponse<MediaItem>>(`discover/${kind}`, params);
         }
 
@@ -198,6 +199,27 @@ export function BrowseGrid({
       clearTimeout(t);
     };
   }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey, discoverParams]);
+
+  // auto-update: re-pull page 1 when the tab regains focus or every 5 minutes,
+  // so new movies/episodes show up on their own — no reload needed. The
+  // `_fresh` hint bypasses the TMDB proxy cache for that one request.
+  useEffect(() => {
+    if (isStoreList || kind === "search") return;
+    let last = Date.now();
+    const bump = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - last < 60_000) return; // throttle
+      last = Date.now();
+      setPage(1);
+      setReloadKey((k) => k + 1);
+    };
+    const iv = setInterval(bump, 5 * 60_000);
+    document.addEventListener("visibilitychange", bump);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", bump);
+    };
+  }, [isStoreList, kind]);
 
   // infinite scroll
   useEffect(() => {

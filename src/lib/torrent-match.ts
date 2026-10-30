@@ -111,7 +111,14 @@ function isTechy(t: string): boolean {
   );
 }
 
-export function parseRelease(name: string): ParsedRelease {
+export function parseRelease(input: string): ParsedRelease {
+  // Indian release groups prefix the site name to every upload
+  // ("www.1TamilBlasters.bz - Bigg Boss (2026) S09E101 …") — drop a leading
+  // domain so its tokens are not mistaken for title words
+  const name = input.replace(
+    /^\s*(?:www\.)?[a-z0-9][a-z0-9.\-]{1,48}\.[a-z]{2,4}\s*[-–—]\s*/i,
+    ""
+  );
   const tks = releaseTokens(name);
   const raw = name.toLowerCase();
 
@@ -199,10 +206,19 @@ export function parseRelease(name: string): ParsedRelease {
   }
 
   // multi-token patterns on the raw name
-  let m = raw.match(/season\s*[._\s-]*(\d{1,2})\s*(?:[-–—]|to)\s*(\d{1,2})\b/);
-  if (m) {
-    seasonRange = [Number(m[1]), Number(m[2])];
-    isSeasonPack = true;
+  // "Season 1-6 Complete" is a multi-season pack — but "Bigg Boss Season 6
+  // -22 Dec 2012" is a DATED DAILY EPISODE: the second number there is a
+  // calendar day, not a season bound. Never build a season range from a name
+  // that carries a month word (daily shows always label episodes by date),
+  // and never from a descending pair.
+  let m: RegExpMatchArray | null;
+  const hasMonthWord = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/.test(raw);
+  if (!hasMonthWord) {
+    m = raw.match(/season\s*[._\s-]*(\d{1,2})\s*(?:[-–—]|to)\s*(\d{1,2})\b/);
+    if (m && Number(m[2]) >= Number(m[1])) {
+      seasonRange = [Number(m[1]), Number(m[2])];
+      isSeasonPack = true;
+    }
   }
   m = raw.match(/season\s*[._\s]*(\d{1,2})\s*(?:episode|ep)\s*[._\s]*(\d{1,3})\b/);
   if (m && episode === null) {
@@ -349,14 +365,30 @@ function parseYmd(s: string): { y: number; m: number; d: number } | null {
   return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
 }
 
-/** day-difference between a release date and the episode's air date */
+/** day-difference between a release date and the episode's air date.
+ *  A year-less date can't be offset — returns Infinity so callers must
+ *  treat day+month-only matches explicitly. */
 function dayOffset(
-  a: { day: number; month: number; year: number },
+  a: { day: number; month: number; year: number | null },
   b: { y: number; m: number; d: number }
 ): number {
+  if (a.year == null) return Number.POSITIVE_INFINITY;
   return Math.abs(
     (Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(b.y, b.m - 1, b.d)) / 86400000
   );
+}
+
+/**
+ * True when a release's broadcast date identifies the requested episode:
+ * day+month must equal the air date and a present year must agree within
+ * one day (upload/timezone slack). Missing year = day+month only.
+ */
+function dateMatches(
+  a: { day: number; month: number; year: number | null },
+  b: { y: number; m: number; d: number }
+): boolean {
+  if (a.day !== b.d || a.month !== b.m) return false;
+  return a.year == null || dayOffset(a, b) <= 1;
 }
 
 /**
@@ -407,7 +439,7 @@ export function matchTv(
     // episode-level releases that also carry a full broadcast date must agree
     // with the episode's air date (±1 day) — date labels are how Indian daily
     // shows disambiguate, so a wrong date means wrong content
-    if (!p.isSeasonPack && p.date?.year != null && air && dayOffset(p.date, air) > 1) {
+    if (!p.isSeasonPack && p.date && air && p.date.year != null && dayOffset(p.date, air) > 1) {
       return null;
     }
     return "verified";
@@ -418,24 +450,26 @@ export function matchTv(
     // when the release's broadcast date matches the episode's air date
     if (season === 1) return "verified";
     if (titleCarriesSeason(p, season)) return "verified";
-    if (p.date && air && (p.date.year == null || dayOffset(p.date, air) <= 1)) {
-      if (p.date.day === air.d && p.date.month === air.m) return "verified";
-    }
+    if (p.date && air && dateMatches(p.date, air)) return "verified";
     return null;
   }
   if (p.isSeasonPack) {
     if (p.seasonRange) {
-      return season >= p.seasonRange[0] && season <= p.seasonRange[1] ? "pack" : null;
+      if (season < p.seasonRange[0] || season > p.seasonRange[1]) return null;
+    } else if (p.season !== null && p.season !== season) return null;
+    // a dated "pack" is really a single dated episode of that season
+    // ("Bigg Boss Season 20 - 29th October 2026") — the broadcast date must
+    // equal the episode's air date; an exact-date hit is a verified episode,
+    // any other date is a different day's episode — never play it
+    if (p.date && air) {
+      return dateMatches(p.date, air) ? "verified" : null;
     }
-    if (p.season !== null && p.season !== season) return null;
     return "pack";
   }
   // no season/episode markers at all — dated daily episodes ("… Premier 1st Oct")
   // are exact when the calendar date equals the episode's air date
   if (p.date && air) {
-    const yearOk = p.date.year == null || dayOffset(p.date, air) <= 1;
-    if (yearOk && p.date.day === air.d && p.date.month === air.m) return "verified";
-    return null;
+    return dateMatches(p.date, air) ? "verified" : null;
   }
   return null;
 }
