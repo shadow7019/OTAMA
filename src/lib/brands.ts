@@ -41,6 +41,7 @@ export const NETWORKS: Brand[] = [
   { id: 49, name: "HBO", logo: "/tuomPhY2UtuPTqqFnKMVHvSb724.png", kind: "tv", param: "with_networks" },
   { id: 3186, name: "HBO Max", logo: "/nmU0UMDJB3dRRQSTUqawzF2Od1a.png", kind: "tv", param: "with_networks" },
   { id: 2739, name: "Disney+", logo: "/1edZOYAfoyZyZ3rklNSiUpXX30Q.png", kind: "tv", param: "with_networks" },
+  { id: 8036, name: "JioHotstar", logo: "/f4UwAB8E6DEQfFhyKEH4NEvwYRt.png", kind: "tv", param: "with_networks" },
   { id: 2552, name: "Apple TV+", logo: "/bngHRFi794mnMq34gfVcm9nDxN1.png", kind: "tv", param: "with_networks" },
   { id: 1024, name: "Prime Video", logo: "/w7HfLNm9CWwRmAMU58udl2L7We7.png", kind: "tv", param: "with_networks" },
   { id: 453, name: "Hulu", logo: "/pqUTCleNUiTLAVlelGxUgWn1ELh.png", kind: "tv", param: "with_networks" },
