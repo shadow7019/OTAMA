@@ -15,7 +15,9 @@ const MAX_CACHE = 300;
 
 /**
  * GET /api/torrent/search?type=movie|tv&id=<tmdbId>&season=1&episode=1
- * Returns torrent "servers" ranked best-first (seeders, codec, quality, size).
+ * Returns torrent "servers" ranked best-first. Every result is validated
+ * against the title/year (movies) or season/episode (TV) so same-named
+ * content never gets mixed.
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;

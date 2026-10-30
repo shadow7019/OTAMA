@@ -46,3 +46,50 @@ export async function getImdbId(
     return null;
   }
 }
+
+/* ---------- title metadata for torrent disambiguation ---------- */
+
+export interface TitleMeta {
+  /** alternative title to accept in release names (original language) */
+  originalTitle: string | null;
+  /** first-air / release year from TMDB */
+  year: string | null;
+  /** TV only — countries of origin, used to tell "The Office US" from UK */
+  countries: string[];
+}
+
+const metaCache = new Map<string, { meta: TitleMeta; ts: number }>();
+const META_TTL = 24 * 60 * 60 * 1000;
+
+/**
+ * Extra metadata that lets the torrent matcher tell same-named titles apart
+ * (original title, canonical year, country of origin). Cached for a day.
+ */
+export async function getTitleMeta(
+  type: "movie" | "tv",
+  tmdbId: number
+): Promise<TitleMeta> {
+  const key = `${type}:${tmdbId}`;
+  const hit = metaCache.get(key);
+  if (hit && Date.now() - hit.ts < META_TTL) return hit.meta;
+  const fallback: TitleMeta = { originalTitle: null, year: null, countries: [] };
+  try {
+    const data = await tmdbServer<{
+      original_title?: string;
+      original_name?: string;
+      release_date?: string;
+      first_air_date?: string;
+      origin_country?: string[];
+    }>(`${type}/${tmdbId}`);
+    const meta: TitleMeta = {
+      originalTitle: data.original_title ?? data.original_name ?? null,
+      year: (data.release_date ?? data.first_air_date ?? "").slice(0, 4) || null,
+      countries: data.origin_country ?? [],
+    };
+    metaCache.set(key, { meta, ts: Date.now() });
+    return meta;
+  } catch {
+    metaCache.set(key, { meta: fallback, ts: Date.now() });
+    return fallback;
+  }
+}

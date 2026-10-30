@@ -53,6 +53,8 @@ interface TorrentServer {
   provider: string;
   quality: string;
   fileIdx: number | null;
+  /** verified = exact title/episode match · pack = season pack (right file auto-picked) · weak = title-only match */
+  match: "verified" | "pack" | "weak";
   score: number;
 }
 
@@ -264,10 +266,17 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   /* ---------------- stream URL ---------------- */
   const streamUrl = useMemo(() => {
-    if (!activeServer) return null;
+    if (!activeServer || !target) return null;
     const file = activeServer.fileIdx != null ? `&file=${activeServer.fileIdx}` : "";
-    return `/api/torrent/stream?id=${activeServer.id}&dn=${encodeURIComponent(activeServer.releaseName)}${file}`;
-  }, [activeServer]);
+    // season/episode steer file selection inside season packs and year
+    // steers multi-year movie collections — so the exact requested content
+    // plays instead of the pack's biggest file
+    const hints =
+      type === "tv"
+        ? `&season=${season}&episode=${episode}`
+        : `&year=${getYear(target.item)}`;
+    return `/api/torrent/stream?id=${activeServer.id}&dn=${encodeURIComponent(activeServer.releaseName)}${file}${hints}`;
+  }, [activeServer, type, season, episode, target?.item]);
 
   useEffect(() => {
     streamStartRef.current = Date.now();
@@ -598,12 +607,18 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
         {servers.map((s, i) => {
           const active = activeIdx === i;
+          const matchBadge =
+            s.match === "verified"
+              ? { label: "✓", hint: "Release verified for this exact title/episode" }
+              : s.match === "pack"
+                ? { label: "Season pack", hint: "Season pack — the requested episode is picked automatically" }
+                : { label: "unverified", hint: "Could not verify the year/episode in this release name" };
           return (
             <button
               key={s.id}
               type="button"
               onClick={() => selectTorrent(i)}
-              title={`${s.releaseName}\n${s.seeders} seeders · ${fmtSize(s.sizeBytes)} · ${s.provider}`}
+              title={`${s.releaseName}\n${s.seeders} seeders · ${fmtSize(s.sizeBytes)} · ${s.provider}\n${matchBadge.hint}`}
               className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
                 active
                   ? "bg-red-600 text-white"
@@ -614,7 +629,18 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             >
               <Magnet className="h-3 w-3" />
               S{i + 1} · {s.quality}
-              <span className="hidden text-[9px] font-normal text-zinc-500 md:inline">
+              <span
+                className={`hidden text-[9px] font-normal md:inline ${
+                  s.match === "verified"
+                    ? "text-emerald-400"
+                    : s.match === "pack"
+                      ? "text-sky-400"
+                      : "text-amber-400"
+                }`}
+              >
+                {matchBadge.label}
+              </span>
+              <span className="hidden text-[9px] font-normal text-zinc-500 lg:inline">
                 {s.provider} · 👤{fmtSeeders(s.seeders)}
               </span>
             </button>

@@ -11,17 +11,28 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/torrent/stream?id=<infoHash>&file=<index>&dn=<releaseName>
+ * GET /api/torrent/stream?id=<infoHash>&file=<index>&dn=<releaseName>&season=1&episode=2&year=2019
  *
  * Streams the torrent's video file as progressive HTTP with full Range
  * support, so the native <video> element can seek while the download is
  * still in progress. Pieces are fetched from the swarm on demand.
+ * season/episode steer file selection inside season packs; year steers it
+ * inside multi-year movie collections — the requested content plays instead
+ * of just the biggest file.
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const id = (sp.get("id") ?? "").toLowerCase();
   const fileParam = sp.get("file");
   const dn = (sp.get("dn") ?? "").slice(0, 200);
+  const seasonNum = Number(sp.get("season"));
+  const episodeNum = Number(sp.get("episode"));
+  const yearNum = Number(sp.get("year"));
+  const episodeHint =
+    Number.isFinite(seasonNum) && seasonNum > 0 && Number.isFinite(episodeNum) && episodeNum > 0
+      ? { season: Math.floor(seasonNum), episode: Math.floor(episodeNum) }
+      : null;
+  const yearHint = Number.isFinite(yearNum) && yearNum >= 1900 ? Math.floor(yearNum) : null;
 
   const fileIdx = fileParam !== null && fileParam !== "" ? Number(fileParam) : null;
   if (fileParam !== null && (fileIdx === null || !Number.isFinite(fileIdx) || fileIdx < 0)) {
@@ -40,7 +51,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Torrent has no files" }, { status: 504 });
   }
 
-  const { file } = pickVideoFile(torrent, fileIdx !== null ? Math.floor(fileIdx) : null);
+  const { file } = pickVideoFile(
+    torrent,
+    fileIdx !== null ? Math.floor(fileIdx) : null,
+    episodeHint,
+    yearHint
+  );
 
   // ---- Range parsing (bytes=start-end | bytes=start- | bytes=-suffix) ----
   const rangeHeader = req.headers.get("range");

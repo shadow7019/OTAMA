@@ -15,6 +15,8 @@ import path from "node:path";
 
 export interface TorrentFile {
   name: string;
+  /** path inside the torrent including folders (may contain S01/Season 2) */
+  path?: string;
   length: number;
   index: number;
   /** byte offset of this file inside the torrent */
@@ -224,10 +226,52 @@ function extOf(name: string): string {
   return m ? m[1] : "";
 }
 
-/** Choose the most browser-playable video file in the torrent. */
+export interface EpisodeHint {
+  season: number;
+  episode: number;
+}
+
+/**
+ * Does this file (including its folder path) look like the requested episode?
+ * Returns 2 for a full SxxEyy match, 1 for an episode-only match, 0 for no.
+ */
+function epMatchScore(name: string, hint: EpisodeHint): 0 | 1 | 2 {
+  const n = `${name}`.toLowerCase();
+  let m = n.match(/\bs(\d{1,2})[\s._-]*e(\d{1,3})\b/);
+  if (m) return Number(m[1]) === hint.season && Number(m[2]) === hint.episode ? 2 : 0;
+  m = n.match(/\b(\d{1,2})x(\d{1,3})\b/);
+  if (m) return Number(m[1]) === hint.season && Number(m[2]) === hint.episode ? 2 : 0;
+  const hasSeason = new RegExp(`\\b(?:s|season[\\s._-]*)0*${hint.season}\\b`).test(n);
+  m = n.match(/\be(?:p)?[\s._-]*(\d{1,3})\b/);
+  if (m) {
+    if (Number(m[1]) !== hint.episode) return 0;
+    return hasSeason ? 2 : 1;
+  }
+  m = n.match(/\bepisode[\s._-]*(\d{1,3})\b/);
+  if (m) return Number(m[1]) === hint.episode ? 1 : 0;
+  return 0;
+}
+
+/**
+ * Movie collections ("It 2017 + Chapter Two 2019") — prefer the file whose
+ * own name carries the requested year (±1). 1 = plausible year match.
+ */
+function yearMatchScore(name: string, year: number): 0 | 1 {
+  const years = `${name}`.match(/\b(19|20)\d{2}\b/g) ?? [];
+  return years.some((y) => Math.abs(Number(y) - year) <= 1) ? 1 : 0;
+}
+
+/**
+ * Choose the most browser-playable video file in the torrent.
+ * For season packs, `episodeHint` steers selection to the requested SxxEyy
+ * file; for multi-year movie collections `yearHint` prefers the file carrying
+ * the requested year — instead of just the biggest one.
+ */
 export function pickVideoFile(
   torrent: Torrent,
-  hintIdx: number | null
+  hintIdx: number | null,
+  episodeHint?: EpisodeHint | null,
+  yearHint?: number | null
 ): { file: TorrentFile; index: number } {
   if (hintIdx !== null && hintIdx >= 0 && hintIdx < torrent.files.length) {
     const hinted = torrent.files[hintIdx];
@@ -237,13 +281,17 @@ export function pickVideoFile(
   }
   let best: { file: TorrentFile; index: number; score: number } | null = null;
   torrent.files.forEach((file, index) => {
-    const name = file.name.toLowerCase();
-    const ext = extOf(name);
+    const name = file.path ?? file.name;
+    const ext = extOf(file.name);
     const extScore = VIDEO_EXT_SCORE[ext];
     if (extScore === undefined) return;
     if (file.length < 15 * 1024 * 1024) return; // skip samples / intros
     if (/\bsample\b|\.nfo|\.url|extras?\//.test(name)) return;
-    const score = extScore * 1e12 + file.length; // prefer playable container, then biggest
+    // an exact SxxEyy / year-matched file outranks any other candidate;
+    // when nothing matches we fall back to plain size/codec ranking
+    const epScore = episodeHint ? epMatchScore(name, episodeHint) * 1e15 : 0;
+    const yrScore = !episodeHint && yearHint ? yearMatchScore(name, yearHint) * 1e15 : 0;
+    const score = epScore + yrScore + extScore * 1e12 + file.length; // prefer episode/year, then playable container, then biggest
     if (!best || score > best.score) best = { file, index, score };
   });
   if (best) return { file: best.file, index: best.index };
