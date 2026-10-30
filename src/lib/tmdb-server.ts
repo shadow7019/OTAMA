@@ -56,6 +56,8 @@ export interface TitleMeta {
   year: string | null;
   /** TV only — countries of origin, used to tell "The Office US" from UK */
   countries: string[];
+  /** TV only — TMDB original_language code (ta / te / hi…) for Indian versions */
+  originalLanguage: string | null;
 }
 
 const metaCache = new Map<string, { meta: TitleMeta; ts: number }>();
@@ -72,7 +74,7 @@ export async function getTitleMeta(
   const key = `${type}:${tmdbId}`;
   const hit = metaCache.get(key);
   if (hit && Date.now() - hit.ts < META_TTL) return hit.meta;
-  const fallback: TitleMeta = { originalTitle: null, year: null, countries: [] };
+  const fallback: TitleMeta = { originalTitle: null, year: null, countries: [], originalLanguage: null };
   try {
     const data = await tmdbServer<{
       original_title?: string;
@@ -80,11 +82,13 @@ export async function getTitleMeta(
       release_date?: string;
       first_air_date?: string;
       origin_country?: string[];
+      original_language?: string;
     }>(`${type}/${tmdbId}`);
     const meta: TitleMeta = {
       originalTitle: data.original_title ?? data.original_name ?? null,
       year: (data.release_date ?? data.first_air_date ?? "").slice(0, 4) || null,
       countries: data.origin_country ?? [],
+      originalLanguage: data.original_language ?? null,
     };
     metaCache.set(key, { meta, ts: Date.now() });
     return meta;

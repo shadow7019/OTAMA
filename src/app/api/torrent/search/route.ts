@@ -7,10 +7,13 @@ export const dynamic = "force-dynamic";
 interface CacheEntry {
   data: unknown;
   ts: number;
+  /** per-entry TTL — empty results expire fast so retries actually re-scan */
+  ttl: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 const TTL = 10 * 60 * 1000;
+const EMPTY_TTL = 60 * 1000;
 const MAX_CACHE = 300;
 
 /**
@@ -32,7 +35,7 @@ export async function GET(req: NextRequest) {
 
   const cacheKey = `${type}:${id}:${type === "tv" ? `${season}:${episode}` : "m"}`;
   const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < TTL) {
+  if (cached && Date.now() - cached.ts < cached.ttl) {
     return NextResponse.json(cached.data, { headers: { "X-Cache": "HIT" } });
   }
 
@@ -46,7 +49,11 @@ export async function GET(req: NextRequest) {
       const oldest = cache.keys().next().value;
       if (oldest) cache.delete(oldest);
     }
-    cache.set(cacheKey, { data: payload, ts: Date.now() });
+    cache.set(cacheKey, {
+      data: payload,
+      ts: Date.now(),
+      ttl: results.length ? TTL : EMPTY_TTL,
+    });
     return NextResponse.json(payload);
   } catch (err) {
     const detail = err instanceof Error ? err.message : "unknown error";

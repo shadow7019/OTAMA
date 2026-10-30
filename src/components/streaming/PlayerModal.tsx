@@ -654,6 +654,16 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         )}
       </div>
 
+      {/* every source found is dead — set expectations before playback stalls */}
+      {serversState === "ready" && servers.length > 0 && servers.every((s) => s.seeders === 0) && (
+        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          Only dead torrents found for this episode right now (0 seeders on every
+          source). Playback will likely fail — check back later; daily-show
+          episodes usually get seeded within days.
+        </div>
+      )}
+
       {/* failover banner */}
       {banner && (
         <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
@@ -971,7 +981,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   const active = ep.episode_number === episode;
                   return (
                     <button
-                      key={ep.id}
+                      key={`${ep.id}-${ep.episode_number}`}
                       type="button"
                       onClick={() => goEpisode(season, ep.episode_number)}
                       className={`mb-1.5 flex w-full items-start gap-3 rounded-lg p-2 text-left transition ${

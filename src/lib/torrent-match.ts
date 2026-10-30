@@ -28,6 +28,10 @@ export interface ParsedRelease {
   isSeasonPack: boolean;
   /** explicit country tag in the title area (US / UK) */
   country: string | null;
+  /** language/version tag in the name (tamil, telugu, hindi…) — Indian shows */
+  language: string | null;
+  /** calendar date in the name — Indian daily shows label episodes by date */
+  date: { day: number; month: number; year: number | null } | null;
   /** leading tokens of the name that belong to the title */
   titleTokens: string[];
 }
@@ -47,6 +51,38 @@ const TITLE_EXTRA_OK = new Set([
 /** words that mark the end of the title section of a release name */
 const TECH_TOKEN =
   /^(480p|480i|576p|720p|720i|1080p|1080i|2160p|4k|uhd|web|webdl|webrip|web[-.]?dl|nf|amzn|dsnp|hulu|atvp|bluray|blu[-.]?ray|bd|bdrip|brrip|hddvd|dvd|dvdrip|dvdscr|hdrip|hdtv|pdtv|cam|camrip|ts|telesync|screener|hdts|xvid|x264|h264|h\.264|h265|h\.265|x265|hevc|av1|aac|ac3|eac3|ddp|dd5|dts|dtshd|truehd|atmos|flac|mp3|10bit|8bit|hdr|hdr10|dolby|vision|dv|dovi|remux|hybrid|proper|repack|extended|remastered|unrated|uncut|internal|limited|dual|multi|subs|hc|gain|sync|cour|yify|yts|rarbg|ettv|eztv|fgt|galaxytv|byte|psa|rift|sva|avigation)$/i;
+
+/** language/version tags used on Indian releases — qualify the show, not retitle it */
+export const LANGUAGE_WORDS: Record<string, string> = {
+  tamil: "tamil",
+  telugu: "telugu",
+  hindi: "hindi",
+  malayalam: "malayalam",
+  kannada: "kannada",
+  marathi: "marathi",
+  bengali: "bengali",
+  bangla: "bengali",
+  punjabi: "punjabi",
+};
+
+const MONTHS = new Set([
+  "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+]);
+const MONTH_INDEX: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/**
+ * Words that show up inside dated daily-episode names ("Bigg Boss — Season 4 —
+ * Episode 29 — 31 October 2010") without meaning a different show.
+ */
+const DATED_EXTRA_OK = new Set([
+  ...Object.keys(LANGUAGE_WORDS),
+  "day", "days", "premiere", "premier", "finale", "grand", "season", "episode",
+  "ep", "telecast", "version", "full", "show", "ceremony", "ceremonial",
+  "launch", "lauch", "opening",
+]);
 
 export function releaseTokens(name: string): string[] {
   return name
@@ -85,6 +121,8 @@ export function parseRelease(name: string): ParsedRelease {
   let seasonRange: [number, number] | null = null;
   let isSeasonPack = false;
   let country: string | null = null;
+  let language: string | null = null;
+  let date: { day: number; month: number; year: number | null } | null = null;
   let cut = tks.length;
 
   // release year = the LAST year-like token, unless a year-like word opens the
@@ -129,6 +167,13 @@ export function parseRelease(name: string): ParsedRelease {
       cut = Math.min(cut, i);
       continue;
     }
+    // separated marker: "EP.34" / "Episode 29" / "S14.EP.34" → tokens ep,34
+    if ((t === "ep" || t === "episode") && /^\d{1,3}$/.test(tks[i + 1] ?? "") && episode === null) {
+      episode = Number(tks[i + 1]);
+      if (season !== null) isSeasonPack = false; // "S14.EP.34" is an episode, not a pack
+      cut = Math.min(cut, i);
+      continue;
+    }
     if (PACK_WORD.test(t)) {
       const next = tks[i + 1] ?? "";
       // "Season 2" needs the number right after; "Complete" needs a technical
@@ -160,11 +205,42 @@ export function parseRelease(name: string): ParsedRelease {
     isSeasonPack = true;
   }
   m = raw.match(/season\s*[._\s]*(\d{1,2})\s*(?:episode|ep)\s*[._\s]*(\d{1,3})\b/);
-  if (m && season === null) {
-    season = Number(m[1]);
+  if (m && episode === null) {
+    season ??= Number(m[1]);
     episode = Number(m[2]);
+    if (season !== null) isSeasonPack = false;
   }
   if (/\bcomplete[._\s]*series\b|\ball[._\s]*seasons\b/.test(raw)) isSeasonPack = true;
+
+  // dated episodes: "31 October 2010", "2nd Oct 2011", "1st Oct" — Indian daily
+  // shows are labelled by broadcast date; the year alone is parsed separately
+  m = raw.match(
+    /(\d{1,2})(?:st|nd|rd|th)?\s*[._\s-]*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*[._\s-]*((?:19|20)\d{2})?\b/i
+  );
+  if (m) {
+    const month = MONTH_INDEX[m[2].slice(0, 3).toLowerCase()];
+    const day = Number(m[1]);
+    if (month !== undefined && day >= 1 && day <= 31) {
+      date = { day, month, year: m[3] ? Number(m[3]) : null };
+      // keep date words out of the title area when nothing else cut earlier
+      const dayIdx = tks.findIndex(
+        (tk, i) =>
+          Number(tk.replace(/(st|nd|rd|th)$/i, "")) === day &&
+          /^\d{1,2}$/.test(tk.replace(/(st|nd|rd|th)$/i, "")) &&
+          MONTHS.has((tks[i + 1] ?? "").slice(0, 3))
+      );
+      if (dayIdx >= 0) cut = Math.min(cut, dayIdx);
+    }
+  }
+
+  // language/version tag anywhere in the name ("Bigg Boss (2019) Telugu …")
+  for (const tk of tks) {
+    const lw = LANGUAGE_WORDS[tk];
+    if (lw) {
+      language = lw;
+      break;
+    }
+  }
 
   // explicit country tag near the title ("The.Office.US", "Peep.Show.UK")
   for (const tk of tks.slice(0, cut)) {
@@ -178,7 +254,7 @@ export function parseRelease(name: string): ParsedRelease {
     if (m) episode = Number(m[1]);
   }
 
-  return { year, season, episode, seasonRange, isSeasonPack, country, titleTokens: tks.slice(0, cut) };
+  return { year, season, episode, seasonRange, isSeasonPack, country, language, date, titleTokens: tks.slice(0, cut) };
 }
 
 /* ---------------- title comparison ---------------- */
@@ -236,10 +312,6 @@ function extrasAllowed(unmatched: string[]): boolean {
 /** TV titles may carry a country tag ("The.Office.US") or part markers */
 const TV_EXTRA_OK = new Set(["us", "usa", "uk", "gb", ...TITLE_EXTRA_OK]);
 
-function tvExtrasAllowed(unmatched: string[]): boolean {
-  return unmatched.every((w) => TV_EXTRA_OK.has(w) || /^\d+$/.test(w));
-}
-
 /**
  * Classify a movie release. Returns null when the release is definitely a
  * different title (wrong year, wrong words) — never playable.
@@ -264,32 +336,92 @@ export function matchMovie(
   return ratio >= 0.99 && unmatched.length === 0 ? "weak" : null;
 }
 
+/** Context that lets the TV matcher verify dated Indian daily-show releases. */
+export interface TvMatchCtx {
+  /** TMDB air date of the requested episode (YYYY-MM-DD), when known */
+  airDate?: string | null;
+  /** language of the requested show (tamil, telugu, hindi…) — release tags must agree */
+  showLang?: string | null;
+}
+
+function parseYmd(s: string): { y: number; m: number; d: number } | null {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
+}
+
+/** day-difference between a release date and the episode's air date */
+function dayOffset(
+  a: { day: number; month: number; year: number },
+  b: { y: number; m: number; d: number }
+): number {
+  return Math.abs(
+    (Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(b.y, b.m - 1, b.d)) / 86400000
+  );
+}
+
+/**
+ * "Bigg Boss 11 — Episode 24" carries the season inside the title: the last
+ * title token is the requested season number. Guards same-name numerals
+ * ("9-1-1") by requiring a real title word before the numeral.
+ */
+function titleCarriesSeason(p: ParsedRelease, season: number): boolean {
+  const tks = p.titleTokens;
+  return (
+    tks.length >= 2 &&
+    tks[tks.length - 1] === String(season) &&
+    /[a-z]/.test(tks[tks.length - 2])
+  );
+}
+
 /**
  * Classify a TV release for a specific season/episode.
- *  - "verified": name carries the exact SxxEyy requested
+ *  - "verified": name carries the exact SxxEyy requested (or an unambiguous
+ *                dated episode / episode-with-title-season equivalent)
  *  - "pack": season pack / complete series that contains the episode
  *            (the stream route then picks the right file inside the pack)
- *  - null: a different episode/season of the same-named show — reject
+ *  - null: a different episode/season/language version — reject
  */
 export function matchTv(
   p: ParsedRelease,
   season: number,
   episode: number,
   title: string,
-  originalTitle: string | undefined
+  originalTitle: string | undefined,
+  ctx: TvMatchCtx = {}
 ): MatchClass | null {
   const { ratio, unmatched } = bestTitleMatch(p, [title, originalTitle].filter(Boolean) as string[]);
   if (ratio < 0.75) return null;
-  // extra title words beyond a country/part tag mean a different show
+  // a release tagged with a different language is a different version of the
+  // show ("Bigg Boss Telugu" must never answer for "Bigg Boss" Tamil)
+  if (p.language && ctx.showLang && p.language !== ctx.showLang) return null;
+  // extra title words beyond country/part/date noise mean a different show
   // ("Office Incubation" is not "The Office", but "The Office US" is)
-  if (!tvExtrasAllowed(unmatched)) return null;
+  if (!unmatched.every((w) => TV_EXTRA_OK.has(w) || DATED_EXTRA_OK.has(w) || /^\d+$/.test(w))) {
+    return null;
+  }
+
+  const air = ctx.airDate ? parseYmd(ctx.airDate) : null;
 
   if (p.season !== null && p.episode !== null) {
-    return p.season === season && p.episode === episode ? "verified" : null;
+    if (p.season !== season || p.episode !== episode) return null;
+    // episode-level releases that also carry a full broadcast date must agree
+    // with the episode's air date (±1 day) — date labels are how Indian daily
+    // shows disambiguate, so a wrong date means wrong content
+    if (!p.isSeasonPack && p.date?.year != null && air && dayOffset(p.date, air) > 1) {
+      return null;
+    }
+    return "verified";
   }
   if (p.episode !== null) {
-    // episode number without a season — only trust it for season 1
-    return season === 1 && p.episode === episode ? "verified" : null;
+    // episode number without a season — trust it when the requested season is 1,
+    // when the title itself carries the season ("Bigg Boss 11 — Episode 24"), or
+    // when the release's broadcast date matches the episode's air date
+    if (season === 1) return "verified";
+    if (titleCarriesSeason(p, season)) return "verified";
+    if (p.date && air && (p.date.year == null || dayOffset(p.date, air) <= 1)) {
+      if (p.date.day === air.d && p.date.month === air.m) return "verified";
+    }
+    return null;
   }
   if (p.isSeasonPack) {
     if (p.seasonRange) {
@@ -297,6 +429,13 @@ export function matchTv(
     }
     if (p.season !== null && p.season !== season) return null;
     return "pack";
+  }
+  // no season/episode markers at all — dated daily episodes ("… Premier 1st Oct")
+  // are exact when the calendar date equals the episode's air date
+  if (p.date && air) {
+    const yearOk = p.date.year == null || dayOffset(p.date, air) <= 1;
+    if (yearOk && p.date.day === air.d && p.date.month === air.m) return "verified";
+    return null;
   }
   return null;
 }

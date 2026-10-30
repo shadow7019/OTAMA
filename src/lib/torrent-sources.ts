@@ -8,7 +8,7 @@
  * series episodes never get mixed) and scored so the player can pick the
  * best server automatically.
  */
-import { getImdbId, getTitleMeta } from "./tmdb-server";
+import { getImdbId, getTitleMeta, tmdbServer } from "./tmdb-server";
 import {
   countryPenalty,
   matchMovie,
@@ -171,6 +171,47 @@ interface ApibayResult {
   size?: string;
 }
 
+/** TMDB original_language code → the word Indian releases use for it */
+const LANG_WORD: Record<string, string> = {
+  ta: "tamil",
+  te: "telugu",
+  hi: "hindi",
+  ml: "malayalam",
+  kn: "kannada",
+  mr: "marathi",
+  bn: "bengali",
+  pa: "punjabi",
+};
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** Air date (YYYY-MM-DD) of one episode, cached per show-season for 6h. */
+const seasonCache = new Map<string, { dates: Map<number, string | null>; ts: number }>();
+const SEASON_TTL = 6 * 60 * 60 * 1000;
+
+async function getEpisodeAirDate(
+  tmdbId: number,
+  season: number,
+  episode: number
+): Promise<string | null> {
+  const key = `tv:${tmdbId}:${season}`;
+  let hit = seasonCache.get(key);
+  if (!hit || Date.now() - hit.ts > SEASON_TTL) {
+    try {
+      const data = await tmdbServer<{
+        episodes?: { episode_number: number; air_date: string | null }[];
+      }>(`tv/${tmdbId}/season/${season}`);
+      const dates = new Map<number, string | null>();
+      for (const e of data.episodes ?? []) dates.set(e.episode_number, e.air_date ?? null);
+      hit = { dates, ts: Date.now() };
+      seasonCache.set(key, hit);
+    } catch {
+      return null;
+    }
+  }
+  return hit.dates.get(episode) ?? null;
+}
+
 interface BayContext {
   title: string;
   originalTitle?: string;
@@ -178,6 +219,8 @@ interface BayContext {
   countries: string[];
   season: number;
   episode: number;
+  airDate?: string | null;
+  showLang?: string | null;
 }
 
 /**
@@ -189,14 +232,17 @@ async function providerPirateBay(
   type: "movie" | "tv",
   ctx: BayContext
 ): Promise<TorrentSource[]> {
-  const pad = (n: number) => String(n).padStart(2, "0");
   const { title, originalTitle, year, season, episode } = ctx;
   const queries =
     type === "movie"
       ? [`${title} ${year ?? ""}`.trim(), title]
       : [
           `${title} s${pad(season)}e${pad(episode)}`,
+          // language variant — Indian versions ("Bigg Boss Telugu") overflow the
+          // bare-title result window on trackers
+          ...(ctx.showLang ? [`${title} ${ctx.showLang}`] : []),
           `${title} ${season}x${pad(episode)}`,
+          title, // dated daily-show names carry no SxxExx — match by name + air date
         ];
 
   const seen = new Map<string, TorrentSource>();
@@ -209,7 +255,10 @@ async function providerPirateBay(
       const match =
         type === "movie"
           ? matchMovie(p, title, originalTitle, year)
-          : matchTv(p, season, episode, title, originalTitle);
+          : matchTv(p, season, episode, title, originalTitle, {
+              airDate: ctx.airDate,
+              showLang: ctx.showLang,
+            });
       if (!match) continue; // same name, different film/episode — reject
       const cPen = type === "tv" ? countryPenalty(p, ctx.countries) : 0;
       // an explicit country tag that contradicts the show ("The.Office.US"
@@ -415,6 +464,10 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   const [imdbId, meta] = await Promise.all([getImdbId(type, tmdbId), getTitleMeta(type, tmdbId)]);
   // TMDB's own year is canonical (guards against stale/rounded client data)
   const year = meta.year || args.year || "";
+  // Indian daily shows (Bigg Boss…) name episodes by broadcast date and tag
+  // language versions — both are needed to match them without mixing content
+  const airDate = type === "tv" ? await getEpisodeAirDate(tmdbId, season, episode) : null;
+  const showLang = meta.originalLanguage ? LANG_WORD[meta.originalLanguage] ?? null : null;
 
   const jobs: Promise<TorrentSource[]>[] = [];
   if (title) {
@@ -426,6 +479,8 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
         countries: meta.countries,
         season,
         episode,
+        airDate,
+        showLang,
       })
     );
   }
