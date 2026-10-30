@@ -12,6 +12,7 @@ import {
 import { useMediaStore, useMounted } from "@/hooks/use-media-store";
 import { MediaActions } from "./types";
 import { MediaCard } from "./MediaCard";
+import { Brand } from "@/lib/brands";
 
 export type BrowseKind = "movie" | "tv" | "search" | "mylist";
 
@@ -20,6 +21,11 @@ interface BrowseGridProps {
   query?: string;
   actions: MediaActions;
   title: string;
+  /** Pin the grid to one studio (with_companies) or network (with_networks) */
+  brand?: Brand;
+  /** Optional back link rendered above the title (e.g. back to the Studios hub) */
+  onBack?: () => void;
+  backLabel?: string;
 }
 
 const MOVIE_SORTS = [
@@ -82,7 +88,7 @@ function CardSkeleton() {
   );
 }
 
-export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps) {
+export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, backLabel }: BrowseGridProps) {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -100,12 +106,12 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
   const isDiscover = kind === "movie" || kind === "tv";
   const isStoreList = kind === "mylist";
 
-  // reset when switching tab / query
+  // reset when switching tab / query / brand
   useEffect(() => {
     setItems([]);
     setPage(1);
     setError(null);
-  }, [kind, query]);
+  }, [kind, query, brand?.param, brand?.id]);
 
   // load genres for discover
   useEffect(() => {
@@ -138,6 +144,7 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
           });
         } else {
           const params: Record<string, string | number | boolean> = { page, sort_by: sortBy };
+          if (brand) params[brand.param] = brand.id;
           if (genre) params.with_genres = genre;
           if (year) {
             if (kind === "movie") params.primary_release_year = year;
@@ -172,7 +179,7 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
       cancelled = true;
       clearTimeout(t);
     };
-  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey]);
+  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey, brand?.param, brand?.id]);
 
   // infinite scroll
   useEffect(() => {
@@ -206,6 +213,18 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
 
   return (
     <div className="px-4 pb-16 pt-24 md:px-8 md:pt-28">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-zinc-400 transition hover:text-red-400"
+        >
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current stroke-2" aria-hidden>
+            <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {backLabel ?? "Back"}
+        </button>
+      )}
       <h1 className="text-2xl font-black tracking-tight text-white md:text-3xl">{title}</h1>
 
       {/* Filters */}

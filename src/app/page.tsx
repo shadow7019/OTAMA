@@ -7,9 +7,11 @@ import { Header } from "@/components/streaming/Header";
 import { HeroCarousel } from "@/components/streaming/HeroCarousel";
 import { HomeView } from "@/components/streaming/HomeView";
 import { BrowseGrid } from "@/components/streaming/BrowseGrid";
+import { StudiosView } from "@/components/streaming/StudiosView";
 import { DetailModal } from "@/components/streaming/DetailModal";
 import { PlayerModal } from "@/components/streaming/PlayerModal";
 import { ViewType, MediaActions, PlayerTarget } from "@/components/streaming/types";
+import { Brand } from "@/lib/brands";
 
 interface TrailerState {
   item: MediaItem;
@@ -19,6 +21,7 @@ interface TrailerState {
 export default function Home() {
   const [view, setView] = useState<ViewType>("home");
   const [query, setQuery] = useState("");
+  const [brand, setBrand] = useState<Brand | null>(null);
   const [detail, setDetail] = useState<MediaItem | null>(null);
   const [player, setPlayer] = useState<PlayerTarget | null>(null);
   const [trailer, setTrailer] = useState<TrailerState | null>(null);
@@ -38,7 +41,13 @@ export default function Home() {
 
   const navigate = useCallback((v: ViewType) => {
     setView(v);
+    if (v === "studios") setBrand(null); // Studios nav always returns to the hub
     if (v !== "search") setQuery("");
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, []);
+
+  const openBrand = useCallback((b: Brand) => {
+    setBrand(b);
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
   }, []);
 
@@ -67,6 +76,19 @@ export default function Home() {
         {view === "home" && <HomeView actions={actions} onTrailer={(item, key) => setTrailer({ item, key })} />}
         {view === "movies" && <BrowseGrid kind="movie" title="Movies" actions={actions} />}
         {view === "tv" && <BrowseGrid kind="tv" title="TV Shows" actions={actions} />}
+        {view === "studios" &&
+          (brand ? (
+            <BrowseGrid
+              kind={brand.kind}
+              brand={brand}
+              title={brand.name}
+              actions={actions}
+              onBack={() => setBrand(null)}
+              backLabel="All studios"
+            />
+          ) : (
+            <StudiosView onSelect={openBrand} />
+          ))}
         {view === "search" && (
           <BrowseGrid kind="search" query={query} title={query ? `Results for "${query}"` : "Search"} actions={actions} />
         )}
@@ -92,6 +114,7 @@ export default function Home() {
                   ["home", "Home"],
                   ["movies", "Movies"],
                   ["tv", "TV Shows"],
+                  ["studios", "Studios"],
                   ["mylist", "My List"],
                 ] as [ViewType, string][]
               ).map(([id, label]) => (

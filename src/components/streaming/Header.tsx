@@ -15,6 +15,7 @@ const NAV: { id: ViewType; label: string }[] = [
   { id: "home", label: "Home" },
   { id: "movies", label: "Movies" },
   { id: "tv", label: "TV Shows" },
+  { id: "studios", label: "Studios" },
   { id: "mylist", label: "My List" },
 ];
 
