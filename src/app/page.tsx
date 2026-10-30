@@ -8,6 +8,7 @@ import { HeroCarousel } from "@/components/streaming/HeroCarousel";
 import { HomeView } from "@/components/streaming/HomeView";
 import { BrowseGrid } from "@/components/streaming/BrowseGrid";
 import { StudiosView } from "@/components/streaming/StudiosView";
+import { BrandView } from "@/components/streaming/BrandView";
 import { DetailModal } from "@/components/streaming/DetailModal";
 import { PlayerModal } from "@/components/streaming/PlayerModal";
 import { ViewType, MediaActions, PlayerTarget } from "@/components/streaming/types";
@@ -78,13 +79,11 @@ export default function Home() {
         {view === "tv" && <BrowseGrid kind="tv" title="TV Shows" actions={actions} />}
         {view === "studios" &&
           (brand ? (
-            <BrowseGrid
-              kind={brand.kind}
+            <BrandView
+              key={`${brand.param}-${brand.id}`}
               brand={brand}
-              title={brand.name}
               actions={actions}
               onBack={() => setBrand(null)}
-              backLabel="All studios"
             />
           ) : (
             <StudiosView onSelect={openBrand} />

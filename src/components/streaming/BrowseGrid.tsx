@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SlidersHorizontal, SearchX, BookmarkX, Loader2 } from "lucide-react";
+import { SlidersHorizontal, SearchX, BookmarkX, Loader2, Clapperboard } from "lucide-react";
 import {
   MediaItem,
   Genre,
@@ -12,7 +12,6 @@ import {
 import { useMediaStore, useMounted } from "@/hooks/use-media-store";
 import { MediaActions } from "./types";
 import { MediaCard } from "./MediaCard";
-import { Brand } from "@/lib/brands";
 
 export type BrowseKind = "movie" | "tv" | "search" | "mylist";
 
@@ -21,8 +20,16 @@ interface BrowseGridProps {
   query?: string;
   actions: MediaActions;
   title: string;
-  /** Pin the grid to one studio (with_companies) or network (with_networks) */
-  brand?: Brand;
+  /** Extra discover params pinned for this grid, e.g. { with_networks: 213 }
+   *  or { with_watch_providers: "8", watch_region: "US" }. Must be memoized
+   *  by the caller to keep identity stable. */
+  discoverParams?: Record<string, string | number | boolean>;
+  /** Hide the h1/back header — the parent (BrandView) renders its own hero. */
+  bare?: boolean;
+  /** One-tap genre chips rendered under the dropdown filters. */
+  showGenreChips?: boolean;
+  /** Small line rendered above the filter bar (catalog description). */
+  note?: string;
   /** Optional back link rendered above the title (e.g. back to the Studios hub) */
   onBack?: () => void;
   backLabel?: string;
@@ -88,7 +95,18 @@ function CardSkeleton() {
   );
 }
 
-export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, backLabel }: BrowseGridProps) {
+export function BrowseGrid({
+  kind,
+  query = "",
+  actions,
+  title,
+  discoverParams,
+  bare = false,
+  showGenreChips = false,
+  note,
+  onBack,
+  backLabel,
+}: BrowseGridProps) {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -106,12 +124,12 @@ export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, ba
   const isDiscover = kind === "movie" || kind === "tv";
   const isStoreList = kind === "mylist";
 
-  // reset when switching tab / query / brand
+  // reset when switching tab / query / pinned params
   useEffect(() => {
     setItems([]);
     setPage(1);
     setError(null);
-  }, [kind, query, brand?.param, brand?.id]);
+  }, [kind, query, discoverParams]);
 
   // load genres for discover
   useEffect(() => {
@@ -144,7 +162,7 @@ export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, ba
           });
         } else {
           const params: Record<string, string | number | boolean> = { page, sort_by: sortBy };
-          if (brand) params[brand.param] = brand.id;
+          if (discoverParams) Object.assign(params, discoverParams);
           if (genre) params.with_genres = genre;
           if (year) {
             if (kind === "movie") params.primary_release_year = year;
@@ -179,7 +197,7 @@ export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, ba
       cancelled = true;
       clearTimeout(t);
     };
-  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey, brand?.param, brand?.id]);
+  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey, discoverParams]);
 
   // infinite scroll
   useEffect(() => {
@@ -212,20 +230,28 @@ export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, ba
   const showReset = hasFilters && (sortBy !== "popularity.desc" || genre !== "" || year !== "");
 
   return (
-    <div className="px-4 pb-16 pt-24 md:px-8 md:pt-28">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-zinc-400 transition hover:text-red-400"
-        >
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current stroke-2" aria-hidden>
-            <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          {backLabel ?? "Back"}
-        </button>
+    <div className={bare ? "px-4 pb-16 pt-4 md:px-8" : "px-4 pb-16 pt-24 md:px-8 md:pt-28"}>
+      {bare && note && (
+        <p className="text-xs text-zinc-500" data-testid="catalog-note">{note}</p>
       )}
-      <h1 className="text-2xl font-black tracking-tight text-white md:text-3xl">{title}</h1>
+      {!bare && (
+        <>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-zinc-400 transition hover:text-red-400"
+            >
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current stroke-2" aria-hidden>
+              <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {backLabel ?? "Back"}
+            </button>
+          )}
+          <h1 className="text-2xl font-black tracking-tight text-white md:text-3xl">{title}</h1>
+          {note && <p className="mt-1 text-xs text-zinc-500">{note}</p>}
+        </>
+      )}
 
       {/* Filters */}
       {hasFilters && (
@@ -278,6 +304,37 @@ export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, ba
         </div>
       )}
 
+      {/* Quick genre chips */}
+      {showGenreChips && hasFilters && genres.length > 0 && (
+        <div
+          role="group"
+          aria-label="Quick genre filters"
+          className="no-scrollbar -mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1 md:-mx-8 md:px-8"
+        >
+          {[{ id: 0, name: "All" }, ...genres].map((g) => {
+            const active = g.id === 0 ? genre === "" : String(g.id) === genre;
+            return (
+              <button
+                key={g.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  setGenre(g.id === 0 ? "" : String(g.id));
+                  setPage(1);
+                }}
+                className={`shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                  active
+                    ? "bg-red-600 text-white"
+                    : "bg-white/5 text-zinc-400 ring-1 ring-white/10 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                {g.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Search hint */}
       {kind === "search" && !query.trim() && (
         <p className="mt-10 text-center text-sm text-zinc-500">
@@ -316,6 +373,19 @@ export function BrowseGrid({ kind, query = "", actions, title, brand, onBack, ba
             No results for &quot;{query}&quot;
           </p>
           <p className="text-sm text-zinc-600">Check the spelling or try a different keyword.</p>
+        </div>
+      )}
+
+      {/* Discover empty state (e.g. a studio with no series, or over-narrow filters) */}
+      {!isStoreList && kind !== "search" && !loading && !error && items.length === 0 && (
+        <div className="mt-16 flex flex-col items-center gap-3 text-center">
+          <Clapperboard className="h-12 w-12 text-zinc-700" />
+          <p className="text-lg font-semibold text-zinc-400">No titles found</p>
+          <p className="max-w-sm text-sm text-zinc-600">
+            {showReset
+              ? "Nothing matches the current filters — try clearing one or widening the search."
+              : "This catalog has no titles listed on TMDB yet. Check back later."}
+          </p>
         </div>
       )}
 

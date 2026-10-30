@@ -13,8 +13,8 @@ function BrandTile({ brand, onSelect }: { brand: Brand; onSelect: (b: Brand) => 
     <button
       type="button"
       onClick={() => onSelect(brand)}
-      aria-label={`Browse ${brand.name} ${brand.kind === "movie" ? "movies" : "shows"}`}
-      title={`Browse ${brand.name}`}
+      aria-label={`Browse ${brand.name} — series and movies`}
+      title={`Browse ${brand.name} — series & movies`}
       className="group flex aspect-[2.4/1] items-center justify-center rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/10 transition hover:bg-white/[0.09] hover:ring-red-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
     >
       {logo ? (
@@ -69,22 +69,23 @@ export function StudiosView({ onSelect }: StudiosViewProps) {
         Studios &amp; Streaming Services
       </h1>
       <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">
-        Browse each major studio&apos;s film library and every streaming service&apos;s
-        catalog. Everything you open plays through the auto-selected best server — or
+        Pick any studio or streaming service and get its own page — series and
+        movies in separate catalogs, each with genre, sort and year filters.
+        Everything you open plays through the auto-selected best server — or
         ad-free when a public-domain copy exists.
       </p>
 
       <BrandSection
         icon={<Building2 className="h-5 w-5" />}
         title="Movie Studios"
-        subtitle="Warner, Universal, Disney, Marvel, Ghibli and more — their films, ranked by popularity"
+        subtitle="Warner, Universal, Disney, Marvel, Ghibli and more — their movies and series in separate catalogs"
         brands={STUDIOS}
         onSelect={onSelect}
       />
       <BrandSection
         icon={<Tv className="h-5 w-5" />}
         title="Streaming Services &amp; Networks"
-        subtitle="Netflix, HBO, Disney+, Prime Video, Apple TV+ and classic networks — their shows"
+        subtitle="Netflix, HBO, Disney+, Prime Video, JioHotstar and classic networks — series and movie catalogs, each with its own filters"
         brands={NETWORKS}
         onSelect={onSelect}
       />
