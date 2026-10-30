@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useSyncExternalStore } from "react";
-import { ListEntry, MediaItem } from "@/lib/tmdb";
+import { ListEntry, MediaItem, AUTO_SOURCE_ID } from "@/lib/tmdb";
 
 interface MediaStore {
   watchlist: ListEntry[];
@@ -23,7 +23,8 @@ export const useMediaStore = create<MediaStore>()(
     (set, get) => ({
       watchlist: [],
       continueWatching: [],
-      sourceId: "vidsrc-xyz",
+      // "auto" = player health-checks every server and picks the fastest healthy one
+      sourceId: AUTO_SOURCE_ID,
 
       toggleWatchlist: (item, s, e) => {
         const type = item.media_type === "tv" ? "tv" : "movie";

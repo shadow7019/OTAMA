@@ -10,6 +10,7 @@ import {
   Clock,
   Calendar,
   Layers,
+  ShieldCheck,
 } from "lucide-react";
 import {
   MediaDetails,
@@ -41,6 +42,7 @@ export function DetailModal({ item, actions, onClose }: DetailModalProps) {
   const [loading, setLoading] = useState(() => item !== null);
   const [error, setError] = useState<string | null>(null);
   const [showTrailer, setShowTrailer] = useState(false);
+  const [adFree, setAdFree] = useState(false);
   const mounted = useMounted();
   const watchlist = useMediaStore((s) => s.watchlist);
   const toggleWatchlist = useMediaStore((s) => s.toggleWatchlist);
@@ -62,6 +64,26 @@ export function DetailModal({ item, actions, onClose }: DetailModalProps) {
           setError(e.message);
           setLoading(false);
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [item]);
+
+  // check for an ad-free public-domain stream (movies only)
+  // (component remounts per item, so no reset-on-change needed)
+  useEffect(() => {
+    if (!item || getMediaType(item) !== "movie") return;
+    let cancelled = false;
+    fetch(
+      `/api/archive?title=${encodeURIComponent(getTitle(item))}&year=${encodeURIComponent(getYear(item))}`
+    )
+      .then((r) => r.json())
+      .then((j: { match?: unknown }) => {
+        if (!cancelled) setAdFree(Boolean(j.match));
+      })
+      .catch(() => {
+        if (!cancelled) setAdFree(false);
       });
     return () => {
       cancelled = true;
@@ -279,6 +301,18 @@ export function DetailModal({ item, actions, onClose }: DetailModalProps) {
                   )}
                 </button>
               </div>
+
+              {/* Ad-free availability (public-domain direct stream) */}
+              {adFree && getMediaType(item) === "movie" && (
+                <button
+                  type="button"
+                  onClick={() => actions.openPlayer(item)}
+                  className="mt-3 flex w-fit items-center gap-1.5 rounded-full bg-emerald-600/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-600/40 transition hover:bg-emerald-600/25"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Ad-free version available — direct public-domain stream (archive.org)
+                </button>
+              )}
 
               {/* Trailer embed */}
               {showTrailer && trailer && (

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Radio,
   History,
+  Clapperboard,
 } from "lucide-react";
 import {
   MediaItem,
@@ -37,14 +38,40 @@ interface RowConfig {
   icon: React.ReactNode;
 }
 
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+const daysAgo = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return iso(d);
+};
+const daysAhead = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return iso(d);
+};
+
 const ROWS: RowConfig[] = [
   { key: "trending", title: "Trending Now", path: "trending/all/day", icon: <Flame className="h-5 w-5" /> },
+  {
+    key: "just-added",
+    title: "Just Added",
+    // rolling 45-day release window — refreshes automatically as new films hit TMDB
+    path: `discover/movie?include_adult=false&include_video=false&sort_by=primary_release_date.desc&primary_release_date.gte=${daysAgo(45)}&primary_release_date.lte=${daysAhead(7)}&vote_count.gte=15`,
+    icon: <Clapperboard className="h-5 w-5" />,
+  },
   { key: "pop-movies", title: "Popular Movies", path: "movie/popular", icon: <Film className="h-5 w-5" /> },
-  { key: "top-movies", title: "Top Rated Movies", path: "movie/top_rated", icon: <Trophy className="h-5 w-5" /> },
-  { key: "pop-tv", title: "Popular TV Shows", path: "tv/popular", icon: <Tv className="h-5 w-5" /> },
-  { key: "airing", title: "Airing This Week", path: "tv/on_the_air", icon: <Radio className="h-5 w-5" /> },
   { key: "now-playing", title: "In Theaters", path: "movie/now_playing", icon: <Sparkles className="h-5 w-5" /> },
-  { key: "upcoming", title: "Coming Soon", path: "movie/upcoming", icon: <Calendar className="h-5 w-5" /> },
+  { key: "airing", title: "Airing This Week", path: "tv/on_the_air", icon: <Radio className="h-5 w-5" /> },
+  { key: "pop-tv", title: "Popular TV Shows", path: "tv/popular", icon: <Tv className="h-5 w-5" /> },
+  {
+    key: "new-series",
+    title: "New Series",
+    // rolling 60-day first-air window — new shows appear here without any manual update
+    path: `discover/tv?include_adult=false&sort_by=first_air_date.desc&first_air_date.gte=${daysAgo(60)}&vote_count.gte=5`,
+    icon: <Calendar className="h-5 w-5" />,
+  },
+  { key: "top-movies", title: "Top Rated Movies", path: "movie/top_rated", icon: <Trophy className="h-5 w-5" /> },
+  { key: "upcoming", title: "Coming Soon", path: "movie/upcoming", icon: <Sparkles className="h-5 w-5" /> },
   { key: "top-tv", title: "Top Rated TV", path: "tv/top_rated", icon: <Trophy className="h-5 w-5" /> },
   { key: "airing-today", title: "Airing Today", path: "tv/airing_today", icon: <Clock className="h-5 w-5" /> },
 ];
@@ -63,7 +90,7 @@ function LazyRow({ config, actions }: { config: RowConfig; actions: MediaActions
           setState("loading");
           tmdb<PagedResponse<MediaItem>>(config.path)
             .then((res) => {
-              const fallbackType = config.path.startsWith("tv") ? "tv" : "movie";
+              const fallbackType = config.path.includes("/tv") ? "tv" : "movie";
               const media = res.results.filter(
                 (r) => (r.media_type === undefined || r.media_type === "movie" || r.media_type === "tv") && !r.adult && r.poster_path
               ).map((r) => ({ ...r, media_type: r.media_type ?? fallbackType }));

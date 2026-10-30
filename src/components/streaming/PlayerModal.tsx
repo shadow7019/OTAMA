@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   X,
   ChevronLeft,
@@ -14,6 +14,8 @@ import {
   Loader2,
   AlertTriangle,
   RefreshCw,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
 import {
   MediaDetails,
@@ -21,9 +23,12 @@ import {
   Episode,
   getTitle,
   getMediaType,
+  getYear,
   img,
   tmdb,
   PLAYER_SOURCES,
+  AUTO_SOURCE_ID,
+  ARCHIVE_SOURCE_ID,
 } from "@/lib/tmdb";
 import { useMediaStore, useMounted } from "@/hooks/use-media-store";
 import { MediaActions } from "./types";
@@ -34,20 +39,35 @@ interface PlayerModalProps {
   onClose: () => void;
 }
 
-type Health = "checking" | "up" | "popup" | "down";
+type HealthState = "checking" | "up" | "popup" | "down";
+interface Health {
+  state: HealthState;
+  ms?: number;
+}
 type FrameState = "loading" | "ready" | "timeout";
 
-/** How long to wait for the embed iframe before offering fallbacks. */
-const LOAD_TIMEOUT_MS = 10000;
+interface ArchiveMatchClient {
+  identifier: string;
+  title: string;
+  year: number | null;
+  creator: string;
+  description: string;
+  license: string;
+  fileUrl: string;
+  fileSize: number;
+}
 
-const HEALTH_DOT: Record<Health, string> = {
+/** How long to wait for the embed iframe before auto-failing-over. */
+const LOAD_TIMEOUT_MS = 12000;
+
+const HEALTH_DOT: Record<HealthState, string> = {
   checking: "bg-zinc-600 animate-pulse",
   up: "bg-emerald-400",
   popup: "bg-amber-400",
   down: "bg-red-500",
 };
 
-const HEALTH_TIP: Record<Health, string> = {
+const HEALTH_TIP: Record<HealthState, string> = {
   checking: "Checking server…",
   up: "Server is up",
   popup: "Server is up but may block embedding — use Pop out",
@@ -58,11 +78,23 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // remounted per target via key — initial state is safe to derive from props
   const type = target ? getMediaType(target.item) : "movie";
   const itemId = target?.item.id ?? null;
-  const [sourceIdx, setSourceIdx] = useState(() => {
+
+  // Auto mode is the default every session: the player health-checks all servers
+  // and picks the fastest healthy one (ad-free direct stream first when available).
+  // The persisted manual choice is honoured as auto's preferred-first hint, not as
+  // a forced pick — so a dead saved server can never break playback again.
+  const [selectedId, setSelectedId] = useState<string>(AUTO_SOURCE_ID);
+  const [autoPreferred, setAutoPreferred] = useState<string | null>(() => {
     const saved = useMediaStore.getState().sourceId;
-    const idx = PLAYER_SOURCES.findIndex((s) => s.id === saved);
-    return idx >= 0 ? idx : 0;
+    return PLAYER_SOURCES.some((s) => s.id === saved) ? saved : null;
   });
+  const [healthMap, setHealthMap] = useState<Record<string, Health>>({});
+  const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
+  const [archiveState, setArchiveState] = useState<"loading" | "found" | "none">("loading");
+  const [videoError, setVideoError] = useState(false);
+  const [autoPickId, setAutoPickId] = useState<string | null>(null);
+  const [tried, setTried] = useState<string[]>([]);
+  const [banner, setBanner] = useState<string | null>(null);
   const [season, setSeason] = useState(() => target?.season ?? 1);
   const [episode, setEpisode] = useState(() => target?.episode ?? 1);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
@@ -71,22 +103,72 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [frameState, setFrameState] = useState<FrameState>("loading");
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [healthMap, setHealthMap] = useState<Record<string, Health>>({});
-  const [healthFor, setHealthFor] = useState<number | null>(null);
-  const [autoSwitchedFor, setAutoSwitchedFor] = useState<number | null>(null);
   const mounted = useMounted();
   const addContinue = useMediaStore((s) => s.addContinue);
   const toggleWatchlist = useMediaStore((s) => s.toggleWatchlist);
   const setSourceId = useMediaStore((s) => s.setSourceId);
   const watchlist = useMediaStore((s) => s.watchlist);
 
+  const nameOf = (id: string) =>
+    id === ARCHIVE_SOURCE_ID
+      ? "CineX Direct"
+      : PLAYER_SOURCES.find((s) => s.id === id)?.name ?? "Server";
+
+  // Healthy embed servers, fastest first (frameable ones outrank popup-ish ones;
+  // the user's preferred server goes first while it stays healthy)
+  const rankedHealthy = useMemo(() => {
+    const score = (s: Health) => (s.state === "up" ? 0 : s.state === "popup" ? 1 : 2);
+    const list = PLAYER_SOURCES.filter((s) => {
+      const h = healthMap[s.id];
+      return h && (h.state === "up" || h.state === "popup");
+    }).sort(
+      (a, b) =>
+        score(healthMap[a.id]) - score(healthMap[b.id]) ||
+        (healthMap[a.id].ms ?? 9e9) - (healthMap[b.id].ms ?? 9e9)
+    );
+    if (!autoPreferred) return list;
+    const prefIdx = list.findIndex((s) => s.id === autoPreferred);
+    if (prefIdx < 0) return list;
+    const pref = list.splice(prefIdx, 1)[0];
+    return [pref, ...list];
+  }, [healthMap, autoPreferred]);
+
+  // Which source is actually on screen right now
+  const effectiveId = (() => {
+    if (selectedId === AUTO_SOURCE_ID) {
+      if (type === "movie" && archiveState === "found" && archive && !videoError)
+        return ARCHIVE_SOURCE_ID;
+      if (autoPickId) return autoPickId;
+      return rankedHealthy[0]?.id ?? PLAYER_SOURCES[0].id;
+    }
+    if (selectedId === ARCHIVE_SOURCE_ID && archiveState === "found" && !videoError)
+      return ARCHIVE_SOURCE_ID;
+    return PLAYER_SOURCES.some((s) => s.id === selectedId) ? selectedId : PLAYER_SOURCES[0].id;
+  })();
+
   // identity of the current embed; resetting to "loading" is done at render time
-  const srcKey = `${itemId ?? "none"}-${sourceIdx}-${season}-${episode}-${reloadNonce}`;
+  const srcKey = `${itemId ?? "none"}-${effectiveId}-${season}-${episode}-${reloadNonce}`;
   const [prevSrcKey, setPrevSrcKey] = useState(srcKey);
   if (prevSrcKey !== srcKey) {
     setPrevSrcKey(srcKey);
     setFrameState("loading");
+    setVideoError(false);
   }
+
+  // failover: move to the next healthy server we haven't tried yet
+  const failover = (fromId: string, reason: string) => {
+    const next =
+      rankedHealthy.map((s) => s.id).find((id) => id !== fromId && !tried.includes(id)) ??
+      null;
+    if (next) {
+      setTried((t) => [...t, fromId]);
+      setAutoPickId(next);
+      setSelectedId(AUTO_SOURCE_ID);
+      if (autoPreferred && autoPreferred !== next) setAutoPreferred(null); // it just proved unreliable
+      setBanner(reason.replace("{next}", nameOf(next)));
+    }
+    return next;
+  };
 
   // record progress for "Continue Watching" (external system write);
   // re-records as the user navigates seasons/episodes so we resume at the latest spot
@@ -134,17 +216,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     };
   }, [target, type, season]);
 
-  // loading watchdog: if the iframe never fires onLoad before the timeout,
-  // surface fallback actions (next server / retry / pop out)
-  useEffect(() => {
-    if (!target) return;
-    const t = setTimeout(() => {
-      setFrameState((s) => (s === "loading" ? "timeout" : s));
-    }, LOAD_TIMEOUT_MS);
-    return () => clearTimeout(t);
-  }, [srcKey, target]);
-
-  // probe every server once per title so the strip shows live status dots
+  // probe every server once per title so the strip shows live status dots + latency
   useEffect(() => {
     if (itemId === null) return;
     let cancelled = false;
@@ -152,28 +224,78 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       const probe = type === "movie" ? s.movie(itemId) : s.tv(itemId, 1, 1);
       fetch(`/api/embed-check?url=${encodeURIComponent(probe)}`)
         .then((r) => r.json())
-        .then((j: { ok?: boolean; frameable?: boolean }) => {
+        .then((j: { ok?: boolean; ms?: number; frameable?: boolean }) => {
           if (cancelled) return;
-          const h: Health = !j.ok ? "down" : j.frameable === false ? "popup" : "up";
+          const h: Health = !j.ok
+            ? { state: "down", ms: j.ms }
+            : j.frameable === false
+              ? { state: "popup", ms: j.ms }
+              : { state: "up", ms: j.ms };
           setHealthMap((prev) => ({ ...prev, [s.id]: h }));
-          setHealthFor(itemId);
         })
         .catch(() => {
-          if (!cancelled) {
-            setHealthMap((prev) => ({ ...prev, [s.id]: "down" }));
-            setHealthFor(itemId);
-          }
+          if (!cancelled) setHealthMap((prev) => ({ ...prev, [s.id]: { state: "down" } }));
         });
     });
+
+    // CineX Direct: look for a public-domain copy (movies only)
+    if (type === "movie" && target) {
+      const q = getTitle(target.item);
+      const y = getYear(target.item);
+      fetch(`/api/archive?title=${encodeURIComponent(q)}&year=${encodeURIComponent(y)}`)
+        .then((r) => r.json())
+        .then((j: { match: ArchiveMatchClient | null }) => {
+          if (cancelled) return;
+          setArchive(j.match);
+          setArchiveState(j.match ? "found" : "none");
+        })
+        .catch(() => {
+          if (!cancelled) setArchiveState("none");
+        });
+    }
     return () => {
       cancelled = true;
     };
   }, [itemId, type]);
 
-  // persist the chosen server for future sessions (external store write)
+  // watchdog: if the current embed never loads, fail over automatically
+  // (the native direct player has its own error/stall handling — skip it there)
   useEffect(() => {
-    setSourceId(PLAYER_SOURCES[sourceIdx].id);
-  }, [sourceIdx, setSourceId]);
+    if (!target || effectiveId === ARCHIVE_SOURCE_ID) return;
+    const t = setTimeout(() => {
+      setFrameState((s) => {
+        if (s !== "loading") return s;
+        // auto mode: hop to the next healthy server
+        if (selectedId === AUTO_SOURCE_ID) {
+          failover(effectiveId, `{name} didn't respond — switched to {next}`);
+        } else if (
+          rankedHealthy.length &&
+          healthMap[selectedId]?.state !== "up" &&
+          healthMap[selectedId]?.state !== "checking"
+        ) {
+          // manual mode on a dead server: switch to auto once per title
+          setTried((tt) => [...tt, effectiveId]);
+          setAutoPickId(rankedHealthy[0].id);
+          setSelectedId(AUTO_SOURCE_ID);
+          setBanner(`${nameOf(selectedId)} didn't respond — switched to ${nameOf(rankedHealthy[0].id)}`);
+        }
+        return s;
+      });
+    }, LOAD_TIMEOUT_MS);
+  }, [srcKey, frameState]);
+
+  // transient banner auto-dismiss
+  useEffect(() => {
+    if (!banner) return;
+    const t = setTimeout(() => setBanner(null), 7000);
+    return () => clearTimeout(t);
+  }, [banner]);
+
+  // persist the preferred server for future sessions (external store write);
+  // "auto" when the user hasn't expressed a preference
+  useEffect(() => {
+    setSourceId(autoPreferred ?? AUTO_SOURCE_ID);
+  }, [autoPreferred, setSourceId]);
 
   // lock scroll + escape
   useEffect(() => {
@@ -203,25 +325,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   const item = target.item;
   const title = getTitle(item);
-  const source = PLAYER_SOURCES[sourceIdx];
-  const src =
-    type === "movie" ? source.movie(item.id) : source.tv(item.id, season, episode);
-
-  // self-heal (once per title): if the browser failed to load the embed within
-  // the timeout AND the probe confirms the server is down, silently move to the
-  // first healthy server instead of leaving the user stuck on a dead one
-  if (
-    healthFor === item.id &&
-    frameState === "timeout" &&
-    autoSwitchedFor !== item.id &&
-    healthMap[source.id] === "down"
-  ) {
-    const firstUp = PLAYER_SOURCES.findIndex((s) => healthMap[s.id] === "up");
-    if (firstUp >= 0 && firstUp !== sourceIdx) {
-      setAutoSwitchedFor(item.id);
-      setSourceIdx(firstUp);
-    }
-  }
+  const isDirect = effectiveId === ARCHIVE_SOURCE_ID;
+  const currentServer = PLAYER_SOURCES.find((s) => s.id === effectiveId);
+  const src = currentServer
+    ? type === "movie"
+      ? currentServer.movie(item.id)
+      : currentServer.tv(item.id, season, episode)
+    : "";
 
   const goEpisode = (s: number, e: number) => {
     setSeason(s);
@@ -243,22 +353,43 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     ? watchlist.some((w) => w.id === item.id && w.media_type === type)
     : false;
 
-  const switchSource = (i: number) => {
-    if (i === sourceIdx) {
-      // re-selecting the active server = manual retry
+  const switchSource = (id: string) => {
+    if (id === effectiveId) {
+      // re-selecting the active source = manual retry
       setFrameState("loading");
       setReloadNonce((n) => n + 1);
+      if (id === ARCHIVE_SOURCE_ID) setVideoError(false);
       return;
     }
-    setSourceIdx(i);
+    setTried((t) => [...t, effectiveId]);
+    if (id === ARCHIVE_SOURCE_ID) setVideoError(false);
+    setSelectedId(id);
+    if (PLAYER_SOURCES.some((s) => s.id === id)) {
+      setAutoPreferred(id); // remember the user's preference
+      setAutoPickId(id);
+    } else if (id === AUTO_SOURCE_ID) {
+      setAutoPickId(null); // recompute from live health ranking
+    }
   };
 
   const retryServer = () => {
     setFrameState("loading");
     setReloadNonce((n) => n + 1);
+    if (isDirect) setVideoError(false);
   };
 
-  const tryNextServer = () => switchSource((sourceIdx + 1) % PLAYER_SOURCES.length);
+  const tryNextServer = () => {
+    if (selectedId === AUTO_SOURCE_ID || isDirect) {
+      if (!failover(effectiveId, `{name} failed — switching to {next}`)) {
+        // nothing left to try — cycle manually through the registry
+        const i = PLAYER_SOURCES.findIndex((s) => s.id === effectiveId);
+        switchSource(PLAYER_SOURCES[(i + 1) % PLAYER_SOURCES.length].id);
+      }
+    } else {
+      const i = PLAYER_SOURCES.findIndex((s) => s.id === selectedId);
+      switchSource(PLAYER_SOURCES[(i + 1) % PLAYER_SOURCES.length].id);
+    }
+  };
 
   return (
     <div
@@ -324,7 +455,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             </button>
           )}
           <a
-            href={src}
+            href={isDirect && archive ? archive.fileUrl : src}
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Open stream in a new tab"
@@ -336,42 +467,101 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           </a>
           <button
             type="button"
-            onClick={() => switchSource((sourceIdx + 1) % PLAYER_SOURCES.length)}
+            onClick={tryNextServer}
             className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
             aria-label="Switch streaming source"
           >
             <Server className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{source.name}</span>
-            <span className="sm:hidden">Src {sourceIdx + 1}</span>
+            <span className="hidden sm:inline">
+              {isDirect ? "CineX Direct" : selectedId === AUTO_SOURCE_ID ? "Auto" : nameOf(selectedId)}
+            </span>
+            <span className="sm:hidden">Src</span>
           </button>
         </div>
       </div>
 
-      {/* Server strip with live health dots */}
+      {/* Server strip with live health dots + latency */}
       <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5">
         <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
           Server
         </span>
-        {PLAYER_SOURCES.map((s, i) => {
-          const h: Health = healthFor === item.id ? (healthMap[s.id] ?? "checking") : "checking";
+
+        {/* Auto (best) */}
+        <button
+          type="button"
+          onClick={() => switchSource(AUTO_SOURCE_ID)}
+          title="Automatically picks the fastest healthy server and fails over when one dies"
+          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            selectedId === AUTO_SOURCE_ID
+              ? "bg-red-600 text-white"
+              : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+          }`}
+        >
+          <Zap className="h-3 w-3" />
+          Auto{autoPickId ? ` · ${nameOf(autoPickId)}` : ""}
+        </button>
+
+        {/* CineX Direct — ad-free public-domain player (movies) */}
+        {type === "movie" && (
+          <button
+            type="button"
+            onClick={() => archiveState === "found" && switchSource(ARCHIVE_SOURCE_ID)}
+            disabled={archiveState !== "found"}
+            title={
+              archiveState === "found"
+                ? "Built-in player, direct public-domain stream — 100% ad-free"
+                : archiveState === "loading"
+                  ? "Checking archive.org for a public-domain copy…"
+                  : "No public-domain copy found for this title"
+            }
+            className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+              isDirect
+                ? "bg-emerald-600 text-white"
+                : archiveState === "found"
+                  ? "bg-emerald-600/15 text-emerald-300 ring-1 ring-emerald-600/40 hover:bg-emerald-600/25"
+                  : "bg-white/5 text-zinc-600"
+            } ${archiveState !== "found" ? "cursor-not-allowed" : ""}`}
+          >
+            <ShieldCheck className="h-3 w-3" />
+            Ad-Free
+            {archiveState === "loading" && <span className="animate-pulse">…</span>}
+          </button>
+        )}
+
+        {PLAYER_SOURCES.map((s) => {
+          const h: Health = healthMap[s.id] ?? { state: "checking" as HealthState };
+          const active = !isDirect && s.id === effectiveId;
           return (
             <button
               key={s.id}
               type="button"
-              onClick={() => switchSource(i)}
-              title={`${s.name} — ${HEALTH_TIP[h]}`}
+              onClick={() => switchSource(s.id)}
+              title={`${s.name} — ${HEALTH_TIP[h.state]}${h.ms ? ` (${h.ms}ms)` : ""}`}
               className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-                i === sourceIdx
+                active
                   ? "bg-red-600 text-white"
                   : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
               }`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${HEALTH_DOT[h]}`} aria-hidden />
+              <span className={`h-1.5 w-1.5 rounded-full ${HEALTH_DOT[h.state]}`} aria-hidden />
               {s.name}
+              {h.state === "up" && h.ms ? (
+                <span className="hidden text-[9px] font-normal text-zinc-500 md:inline">
+                  {h.ms}ms
+                </span>
+              ) : null}
             </button>
           );
         })}
       </div>
+
+      {/* failover banner */}
+      {banner && (
+        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          {banner}
+        </div>
+      )}
 
       {/* Main area */}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -379,24 +569,65 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           {/* Video */}
           <div className="relative w-full bg-black lg:flex-1">
             <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
-              <iframe
-                key={`${src}-${reloadNonce}`}
-                src={src}
-                title={`${title} player`}
-                allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-                allowFullScreen
-                referrerPolicy="origin"
-                onLoad={() => setFrameState((s) => (s === "loading" ? "ready" : s))}
-                className="h-full w-full border-0"
-              />
+              {isDirect && archive ? (
+                /* CineX Direct — native HTML5 video, no third-party embed, no ads */
+                <>
+                  <video
+                    key={`${archive.identifier}-${reloadNonce}`}
+                    src={archive.fileUrl}
+                    poster={img(item.backdrop_path, "w1280") ?? undefined}
+                    controls
+                    autoPlay
+                    playsInline
+                    onCanPlay={() => setFrameState((s) => (s === "loading" ? "ready" : s))}
+                    onPlaying={() => setFrameState("ready")}
+                    onError={() => {
+                      setVideoError(true);
+                      failover(ARCHIVE_SOURCE_ID, "Direct stream failed — switched to {next}");
+                    }}
+                    className="h-full w-full bg-black"
+                  />
+                  <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+                    <ShieldCheck className="h-3 w-3" /> Ad-free · Public domain
+                  </div>
+                  <p className="absolute inset-x-3 bottom-2 truncate text-[10px] text-zinc-500">
+                    {archive.title}
+                    {archive.year ? ` (${archive.year})` : ""} · archive.org · {archive.license}
+                  </p>
+                </>
+              ) : (
+                <iframe
+                  key={`${src}-${reloadNonce}`}
+                  src={src}
+                  title={`${title} player`}
+                  /* sandbox deliberately omits allow-popups & allow-top-navigation:
+                     blocks popup ads and tab-hijacking redirects used by embed networks */
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                  allow="autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write"
+                  allowFullScreen
+                  referrerPolicy="origin"
+                  onLoad={() => setFrameState((s) => (s === "loading" ? "ready" : s))}
+                  className="h-full w-full border-0"
+                />
+              )}
 
               {/* Connecting overlay */}
               {frameState === "loading" && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black">
                   <Loader2 className="h-10 w-10 animate-spin text-red-600" />
                   <p className="text-sm text-zinc-400">
-                    Connecting to{" "}
-                    <span className="font-semibold text-zinc-200">{source.name}</span>…
+                    {selectedId === AUTO_SOURCE_ID && !isDirect ? (
+                      <>
+                        <span className="font-semibold text-zinc-200">Auto</span>{" "}
+                        connecting to{" "}
+                        <span className="font-semibold text-zinc-200">{nameOf(effectiveId)}</span>…
+                      </>
+                    ) : (
+                      <>
+                        Connecting to{" "}
+                        <span className="font-semibold text-zinc-200">{nameOf(effectiveId)}</span>…
+                      </>
+                    )}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                     <button
@@ -407,7 +638,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       Next server
                     </button>
                     <a
-                      href={src}
+                      href={isDirect && archive ? archive.fileUrl : src}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
@@ -424,12 +655,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   <AlertTriangle className="h-10 w-10 text-amber-400" />
                   <div>
                     <p className="text-base font-bold text-white">
-                      &ldquo;{source.name}&rdquo; didn&rsquo;t respond
+                      &ldquo;{nameOf(effectiveId)}&rdquo; didn&rsquo;t respond
                     </p>
                     <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
-                      This server may be down, blocked by your ad-blocker, or unavailable in
-                      your region. Try another server — green dots are healthy — or open the
-                      stream in a new tab.
+                      No healthy fallback left on this connection. Retry, pick any server
+                      below, or open the stream in a new tab.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2.5">
@@ -448,7 +678,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       Next server <ChevronRight className="h-3.5 w-3.5" />
                     </button>
                     <a
-                      href={src}
+                      href={isDirect && archive ? archive.fileUrl : src}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
@@ -491,8 +721,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             ) : (
               <p className="flex items-center gap-2 text-center text-xs text-zinc-600">
                 <Info className="h-3.5 w-3.5 shrink-0" />
-                If the video doesn&apos;t load, switch server above (green dot = healthy) or
-                use Pop out. Ad-blockers can block some servers.
+                <span>
+                  <span className="font-semibold text-zinc-400">Auto</span> picks the fastest
+                  healthy server and skips dead ones.{" "}
+                  {archiveState === "found"
+                    ? "Ad-Free plays a direct public-domain copy."
+                    : "Servers with a green dot are verified working."}
+                </span>
               </p>
             )}
           </div>

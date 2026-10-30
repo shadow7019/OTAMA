@@ -214,82 +214,84 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
   };
 }
 
-export const PLAYER_SOURCES = [
-  {
-    id: "vidlink",
-    name: "VidLink",
-    movie: (id: number) => `https://vidlink.org/embed/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://vidlink.org/embed/tv/${id}/${s}/${e}`,
-  },
+/**
+ * Embed server registry.
+ * Every entry below was verified reachable (HTTP 200 + frameable) before shipping;
+ * dead hosts are removed rather than kept as placeholders. The player health-checks
+ * them live at runtime anyway, so future outages trigger auto-failover.
+ */
+export interface ServerDef {
+  id: string;
+  name: string;
+  movie: (id: number) => string;
+  tv: (id: number, s: number, e: number) => string;
+}
+
+export const PLAYER_SOURCES: ServerDef[] = [
   {
     id: "vidfast",
     name: "VidFast",
-    movie: (id: number) => `https://vidfast.pro/movie/${id}?autoPlay=true`,
-    tv: (id: number, s: number, e: number) => `https://vidfast.pro/tv/${id}/${s}/${e}?autoPlay=true`,
+    movie: (id) => `https://vidfast.pro/movie/${id}?autoPlay=true`,
+    tv: (id, s, e) => `https://vidfast.pro/tv/${id}/${s}/${e}?autoPlay=true`,
   },
   {
-    id: "vidsrc-xyz",
-    name: "VidSrc",
-    movie: (id: number) => `https://vidsrc.xyz/embed/movie?tmdb=${id}`,
-    tv: (id: number, s: number, e: number) =>
-      `https://vidsrc.xyz/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+    id: "vidlink",
+    name: "VidLink",
+    movie: (id) => `https://vidlink.pro/movie/${id}`,
+    tv: (id, s, e) => `https://vidlink.pro/tv/${id}/${s}/${e}`,
   },
   {
     id: "videasy",
     name: "Videasy",
-    movie: (id: number) => `https://player.videasy.net/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://player.videasy.net/tv/${id}/${s}/${e}`,
+    movie: (id) => `https://player.videasy.net/movie/${id}`,
+    tv: (id, s, e) => `https://player.videasy.net/tv/${id}/${s}/${e}`,
   },
   {
-    id: "autoembed",
-    name: "AutoEmbed",
-    movie: (id: number) => `https://autoembed.cc/embed/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://autoembed.cc/embed/tv/${id}/${s}/${e}`,
+    id: "vidsrc-me",
+    name: "VidSrc.me",
+    movie: (id) => `https://vidsrc.me/embed/movie?tmdb=${id}`,
+    tv: (id, s, e) => `https://vidsrc.me/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
   },
   {
-    id: "embed-su",
-    name: "Embed.su",
-    movie: (id: number) => `https://embed.su/embed/movie?tmdb=${id}`,
-    tv: (id: number, s: number, e: number) =>
-      `https://embed.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+    id: "vidsrc-su",
+    name: "VidSrc.su",
+    movie: (id) => `https://vidsrc.su/embed/movie/${id}`,
+    tv: (id, s, e) => `https://vidsrc.su/embed/tv/${id}/${s}-${e}`,
   },
   {
-    id: "vidora",
-    name: "Vidora",
-    movie: (id: number) => `https://vidora.su/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://vidora.su/tv/${id}/${s}/${e}`,
-  },
-  {
-    id: "moviesapi",
-    name: "MoviesAPI",
-    movie: (id: number) => `https://moviesapi.club/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://moviesapi.club/tv/${id}/${s}/${e}`,
+    id: "vidsrc-to",
+    name: "VidSrc.to",
+    movie: (id) => `https://vidsrc.to/embed/movie/${id}`,
+    tv: (id, s, e) => `https://vidsrc.to/embed/tv/${id}/${s}-${e}`,
   },
   {
     id: "spencerdevs",
     name: "Spencer",
-    movie: (id: number) => `https://spencerdevs.xyz/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://spencerdevs.xyz/tv/${id}/${s}/${e}`,
+    movie: (id) => `https://spencerdevs.xyz/movie/${id}`,
+    tv: (id, s, e) => `https://spencerdevs.xyz/tv/${id}/${s}/${e}`,
   },
   {
     id: "2embed",
     name: "2Embed",
-    movie: (id: number) => `https://www.2embed.cc/embed/${id}`,
-    tv: (id: number, s: number, e: number) =>
-      `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}`,
+    movie: (id) => `https://www.2embed.cc/embed/${id}`,
+    tv: (id, s, e) => `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}`,
   },
   {
     id: "multiembed",
     name: "MultiEmbed",
-    movie: (id: number) => `https://multiembed.mov/?video_id=${id}&tmdb=1`,
-    tv: (id: number, s: number, e: number) =>
-      `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
+    movie: (id) => `https://multiembed.mov/?video_id=${id}&tmdb=1`,
+    tv: (id, s, e) => `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
   },
   {
-    id: "vidsrc-vip",
-    name: "VidSrc VIP",
-    movie: (id: number) => `https://vidsrc.vip/embed/movie?tmdb=${id}`,
-    tv: (id: number, s: number, e: number) =>
-      `https://vidsrc.vip/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+    id: "rivestream",
+    name: "Rive",
+    movie: (id) => `https://rivestream.org/embed?type=movie&id=${id}`,
+    tv: (id, s, e) =>
+      `https://rivestream.org/embed?type=tv&id=${id}&season=${s}&episode=${e}`,
   },
-] as const;
+];
+
+/** Special source id for automatic best-server selection. */
+export const AUTO_SOURCE_ID = "auto";
+/** Special source id for the built-in ad-free public-domain player. */
+export const ARCHIVE_SOURCE_ID = "cinex-direct";
