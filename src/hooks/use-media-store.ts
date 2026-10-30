@@ -3,19 +3,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useSyncExternalStore } from "react";
-import { ListEntry, MediaItem, AUTO_SOURCE_ID } from "@/lib/tmdb";
+import { ListEntry, MediaItem } from "@/lib/tmdb";
 
 interface MediaStore {
   watchlist: ListEntry[];
   continueWatching: ListEntry[];
-  sourceId: string;
   toggleWatchlist: (item: MediaItem, s?: number, e?: number) => boolean;
   removeFromWatchlist: (id: number, mediaType: "movie" | "tv") => void;
   isInWatchlist: (id: number, mediaType: "movie" | "tv") => boolean;
   addContinue: (item: MediaItem, s?: number, e?: number) => void;
   removeContinue: (id: number, mediaType: "movie" | "tv") => void;
   clearContinue: () => void;
-  setSourceId: (id: string) => void;
 }
 
 export const useMediaStore = create<MediaStore>()(
@@ -23,8 +21,6 @@ export const useMediaStore = create<MediaStore>()(
     (set, get) => ({
       watchlist: [],
       continueWatching: [],
-      // "auto" = player health-checks every server and picks the fastest healthy one
-      sourceId: AUTO_SOURCE_ID,
 
       toggleWatchlist: (item, s, e) => {
         const type = item.media_type === "tv" ? "tv" : "movie";
@@ -95,8 +91,6 @@ export const useMediaStore = create<MediaStore>()(
         })),
 
       clearContinue: () => set({ continueWatching: [] }),
-
-      setSourceId: (id) => set({ sourceId: id }),
     }),
     { name: "cinex-media-store" }
   )

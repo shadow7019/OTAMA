@@ -12,6 +12,8 @@ import {
   Radio,
   History,
   Clapperboard,
+  Zap,
+  Loader2,
 } from "lucide-react";
 import {
   MediaItem,
@@ -134,6 +136,78 @@ function LazyRow({ config, actions }: { config: RowConfig; actions: MediaActions
   );
 }
 
+/**
+ * "Fresh & Ready" — new content discovered automatically. The backend pulls
+ * TMDB trending / now-playing / on-the-air every 30 minutes, verifies each
+ * candidate against the torrent networks and returns only titles that have
+ * real playable sources, so every poster in this row can actually play.
+ */
+function FreshPlayableRow({ actions }: { actions: MediaActions }) {
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && state === "idle") {
+          setState("loading");
+          fetch("/api/auto-content")
+            .then((r) => r.json())
+            .then((j: { results?: MediaItem[] }) => {
+              setItems(Array.isArray(j.results) ? j.results : []);
+              setState("done");
+            })
+            .catch(() => setState("error"));
+        }
+      },
+      { rootMargin: "400px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [state]);
+
+  if (state === "error" || (state === "done" && !items.length)) return null;
+
+  return (
+    <div ref={ref}>
+      {state === "done" ? (
+        <MediaRow
+          title="Fresh & Ready to Play"
+          items={items}
+          actions={actions}
+          icon={<Zap className="h-5 w-5" />}
+          badge="Playable now"
+        />
+      ) : (
+        <section className="py-3" aria-label="Fresh and ready to play (loading)">
+          <div className="mb-1 flex items-center gap-2 px-4 md:px-8">
+            <span className="text-red-500">
+              <Zap className="h-5 w-5" />
+            </span>
+            <h2 className="text-lg font-bold tracking-tight text-zinc-100 md:text-xl">
+              Fresh &amp; Ready to Play
+            </h2>
+            <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <Loader2 className="h-3 w-3 animate-spin" /> verifying sources…
+            </span>
+          </div>
+          <div className="no-scrollbar flex gap-3 overflow-hidden px-4 py-2 md:gap-4 md:px-8">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="w-[136px] shrink-0 sm:w-[152px] md:w-[168px]">
+                <div className="aspect-[2/3] w-full animate-pulse rounded-lg bg-zinc-800/50" />
+                <div className="mt-2 h-3.5 w-3/4 animate-pulse rounded bg-zinc-800/40" />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function ContinueWatchingRow({ actions }: { actions: MediaActions }) {
   const mounted = useMounted();
   const store = useMediaStore();
@@ -238,6 +312,7 @@ export function HomeView({ actions, onTrailer }: HomeViewProps) {
     <div className="pb-10">
       <HeroCarousel actions={actions} onTrailer={onTrailer} />
       <ContinueWatchingRow actions={actions} />
+      <FreshPlayableRow actions={actions} />
       {ROWS.map((row) => (
         <LazyRow key={row.key} config={row} actions={actions} />
       ))}

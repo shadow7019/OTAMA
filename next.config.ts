@@ -2,7 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  /* config options here */
+  // webtorrent must stay an external Node module (native bindings + dynamic requires)
+  serverExternalPackages: ["webtorrent"],
   typescript: {
     ignoreBuildErrors: true,
   },

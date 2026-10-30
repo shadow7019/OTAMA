@@ -215,83 +215,11 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
 }
 
 /**
- * Embed server registry.
- * Every entry below was verified reachable (HTTP 200 + frameable) before shipping;
- * dead hosts are removed rather than kept as placeholders. The player health-checks
- * them live at runtime anyway, so future outages trigger auto-failover.
+ * Streaming architecture (ad-free by design):
+ *  - Torrent servers: the app searches public torrent indexes server-side
+ *    (ThePirateBay / Torrentio / YTS / EZTV), downloads on our own Node
+ *    backend via webtorrent and streams to the native <video> element with
+ *    HTTP Range requests. No third-party iframe is ever embedded, so no
+ *    pop-ups, tab redirects or injected ad scripts.
+ *  - CineX Direct: public-domain direct streams (archive.org) as fallback.
  */
-export interface ServerDef {
-  id: string;
-  name: string;
-  movie: (id: number) => string;
-  tv: (id: number, s: number, e: number) => string;
-}
-
-export const PLAYER_SOURCES: ServerDef[] = [
-  {
-    id: "vidfast",
-    name: "VidFast",
-    movie: (id) => `https://vidfast.pro/movie/${id}?autoPlay=true`,
-    tv: (id, s, e) => `https://vidfast.pro/tv/${id}/${s}/${e}?autoPlay=true`,
-  },
-  {
-    id: "vidlink",
-    name: "VidLink",
-    movie: (id) => `https://vidlink.pro/movie/${id}`,
-    tv: (id, s, e) => `https://vidlink.pro/tv/${id}/${s}/${e}`,
-  },
-  {
-    id: "videasy",
-    name: "Videasy",
-    movie: (id) => `https://player.videasy.net/movie/${id}`,
-    tv: (id, s, e) => `https://player.videasy.net/tv/${id}/${s}/${e}`,
-  },
-  {
-    id: "vidsrc-me",
-    name: "VidSrc.me",
-    movie: (id) => `https://vidsrc.me/embed/movie?tmdb=${id}`,
-    tv: (id, s, e) => `https://vidsrc.me/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
-  },
-  {
-    id: "vidsrc-su",
-    name: "VidSrc.su",
-    movie: (id) => `https://vidsrc.su/embed/movie/${id}`,
-    tv: (id, s, e) => `https://vidsrc.su/embed/tv/${id}/${s}-${e}`,
-  },
-  {
-    id: "vidsrc-to",
-    name: "VidSrc.to",
-    movie: (id) => `https://vidsrc.to/embed/movie/${id}`,
-    tv: (id, s, e) => `https://vidsrc.to/embed/tv/${id}/${s}-${e}`,
-  },
-  {
-    id: "spencerdevs",
-    name: "Spencer",
-    movie: (id) => `https://spencerdevs.xyz/movie/${id}`,
-    tv: (id, s, e) => `https://spencerdevs.xyz/tv/${id}/${s}/${e}`,
-  },
-  {
-    id: "2embed",
-    name: "2Embed",
-    movie: (id) => `https://www.2embed.cc/embed/${id}`,
-    tv: (id, s, e) => `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}`,
-  },
-  {
-    id: "multiembed",
-    name: "MultiEmbed",
-    movie: (id) => `https://multiembed.mov/?video_id=${id}&tmdb=1`,
-    tv: (id, s, e) => `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
-  },
-  {
-    id: "rivestream",
-    name: "Rive",
-    movie: (id) => `https://rivestream.org/embed?type=movie&id=${id}`,
-    tv: (id, s, e) =>
-      `https://rivestream.org/embed?type=tv&id=${id}&season=${s}&episode=${e}`,
-  },
-];
-
-/** Special source id for automatic best-server selection. */
-export const AUTO_SOURCE_ID = "auto";
-/** Special source id for the built-in ad-free public-domain player. */
-export const ARCHIVE_SOURCE_ID = "cinex-direct";

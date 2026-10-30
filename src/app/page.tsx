@@ -105,7 +105,7 @@ export default function Home() {
               </p>
               <p className="mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
                 Your gateway to movies and TV shows. Browse trending titles, watch official
-                trailers and stream via third-party servers — all in one place.
+                trailers and stream through your own built-in P2P player — all in one place.
               </p>
             </div>
             <nav className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-zinc-400" aria-label="Footer">
@@ -135,8 +135,9 @@ export default function Home() {
               images courtesy of The Movie Database (www.themoviedb.org).
             </p>
             <p>
-              CineX does not host any media files. All playback is provided by third-party
-              embeddable servers; availability depends on those providers.
+              CineX does not host any media files. Playback streams directly from public
+              peer-to-peer networks through the built-in ad-free player; availability depends on
+              the public swarm.
             </p>
           </div>
         </div>
