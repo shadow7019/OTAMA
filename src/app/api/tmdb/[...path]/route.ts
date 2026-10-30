@@ -36,22 +36,36 @@ export async function GET(
   }
 
   try {
-    const res = await fetch(cacheKey, {
-      headers: {
-        Authorization: `Bearer ${BEARER}`,
-        accept: "application/json",
-      },
-      signal: AbortSignal.timeout(15000),
-    });
+    let data: unknown;
+    let lastErr: unknown;
 
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `TMDB error: ${res.status} ${res.statusText}` },
-        { status: res.status }
-      );
+    // one retry on transient network/timeout failures
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(cacheKey, {
+          headers: {
+            Authorization: `Bearer ${BEARER}`,
+            accept: "application/json",
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (!res.ok) {
+          return NextResponse.json(
+            { error: `TMDB error: ${res.status} ${res.statusText}` },
+            { status: res.status }
+          );
+        }
+
+        data = await res.json();
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
     }
 
-    const data = await res.json();
+    if (lastErr) throw lastErr;
 
     if (cache.size > MAX_CACHE) {
       const oldest = cache.keys().next().value;

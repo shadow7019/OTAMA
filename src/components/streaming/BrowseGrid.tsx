@@ -92,6 +92,7 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
   const [genre, setGenre] = useState("");
   const [year, setYear] = useState("");
   const [genres, setGenres] = useState<Genre[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
   const sentinel = useRef<HTMLDivElement>(null);
   const mounted = useMounted();
   const store = useMediaStore();
@@ -171,7 +172,7 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
       cancelled = true;
       clearTimeout(t);
     };
-  }, [kind, query, page, sortBy, genre, year, isStoreList]);
+  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey]);
 
   // infinite scroll
   useEffect(() => {
@@ -271,7 +272,7 @@ export function BrowseGrid({ kind, query = "", actions, title }: BrowseGridProps
           {error}
           <button
             type="button"
-            onClick={() => setPage((p) => p + 1)}
+            onClick={() => setReloadKey((k) => k + 1)}
             className="ml-3 underline"
           >
             Retry
