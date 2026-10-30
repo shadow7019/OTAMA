@@ -216,17 +216,60 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
 
 export const PLAYER_SOURCES = [
   {
+    id: "vidlink",
+    name: "VidLink",
+    movie: (id: number) => `https://vidlink.org/embed/movie/${id}`,
+    tv: (id: number, s: number, e: number) => `https://vidlink.org/embed/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "vidfast",
+    name: "VidFast",
+    movie: (id: number) => `https://vidfast.pro/movie/${id}?autoPlay=true`,
+    tv: (id: number, s: number, e: number) => `https://vidfast.pro/tv/${id}/${s}/${e}?autoPlay=true`,
+  },
+  {
     id: "vidsrc-xyz",
-    name: "VidSrc Alpha",
+    name: "VidSrc",
     movie: (id: number) => `https://vidsrc.xyz/embed/movie?tmdb=${id}`,
     tv: (id: number, s: number, e: number) =>
       `https://vidsrc.xyz/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
   },
   {
-    id: "vidsrc-to",
-    name: "VidSrc",
-    movie: (id: number) => `https://vidsrc.to/embed/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://vidsrc.to/embed/tv/${id}/${s}-${e}`,
+    id: "videasy",
+    name: "Videasy",
+    movie: (id: number) => `https://player.videasy.net/movie/${id}`,
+    tv: (id: number, s: number, e: number) => `https://player.videasy.net/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "autoembed",
+    name: "AutoEmbed",
+    movie: (id: number) => `https://autoembed.cc/embed/movie/${id}`,
+    tv: (id: number, s: number, e: number) => `https://autoembed.cc/embed/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "embed-su",
+    name: "Embed.su",
+    movie: (id: number) => `https://embed.su/embed/movie?tmdb=${id}`,
+    tv: (id: number, s: number, e: number) =>
+      `https://embed.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+  },
+  {
+    id: "vidora",
+    name: "Vidora",
+    movie: (id: number) => `https://vidora.su/movie/${id}`,
+    tv: (id: number, s: number, e: number) => `https://vidora.su/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "moviesapi",
+    name: "MoviesAPI",
+    movie: (id: number) => `https://moviesapi.club/movie/${id}`,
+    tv: (id: number, s: number, e: number) => `https://moviesapi.club/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "spencerdevs",
+    name: "Spencer",
+    movie: (id: number) => `https://spencerdevs.xyz/movie/${id}`,
+    tv: (id: number, s: number, e: number) => `https://spencerdevs.xyz/tv/${id}/${s}/${e}`,
   },
   {
     id: "2embed",
@@ -243,9 +286,10 @@ export const PLAYER_SOURCES = [
       `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
   },
   {
-    id: "videasy",
-    name: "Videasy",
-    movie: (id: number) => `https://player.videasy.net/movie/${id}`,
-    tv: (id: number, s: number, e: number) => `https://player.videasy.net/tv/${id}/${s}/${e}`,
+    id: "vidsrc-vip",
+    name: "VidSrc VIP",
+    movie: (id: number) => `https://vidsrc.vip/embed/movie?tmdb=${id}`,
+    tv: (id: number, s: number, e: number) =>
+      `https://vidsrc.vip/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
   },
 ] as const;

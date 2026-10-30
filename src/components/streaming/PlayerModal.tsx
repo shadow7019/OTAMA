@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   X,
   ChevronLeft,
@@ -10,6 +10,10 @@ import {
   List,
   Info,
   Server,
+  ExternalLink,
+  Loader2,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import {
   MediaDetails,
@@ -30,9 +34,30 @@ interface PlayerModalProps {
   onClose: () => void;
 }
 
+type Health = "checking" | "up" | "popup" | "down";
+type FrameState = "loading" | "ready" | "timeout";
+
+/** How long to wait for the embed iframe before offering fallbacks. */
+const LOAD_TIMEOUT_MS = 10000;
+
+const HEALTH_DOT: Record<Health, string> = {
+  checking: "bg-zinc-600 animate-pulse",
+  up: "bg-emerald-400",
+  popup: "bg-amber-400",
+  down: "bg-red-500",
+};
+
+const HEALTH_TIP: Record<Health, string> = {
+  checking: "Checking server…",
+  up: "Server is up",
+  popup: "Server is up but may block embedding — use Pop out",
+  down: "Server not responding right now",
+};
+
 export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // remounted per target via key — initial state is safe to derive from props
   const type = target ? getMediaType(target.item) : "movie";
+  const itemId = target?.item.id ?? null;
   const [sourceIdx, setSourceIdx] = useState(() => {
     const saved = useMediaStore.getState().sourceId;
     const idx = PLAYER_SOURCES.findIndex((s) => s.id === saved);
@@ -44,11 +69,24 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [epLoading, setEpLoading] = useState(() => type === "tv");
   const [details, setDetails] = useState<MediaDetails | null>(null);
   const [showEpisodes, setShowEpisodes] = useState(false);
+  const [frameState, setFrameState] = useState<FrameState>("loading");
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [healthMap, setHealthMap] = useState<Record<string, Health>>({});
+  const [healthFor, setHealthFor] = useState<number | null>(null);
+  const [autoSwitchedFor, setAutoSwitchedFor] = useState<number | null>(null);
   const mounted = useMounted();
   const addContinue = useMediaStore((s) => s.addContinue);
   const toggleWatchlist = useMediaStore((s) => s.toggleWatchlist);
   const setSourceId = useMediaStore((s) => s.setSourceId);
   const watchlist = useMediaStore((s) => s.watchlist);
+
+  // identity of the current embed; resetting to "loading" is done at render time
+  const srcKey = `${itemId ?? "none"}-${sourceIdx}-${season}-${episode}-${reloadNonce}`;
+  const [prevSrcKey, setPrevSrcKey] = useState(srcKey);
+  if (prevSrcKey !== srcKey) {
+    setPrevSrcKey(srcKey);
+    setFrameState("loading");
+  }
 
   // record progress for "Continue Watching" (external system write);
   // re-records as the user navigates seasons/episodes so we resume at the latest spot
@@ -96,6 +134,47 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     };
   }, [target, type, season]);
 
+  // loading watchdog: if the iframe never fires onLoad before the timeout,
+  // surface fallback actions (next server / retry / pop out)
+  useEffect(() => {
+    if (!target) return;
+    const t = setTimeout(() => {
+      setFrameState((s) => (s === "loading" ? "timeout" : s));
+    }, LOAD_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [srcKey, target]);
+
+  // probe every server once per title so the strip shows live status dots
+  useEffect(() => {
+    if (itemId === null) return;
+    let cancelled = false;
+    PLAYER_SOURCES.forEach((s) => {
+      const probe = type === "movie" ? s.movie(itemId) : s.tv(itemId, 1, 1);
+      fetch(`/api/embed-check?url=${encodeURIComponent(probe)}`)
+        .then((r) => r.json())
+        .then((j: { ok?: boolean; frameable?: boolean }) => {
+          if (cancelled) return;
+          const h: Health = !j.ok ? "down" : j.frameable === false ? "popup" : "up";
+          setHealthMap((prev) => ({ ...prev, [s.id]: h }));
+          setHealthFor(itemId);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHealthMap((prev) => ({ ...prev, [s.id]: "down" }));
+            setHealthFor(itemId);
+          }
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, type]);
+
+  // persist the chosen server for future sessions (external store write)
+  useEffect(() => {
+    setSourceId(PLAYER_SOURCES[sourceIdx].id);
+  }, [sourceIdx, setSourceId]);
+
   // lock scroll + escape
   useEffect(() => {
     if (!target) return;
@@ -128,6 +207,22 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const src =
     type === "movie" ? source.movie(item.id) : source.tv(item.id, season, episode);
 
+  // self-heal (once per title): if the browser failed to load the embed within
+  // the timeout AND the probe confirms the server is down, silently move to the
+  // first healthy server instead of leaving the user stuck on a dead one
+  if (
+    healthFor === item.id &&
+    frameState === "timeout" &&
+    autoSwitchedFor !== item.id &&
+    healthMap[source.id] === "down"
+  ) {
+    const firstUp = PLAYER_SOURCES.findIndex((s) => healthMap[s.id] === "up");
+    if (firstUp >= 0 && firstUp !== sourceIdx) {
+      setAutoSwitchedFor(item.id);
+      setSourceIdx(firstUp);
+    }
+  }
+
   const goEpisode = (s: number, e: number) => {
     setSeason(s);
     setEpisode(e);
@@ -149,9 +244,21 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     : false;
 
   const switchSource = (i: number) => {
+    if (i === sourceIdx) {
+      // re-selecting the active server = manual retry
+      setFrameState("loading");
+      setReloadNonce((n) => n + 1);
+      return;
+    }
     setSourceIdx(i);
-    setSourceId(PLAYER_SOURCES[i].id);
   };
+
+  const retryServer = () => {
+    setFrameState("loading");
+    setReloadNonce((n) => n + 1);
+  };
+
+  const tryNextServer = () => switchSource((sourceIdx + 1) % PLAYER_SOURCES.length);
 
   return (
     <div
@@ -216,6 +323,17 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
               <List className="h-4 w-4" /> Episodes
             </button>
           )}
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open stream in a new tab"
+            title="Open this server in a new tab (works even when embedding is blocked)"
+            className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Pop out</span>
+          </a>
           <button
             type="button"
             onClick={() => switchSource((sourceIdx + 1) % PLAYER_SOURCES.length)}
@@ -229,25 +347,30 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         </div>
       </div>
 
-      {/* Source strip */}
+      {/* Server strip with live health dots */}
       <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5">
         <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
           Server
         </span>
-        {PLAYER_SOURCES.map((s, i) => (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => switchSource(i)}
-            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition ${
-              i === sourceIdx
-                ? "bg-red-600 text-white"
-                : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
-            }`}
-          >
-            {s.name}
-          </button>
-        ))}
+        {PLAYER_SOURCES.map((s, i) => {
+          const h: Health = healthFor === item.id ? (healthMap[s.id] ?? "checking") : "checking";
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => switchSource(i)}
+              title={`${s.name} — ${HEALTH_TIP[h]}`}
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                i === sourceIdx
+                  ? "bg-red-600 text-white"
+                  : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${HEALTH_DOT[h]}`} aria-hidden />
+              {s.name}
+            </button>
+          );
+        })}
       </div>
 
       {/* Main area */}
@@ -255,15 +378,86 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Video */}
           <div className="relative w-full bg-black lg:flex-1">
-            <div className="mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
+            <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
               <iframe
+                key={`${src}-${reloadNonce}`}
                 src={src}
                 title={`${title} player`}
                 allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                 allowFullScreen
                 referrerPolicy="origin"
+                onLoad={() => setFrameState((s) => (s === "loading" ? "ready" : s))}
                 className="h-full w-full border-0"
               />
+
+              {/* Connecting overlay */}
+              {frameState === "loading" && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black">
+                  <Loader2 className="h-10 w-10 animate-spin text-red-600" />
+                  <p className="text-sm text-zinc-400">
+                    Connecting to{" "}
+                    <span className="font-semibold text-zinc-200">{source.name}</span>…
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={tryNextServer}
+                      className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+                    >
+                      Next server
+                    </button>
+                    <a
+                      href={src}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+                    >
+                      <ExternalLink className="h-3 w-3" /> Open in new tab
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* Timeout fallback overlay */}
+              {frameState === "timeout" && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center">
+                  <AlertTriangle className="h-10 w-10 text-amber-400" />
+                  <div>
+                    <p className="text-base font-bold text-white">
+                      &ldquo;{source.name}&rdquo; didn&rsquo;t respond
+                    </p>
+                    <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
+                      This server may be down, blocked by your ad-blocker, or unavailable in
+                      your region. Try another server — green dots are healthy — or open the
+                      stream in a new tab.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={retryServer}
+                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Retry
+                    </button>
+                    <button
+                      type="button"
+                      onClick={tryNextServer}
+                      className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-500"
+                    >
+                      Next server <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                    <a
+                      href={src}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> New tab
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -295,9 +489,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                 </button>
               </>
             ) : (
-              <p className="flex items-center gap-2 text-xs text-zinc-600">
-                <Info className="h-3.5 w-3.5" />
-                If the video doesn&apos;t load, try another server above.
+              <p className="flex items-center gap-2 text-center text-xs text-zinc-600">
+                <Info className="h-3.5 w-3.5 shrink-0" />
+                If the video doesn&apos;t load, switch server above (green dot = healthy) or
+                use Pop out. Ad-blockers can block some servers.
               </p>
             )}
           </div>
