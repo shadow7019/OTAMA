@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * CineX Direct — public-domain direct-stream finder.
+ * Otama Direct — public-domain direct-stream finder.
  *
  * Looks a title up on the Internet Archive and returns a DIRECT video file URL
  * (mp4 over HTTPS) so the player can use a native HTML5 <video> element with
@@ -136,7 +136,7 @@ function pickVideoFile(files: ArchiveFile[]): { name: string; size: number } | n
 
 async function fetchJson<T>(url: string, timeoutMs = 9000): Promise<T> {
   const res = await fetch(url, {
-    headers: { accept: "application/json", "user-agent": "CineX/1.0 (public-domain lookup)" },
+    headers: { accept: "application/json", "user-agent": "Otama/1.0 (public-domain lookup)" },
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`archive ${res.status}`);

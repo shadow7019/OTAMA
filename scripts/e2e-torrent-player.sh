@@ -5,7 +5,7 @@ set -u
 cd /home/z/my-project
 
 # ---- 1. start server ----
-setsid bash -c 'exec bun run dev' > /tmp/cinex-dev.log 2>&1 < /dev/null &
+setsid bash -c 'exec bun run dev' > /tmp/otama-dev.log 2>&1 < /dev/null &
 SERVER_PID=$!
 ok=""
 for i in $(seq 1 40); do
@@ -13,7 +13,7 @@ for i in $(seq 1 40); do
   [ "$code" = "200" ] && { ok=1; echo "[ok] server ready after ${i}s"; break; }
   sleep 1
 done
-[ -z "$ok" ] && { echo "[fail] server never became ready"; tail -5 /tmp/cinex-dev.log; exit 1; }
+[ -z "$ok" ] && { echo "[fail] server never became ready"; tail -5 /tmp/otama-dev.log; exit 1; }
 
 # ---- 2. open home ----
 agent-browser open http://localhost:3000 >/dev/null 2>&1

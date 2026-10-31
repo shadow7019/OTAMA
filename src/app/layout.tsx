@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CineX — Stream Movies & TV Shows",
+  title: "Otama — Stream Movies & TV Shows",
   description:
     "Browse trending movies and TV shows, watch trailers and stream instantly. Powered by TMDB.",
   keywords: ["movies", "tv shows", "streaming", "watch online", "trailers", "TMDB"],
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     icon: "/favicon.svg",
   },
   openGraph: {
-    title: "CineX — Stream Movies & TV Shows",
+    title: "Otama — Stream Movies & TV Shows",
     description: "Browse trending movies and TV shows, watch trailers and stream instantly.",
     type: "website",
   },

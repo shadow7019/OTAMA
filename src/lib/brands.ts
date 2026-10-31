@@ -1,7 +1,7 @@
 /**
  * Curated movie studios and streaming services / TV networks, mirroring the
- * discovery tabs on cinex.lol. Every id and logo path below was verified
- * against the TMDB API (GET /company/{id}, GET /network/{id}).
+ * per-brand discovery tabs of the original reference site. Every id and logo
+ * path below was verified against the TMDB API (GET /company/{id}, GET /network/{id}).
  *
  * Logos are white-on-transparent PNGs served by TMDB:
  *   https://image.tmdb.org/t/p/w300{logo}

@@ -134,7 +134,7 @@ export default function Home() {
               images courtesy of The Movie Database (www.themoviedb.org).
             </p>
             <p>
-              CineX does not host any media files. Playback streams directly from public
+              Otama does not host any media files. Playback streams directly from public
               peer-to-peer networks through the built-in ad-free player; availability depends on
               the public swarm.
             </p>

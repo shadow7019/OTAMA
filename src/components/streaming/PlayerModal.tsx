@@ -79,7 +79,7 @@ interface ArchiveMatchClient {
   fileSize: number;
 }
 
-const ARCHIVE_ID = "cinex-direct";
+const ARCHIVE_ID = "otama-direct";
 /** Switch servers when the swarm gives us nothing at all. */
 const NO_PEER_SWITCH_MS = 18000;
 /** Switch when peers exist but data never arrives. */
@@ -757,7 +757,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   className="h-full w-full border-0"
                 />
               ) : isArchive && archive ? (
-                /* ---------- CineX Direct: public-domain native stream ---------- */
+                /* ---------- Otama Direct: public-domain native stream ---------- */
                 <>
                   <video
                     key={`${archive.identifier}-${videoNonce}`}

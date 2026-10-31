@@ -74,7 +74,7 @@ const TRACKERS = [
   "wss://tracker.openwebtorrent.com",
 ];
 
-const DOWNLOAD_DIR = path.join(os.tmpdir(), "cinex-torrents");
+const DOWNLOAD_DIR = path.join(os.tmpdir(), "otama-torrents");
 const MAX_TORRENTS = 4;
 const IDLE_DESTROY_MS = 30 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 40_000;
@@ -93,13 +93,13 @@ interface EngineState {
   sweeper: ReturnType<typeof setInterval> | null;
 }
 
-const g = globalThis as unknown as { __cinexTorrentEngine?: EngineState };
+const g = globalThis as unknown as { __otamaTorrentEngine?: EngineState };
 
 function state(): EngineState {
-  if (!g.__cinexTorrentEngine) {
-    g.__cinexTorrentEngine = { client: null, meta: new Map(), sweeper: null };
+  if (!g.__otamaTorrentEngine) {
+    g.__otamaTorrentEngine = { client: null, meta: new Map(), sweeper: null };
   }
-  return g.__cinexTorrentEngine;
+  return g.__otamaTorrentEngine;
 }
 
 function getClient(): TorrentClient {

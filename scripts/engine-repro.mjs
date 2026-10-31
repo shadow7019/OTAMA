@@ -20,7 +20,7 @@ const params = new URLSearchParams({ xt: `urn:btih:${hash}`, dn: "Inception 1080
 const trList = mode === "engine" ? TRACKERS : ["udp://tracker.opentrackr.org:1337/announce", "http://tracker.openbittorrent.com/announce"];
 for (const tr of trList) params.append("tr", tr);
 const magnet = `magnet:?${params.toString()}`;
-const opts = mode === "engine" ? { path: "/tmp/cinex-torrents", announce: TRACKERS } : { path: "/tmp/tt-plain" };
+const opts = mode === "engine" ? { path: "/tmp/otama-torrents", announce: TRACKERS } : { path: "/tmp/tt-plain" };
 
 console.log(`mode=${mode}`);
 console.log("client:", client.dht ? "dht ready" : "no dht");

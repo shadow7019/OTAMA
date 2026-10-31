@@ -5,6 +5,22 @@ import { persist } from "zustand/middleware";
 import { useSyncExternalStore } from "react";
 import { ListEntry, MediaItem } from "@/lib/tmdb";
 
+/* One-time migration: carry the pre-rename localStorage payload over so
+   watchlist / continue-watching survive the rebrand. */
+const STORAGE_KEY = "otama-media-store";
+const LEGACY_STORAGE_KEY = "cinex-media-store";
+if (
+  typeof window !== "undefined" &&
+  !window.localStorage.getItem(STORAGE_KEY) &&
+  window.localStorage.getItem(LEGACY_STORAGE_KEY)
+) {
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    window.localStorage.getItem(LEGACY_STORAGE_KEY) as string
+  );
+  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+}
+
 interface MediaStore {
   watchlist: ListEntry[];
   continueWatching: ListEntry[];
@@ -92,7 +108,7 @@ export const useMediaStore = create<MediaStore>()(
 
       clearContinue: () => set({ continueWatching: [] }),
     }),
-    { name: "cinex-media-store" }
+    { name: STORAGE_KEY }
   )
 );
 

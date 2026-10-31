@@ -30,7 +30,7 @@ interface AutoState {
   cursor: number;
 }
 
-const g = globalThis as unknown as { __cinexAutoContent?: AutoState };
+const g = globalThis as unknown as { __otamaAutoContent?: AutoState };
 const REBUILD_MS = 30 * 60 * 1000;
 const VERIFY_BUDGET_MS = 12_000; // per-request verification budget
 const CANDIDATES = 24;
@@ -70,12 +70,12 @@ async function rebuild(): Promise<AutoState> {
     rebuiltAt: Date.now(),
     cursor: 0,
   };
-  g.__cinexAutoContent = st;
+  g.__otamaAutoContent = st;
   return st;
 }
 
 export async function GET() {
-  let st = g.__cinexAutoContent;
+  let st = g.__otamaAutoContent;
   if (!st || Date.now() - st.rebuiltAt > REBUILD_MS) {
     try {
       st = await rebuild();

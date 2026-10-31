@@ -221,5 +221,5 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
  *    backend via webtorrent and streams to the native <video> element with
  *    HTTP Range requests. No third-party iframe is ever embedded, so no
  *    pop-ups, tab redirects or injected ad scripts.
- *  - CineX Direct: public-domain direct streams (archive.org) as fallback.
+ *  - Otama Direct: public-domain direct streams (archive.org) as fallback.
  */

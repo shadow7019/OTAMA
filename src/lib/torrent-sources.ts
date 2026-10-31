@@ -70,7 +70,7 @@ function detectQuality(name: string): string {
 async function fetchJson<T>(url: string, timeoutMs = 8000): Promise<T | null> {
   try {
     const res = await fetch(url, {
-      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) CineX/1.0" },
+      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0" },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;

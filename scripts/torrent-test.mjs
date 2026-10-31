@@ -2,7 +2,7 @@
 import WebTorrent from "webtorrent";
 
 console.log("[*] webtorrent imported, creating client…");
-const client = new WebTorrent({ userAgent: "cinex-test" });
+const client = new WebTorrent({ userAgent: "otama-test" });
 
 const magnet =
   "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%2Fannounce&tr=https%3A%2F%2Ftracker.tiny-vps.com%3A443%2Fannounce";
