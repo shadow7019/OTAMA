@@ -77,6 +77,7 @@ interface ArchiveMatchClient {
   license: string;
   fileUrl: string;
   fileSize: number;
+  kind: "movie" | "tv";
 }
 
 const ARCHIVE_ID = "otama-direct";
@@ -232,24 +233,24 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         if (!cancelled) setServersState("error");
       });
 
-    if (type === "movie") {
-      setArchiveState("loading");
-      fetch(
-        `/api/archive?title=${encodeURIComponent(getTitle(target.item))}&year=${encodeURIComponent(getYear(target.item))}`
-      )
-        .then((r) => r.json())
-        .then((j: { match: ArchiveMatchClient | null }) => {
-          if (cancelled) return;
-          setArchive(j.match);
-          setArchiveState(j.match ? "found" : "none");
-        })
-        .catch(() => {
-          if (!cancelled) setArchiveState("none");
-        });
-    } else {
-      setArchive(null);
-      setArchiveState("none");
-    }
+    // Otama Direct: movies → public-domain copy; TV episodes → episode lookup
+    // (Indian daily shows surface on archive.org hours after broadcast, long
+    // before the public trackers list them)
+    setArchiveState("loading");
+    const archiveUrl =
+      type === "movie"
+        ? `/api/archive?title=${encodeURIComponent(getTitle(target.item))}&year=${encodeURIComponent(getYear(target.item))}`
+        : `/api/archive?type=tv&id=${target.item.id}&season=${season}&episode=${episode}&title=${encodeURIComponent(getTitle(target.item))}`;
+    fetch(archiveUrl)
+      .then((r) => r.json())
+      .then((j: { match: ArchiveMatchClient | null }) => {
+        if (cancelled) return;
+        setArchive(j.match);
+        setArchiveState(j.match ? "found" : "none");
+      })
+      .catch(() => {
+        if (!cancelled) setArchiveState("none");
+      });
     return () => {
       cancelled = true;
     };
@@ -272,6 +273,18 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       setExhausted(true);
     }
   }, [serversState, servers, tried, activeIdx, manualIdx, exhausted]);
+
+  /* ---------------- Otama Direct for episodes with no torrent sources ----------------
+   * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
+   * trackers but uploaded to archive.org within hours of broadcast. When the
+   * torrent scan comes up empty and a direct episode stream exists, play it. */
+  useEffect(() => {
+    if (type !== "tv" || serversState !== "ready") return;
+    if (servers.length > 0 || manualIdx !== null || exhausted) return;
+    if (archiveState !== "found" || !archive) return;
+    setManualIdx("archive");
+    setVideoState("loading");
+  }, [type, serversState, servers.length, manualIdx, exhausted, archiveState, archive]);
 
   /* ---------------- stream URL ---------------- */
   const streamUrl = useMemo(() => {
@@ -462,12 +475,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     type !== "tv" || !currentEpisode?.air_date || currentEpisode.air_date <= todayYmd;
   useEffect(() => {
     if (!noSourcesYet || !episodeAired || autoRetries >= 5) return;
+    // a direct episode stream that is already playing must not be interrupted
+    if (manualIdx === "archive" && archiveState === "found") return;
     const t = setTimeout(() => {
       setAutoRetries((n) => n + 1);
       setSearchNonce((n) => n + 1);
     }, 90_000);
     return () => clearTimeout(t);
-  }, [noSourcesYet, episodeAired, autoRetries, searchNonce]);
+  }, [noSourcesYet, episodeAired, autoRetries, searchNonce, manualIdx, archiveState]);
 
   if (!target) return null;
 
@@ -648,31 +663,31 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           Auto{activeServer && manualIdx === null ? ` · S${activeIdx! + 1}` : ""}
         </button>
 
-        {type === "movie" && (
-          <button
-            type="button"
-            onClick={selectArchive}
-            disabled={archiveState !== "found"}
-            title={
-              archiveState === "found"
-                ? "Built-in player, direct public-domain stream — 100% ad-free"
-                : archiveState === "loading"
-                  ? "Checking archive.org for a public-domain copy…"
-                  : "No public-domain copy found for this title"
-            }
-            className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-              isArchive
-                ? "bg-emerald-600 text-white"
-                : archiveState === "found"
-                  ? "bg-emerald-600/15 text-emerald-300 ring-1 ring-emerald-600/40 hover:bg-emerald-600/25"
-                  : "bg-white/5 text-zinc-600"
-            } ${archiveState !== "found" ? "cursor-not-allowed" : ""}`}
-          >
-            <ShieldCheck className="h-3 w-3" />
-            Direct
-            {archiveState === "loading" && <span className="animate-pulse">…</span>}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={selectArchive}
+          disabled={archiveState !== "found"}
+          title={
+            archiveState === "found"
+              ? type === "tv"
+                ? "Built-in player, direct episode stream — 100% ad-free"
+                : "Built-in player, direct public-domain stream — 100% ad-free"
+              : archiveState === "loading"
+                ? "Checking archive.org for a direct copy…"
+                : "No direct copy found for this title"
+          }
+          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            isArchive
+              ? "bg-emerald-600 text-white"
+              : archiveState === "found"
+                ? "bg-emerald-600/15 text-emerald-300 ring-1 ring-emerald-600/40 hover:bg-emerald-600/25"
+                : "bg-white/5 text-zinc-600"
+          } ${archiveState !== "found" ? "cursor-not-allowed" : ""}`}
+        >
+          <ShieldCheck className="h-3 w-3" />
+          Direct
+          {archiveState === "loading" && <span className="animate-pulse">…</span>}
+        </button>
 
         {servers.map((s, i) => {
           const active = activeIdx === i;
@@ -779,11 +794,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     className="h-full w-full bg-black"
                   />
                   <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
-                    <ShieldCheck className="h-3 w-3" /> Ad-free · Public domain
+                    <ShieldCheck className="h-3 w-3" />{" "}
+                    {archive.kind === "tv" ? "Ad-free · Direct episode" : "Ad-free · Public domain"}
                   </div>
                   <p className="absolute inset-x-3 bottom-2 truncate text-[10px] text-zinc-500">
                     {archive.title}
-                    {archive.year ? ` (${archive.year})` : ""} · archive.org · {archive.license}
+                    {archive.year ? ` (${archive.year})` : ""} · archive.org
+                    {archive.kind === "movie" ? ` · ${archive.license}` : ""}
                   </p>
                 </>
               ) : streamUrl ? (
@@ -894,10 +911,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       No playable source found for this episode yet
                     </p>
                     <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
-                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch and EZTV — no
-                      healthy torrent for it right now. Brand-new episodes of daily shows usually
-                      surface on public trackers within hours to a few days. The episode list and
-                      servers refresh automatically, so simply retry later.
+                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch, EZTV and
+                      archive.org — no healthy source for it right now. Brand-new episodes of
+                      daily shows usually surface within hours to a few days. The episode list
+                      and servers refresh automatically, so simply retry later.
                     </p>
                     {type === "tv" && noSourcesYet && autoRetries < 5 && episodeAired && (
                       <p

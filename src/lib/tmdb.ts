@@ -116,7 +116,14 @@ export function getDate(item: MediaItem): string {
 }
 
 export function getMediaType(item: MediaItem): MediaType {
-  return item.media_type === "tv" ? "tv" : "movie";
+  if (item.media_type) return item.media_type;
+  // Unstamped catalog items (discover rows, /similar & /recommendation
+  // lists): TMDB marks TV entries with name/original_name + first_air_date
+  // and movies with title + release_date. Inferring from that shape keeps a
+  // TV series from being queried as a movie (movie/30984 → 404 → unplayable).
+  if (item.name && !item.title) return "tv";
+  if (item.first_air_date && !item.release_date) return "tv";
+  return "movie";
 }
 
 export function img(

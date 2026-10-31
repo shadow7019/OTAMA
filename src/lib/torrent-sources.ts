@@ -8,12 +8,13 @@
  * series episodes never get mixed) and scored so the player can pick the
  * best server automatically.
  */
-import { getImdbId, getTitleMeta, tmdbServer } from "./tmdb-server";
+import { getAbsoluteEpisode, getImdbId, getTitleMeta, tmdbServer } from "./tmdb-server";
 import {
   countryPenalty,
   matchMovie,
   matchTv,
   parseRelease,
+  subtitleWords,
   type MatchClass,
   type ParsedRelease,
 } from "./torrent-match";
@@ -174,7 +175,7 @@ interface ApibayResult {
 }
 
 /** TMDB original_language code → the word Indian releases use for it */
-const LANG_WORD: Record<string, string> = {
+export const LANG_WORD: Record<string, string> = {
   ta: "tamil",
   te: "telugu",
   hi: "hindi",
@@ -192,7 +193,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const seasonCache = new Map<string, { dates: Map<number, string | null>; ts: number }>();
 const SEASON_TTL = 30 * 60 * 1000;
 
-async function getEpisodeAirDate(
+export async function getEpisodeAirDate(
   tmdbId: number,
   season: number,
   episode: number
@@ -224,6 +225,13 @@ interface BayContext {
   episode: number;
   airDate?: string | null;
   showLang?: string | null;
+  /** broadcast-order episode number (anime) */
+  absEpisode?: number | null;
+  /** fansub-relative episode for merged sequel seasons (anime: TMDB
+   *  "Bleach" S02 = Thousand-Year Blood War, fansubs number it from 1) */
+  relEpisode?: number | null;
+  /** Japanese-language title → fansub indexers (Nyaa) get queried too */
+  isAnime?: boolean;
 }
 
 /**
@@ -261,6 +269,7 @@ async function providerPirateBay(
           : matchTv(p, season, episode, title, originalTitle, {
               airDate: ctx.airDate,
               showLang: ctx.showLang,
+              absEpisode: ctx.absEpisode,
             });
       if (!match) continue; // same name, different film/episode — reject
       const cPen = type === "tv" ? countryPenalty(p, ctx.countries) : 0;
@@ -385,6 +394,7 @@ async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise
         : matchTv(p, season, episode, title, originalTitle, {
             airDate: ctx.airDate,
             showLang: ctx.showLang,
+            absEpisode: ctx.absEpisode,
           });
     if (!match) continue; // same name, wrong season/episode/year — reject
     if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
@@ -448,6 +458,7 @@ async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promi
           : matchTv(p, season, episode, title, originalTitle, {
               airDate: ctx.airDate,
               showLang: ctx.showLang,
+              absEpisode: ctx.absEpisode,
             });
       if (!match) continue; // same name, different film/episode/language — reject
       if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
@@ -581,6 +592,144 @@ async function providerEztv(
   return out;
 }
 
+/* ---------- anime: nyaa.si (fansub indexers) ---------- */
+
+interface NyaaItem {
+  title: string;
+  infoHash: string;
+  seeders: number;
+  leechers: number;
+  sizeBytes: number;
+  /** upload date (epoch ms) — identifies fresh sequel-episode fansubs */
+  pubDate: number | null;
+}
+
+/** RSS search on nyaa.si — the primary public index for fansubbed anime. */
+async function nyaaSearch(query: string): Promise<NyaaItem[]> {
+  try {
+    const res = await fetch(
+      `https://nyaa.si/?page=rss&f=0&c=0_0&q=${encodeURIComponent(query)}`,
+      {
+        headers: {
+          accept: "application/rss+xml",
+          "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0",
+        },
+        signal: AbortSignal.timeout(9000),
+      }
+    );
+    if (!res.ok) return [];
+    const xml = await res.text();
+    const items: NyaaItem[] = [];
+    for (const chunk of xml.split("<item>").slice(1)) {
+      const pick = (re: RegExp) => chunk.match(re)?.[1]?.trim() ?? "";
+      const title = pick(/<title>([\s\S]*?)<\/title>/);
+      const infoHash = pick(/<nyaa:infoHash>([0-9a-fA-F]{40})<\/nyaa:infoHash>/).toLowerCase();
+      if (!title || !infoHash) continue;
+      // "1.4 GiB" → "1.4 GB" so the shared size parser understands it
+      const sizeRaw = pick(/<nyaa:size>([\d.]+\s*[KMGTP]i?B)<\/nyaa:size>/).replace(/i/g, "");
+      const pubRaw = pick(/<pubDate>([\s\S]*?)<\/pubDate>/);
+      const pubMs = pubRaw ? new Date(pubRaw).getTime() : NaN;
+      items.push({
+        title,
+        infoHash,
+        seeders: parseInt(pick(/<nyaa:seeders>(\d+)<\/nyaa:seeders>/), 10) || 0,
+        leechers: parseInt(pick(/<nyaa:leechers>(\d+)<\/nyaa:leechers>/), 10) || 0,
+        sizeBytes: parseSizeBytes(sizeRaw),
+        pubDate: Number.isFinite(pubMs) ? pubMs : null,
+      });
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+/** "892-1085" / "1078.5-1085" / "E01-E52" batch range inside a fansub
+ *  release name. */
+export function batchRange(name: string): [number, number] | null {
+  const m = name.match(/(\d{1,4})(?:\.\d)?\s*(?:[-–—~]|to)\s*E?(\d{1,4})\b/i);
+  if (!m) return null;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return b > a && b - a <= 400 ? [a, b] : null;
+}
+
+/**
+ * Nyaa — fansubbed anime releases. Names use broadcast-order episode numbers
+ * ("One Piece - 1085"), season/episode tags ("S02E05") or batch ranges
+ * ("Season 20 (892-1085) Batch"), all handled via the strict matcher plus an
+ * explicit absolute-episode check. Only enabled for Japanese titles.
+ */
+async function providerNyaa(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
+  const { title, originalTitle, season, episode, absEpisode, relEpisode, isAnime } = ctx;
+  if (!isAnime) return [];
+  const wanted = absEpisode ?? episode;
+  const relWanted = relEpisode ?? null;
+  const queries =
+    type === "movie"
+      ? [`${title} ${ctx.year ?? ""}`.trim(), title, ...(originalTitle ? [originalTitle] : [])]
+      : [
+          `${title} ${wanted}`,
+          // merged sequel seasons are fansub-numbered from 1 ("Sennen
+          // Kessen-hen - 45"), which differs from the broadcast-order number
+          ...(relWanted != null && relWanted !== wanted ? [`${title} ${relWanted}`] : []),
+          ...(originalTitle ? [`${originalTitle} ${wanted}`] : []),
+          `${title} s${pad(season)}e${pad(episode)}`,
+        ];
+
+  const seen = new Map<string, TorrentSource>();
+  for (const q of queries) {
+    if (seen.size >= 6) break;
+    const rows = await nyaaSearch(q);
+    for (const r of rows) {
+      if (seen.has(r.infoHash)) continue;
+      const p = parseRelease(r.title);
+      let match: MatchClass | null;
+      if (type === "movie") {
+        match = matchMovie(p, title, originalTitle, ctx.year);
+      } else {
+        match = matchTv(p, season, episode, title, originalTitle, {
+          airDate: ctx.airDate,
+          absEpisode,
+          relEpisode: relWanted,
+          pubDate: r.pubDate,
+        });
+        if (!match) {
+          // multi-episode batch: keep it as a pack — the stream route picks
+          // the right file inside the torrent by episode number. The relative
+          // number is only accepted inside a SUBTITLED release (>= 2 unconsumed
+          // title words — "Sennen Kessen-hen 1-52 Batch"), so the base show's
+          // batches ("Bleach 001~366", "BLEACH Kai 1~366") can never answer
+          // a sequel-season request.
+          const br = batchRange(r.title);
+          if (br) {
+            const inAbs = wanted >= br[0] && wanted <= br[1];
+            const inRel =
+              relWanted != null && relWanted >= br[0] && relWanted <= br[1];
+            if (inAbs || (inRel && subtitleWords(p, [title, originalTitle]).length >= 2)) {
+              match = "pack";
+            }
+          }
+        }
+      }
+      if (!match) continue;
+      seen.set(r.infoHash, {
+        id: r.infoHash,
+        releaseName: r.title,
+        seeders: r.seeders,
+        peers: r.leechers,
+        sizeBytes: r.sizeBytes,
+        provider: "Nyaa",
+        quality: detectQuality(r.title),
+        fileIdx: null,
+        match,
+        score: 0,
+      });
+    }
+  }
+  return [...seen.values()];
+}
+
 /* ---------- scoring ---------- */
 
 export function scoreTorrent(t: TorrentSource): number {
@@ -653,6 +802,14 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
       ? title.replace(new RegExp(`\\s+${showLang}$`, "i"), "").trim() || title
       : title;
 
+  // Japanese titles are anime: fansub indexers (Nyaa) get queried and the
+  // broadcast-order episode number is offered to the matchers. Sequel seasons
+  // folded into the base show ("Bleach" S02 = TYBW) additionally carry the
+  // fansub-relative episode number.
+  const isAnime = (meta.originalLanguage ?? "") === "ja";
+  const absEpisode = type === "tv" && isAnime ? await getAbsoluteEpisode(tmdbId, season, episode) : null;
+  const relEpisode = type === "tv" && isAnime && season >= 2 ? episode : null;
+
   const jobs: Promise<TorrentSource[]>[] = [];
   if (matchTitle) {
     const bayCtx: BayContext = {
@@ -664,10 +821,14 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
       episode,
       airDate,
       showLang,
+      absEpisode,
+      relEpisode,
+      isAnime,
     };
     jobs.push(providerPirateBay(type, bayCtx));
     jobs.push(providerBitSearch(type, bayCtx));
     jobs.push(providerTorrentsCsv(type, bayCtx));
+    if (isAnime) jobs.push(providerNyaa(type, bayCtx));
   }
   if (imdbId) {
     jobs.push(providerTorrentio(type, imdbId, season, episode, year));

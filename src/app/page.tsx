@@ -9,6 +9,7 @@ import { HomeView } from "@/components/streaming/HomeView";
 import { BrowseGrid } from "@/components/streaming/BrowseGrid";
 import { StudiosView } from "@/components/streaming/StudiosView";
 import { BrandView } from "@/components/streaming/BrandView";
+import { AnimeView } from "@/components/streaming/AnimeView";
 import { DetailModal } from "@/components/streaming/DetailModal";
 import { PlayerModal } from "@/components/streaming/PlayerModal";
 import { ViewType, MediaActions, PlayerTarget } from "@/components/streaming/types";
@@ -77,6 +78,7 @@ export default function Home() {
         {view === "home" && <HomeView actions={actions} onTrailer={(item, key) => setTrailer({ item, key })} />}
         {view === "movies" && <BrowseGrid kind="movie" title="Movies" actions={actions} />}
         {view === "tv" && <BrowseGrid kind="tv" title="TV Shows" actions={actions} />}
+        {view === "anime" && <AnimeView actions={actions} />}
         {view === "studios" &&
           (brand ? (
             <BrandView
@@ -100,10 +102,10 @@ export default function Home() {
           <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
             <div>
               <p className="text-lg font-black tracking-tight text-white">
-                Cine<span className="text-red-500">X</span>
+                <span className="text-red-500">O</span>tama
               </p>
               <p className="mt-1 max-w-md text-xs leading-relaxed text-zinc-500">
-                Your gateway to movies and TV shows. Browse trending titles, watch official
+                Your gateway to movies, TV shows and anime. Browse trending titles, watch official
                 trailers and stream through your own built-in P2P player — all in one place.
               </p>
             </div>
@@ -113,6 +115,7 @@ export default function Home() {
                   ["home", "Home"],
                   ["movies", "Movies"],
                   ["tv", "TV Shows"],
+                  ["anime", "Anime"],
                   ["studios", "Studios"],
                   ["mylist", "My List"],
                 ] as [ViewType, string][]

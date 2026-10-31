@@ -76,18 +76,25 @@ const MONTH_INDEX: Record<string, number> = {
 /**
  * Words that show up inside dated daily-episode names ("Bigg Boss — Season 4 —
  * Episode 29 — 31 October 2010") without meaning a different show.
+ * Month words are date noise, never a show title; "video" is filler used by
+ * archive.org episode uploads ("… Video Episode 55 …").
  */
 const DATED_EXTRA_OK = new Set([
   ...Object.keys(LANGUAGE_WORDS),
   "day", "days", "premiere", "premier", "finale", "grand", "season", "episode",
   "ep", "telecast", "version", "full", "show", "ceremony", "ceremonial",
-  "launch", "lauch", "opening",
+  "launch", "lauch", "opening", "video",
+  "january", "february", "march", "april", "may", "june", "july",
+  "august", "september", "october", "november", "december",
 ]);
 
 export function releaseTokens(name: string): string[] {
   return name
     .toLowerCase()
     .replace(/[''’]/g, "")
+    // ordinal day forms ("30th October 2026") → plain numbers so "30th" can
+    // never leak into the title area as an unmatched word
+    .replace(/(\d)(st|nd|rd|th)\b/g, "$1")
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
 }
@@ -119,7 +126,15 @@ export function parseRelease(input: string): ParsedRelease {
   //      .company / .homes / .rocks …)
   //   2. a bare host with a proper " - " separator (spaces required, so the
   //      "-GROUP" tag of a normal release name can never be eaten)
+  // anime fansub convention prefixes a bracketed group tag to every upload
+  // ("[SubsPlease] Jujutsu Kaisen - 05 …") — drop it so it is not mistaken
+  // for title words, but keep titles that ARE bracketed ("[REC] 2007": what
+  // follows must still contain a letter for the strip to be safe)
   const name = input
+    .replace(/^\s*\[[^\]]{1,48}\]\s*/, (m0) =>
+      // keep "[REC] 2007 …" (real bracketed title) but strip "[SubsPlease] …"
+      /^\d/.test(input.slice(m0.length)) ? m0 : ""
+    )
     .replace(
       /^\s*www\.[a-z0-9][a-z0-9.\-]{1,48}\.[a-z]{2,12}\s*[-–—]\s*/i,
       ""
@@ -367,6 +382,32 @@ export interface TvMatchCtx {
   airDate?: string | null;
   /** language of the requested show (tamil, telugu, hindi…) — release tags must agree */
   showLang?: string | null;
+  /** broadcast-order episode number (anime): "One Piece - 1085" answers
+   *  a TMDB request for a season-21 episode */
+  absEpisode?: number | null;
+  /** fansub-relative episode for merged sequel seasons: TMDB folds
+   *  "Thousand-Year Blood War" into "Bleach" as S02, but fansubs index it as
+   *  its own series numbered from 1 ("Sennen Kessen-hen - 45", "TYBW S01E45") */
+  relEpisode?: number | null;
+  /** torrent upload date (epoch ms) — a sequel episode's fansub is uploaded
+   *  within weeks of broadcast, while the base show's old episodes are years
+   *  old; the gap is what keeps renumbered releases from mixing */
+  pubDate?: number | null;
+}
+
+/** A sequel episode's fansub upload lands within weeks of broadcast; the
+ *  base show's renumbered episodes surface as re-seeds years later. 45 days
+ *  absorbs pre-air fansub leaks and batch re-uploads without opening the
+ *  door to old base-show episodes. */
+const REL_FRESH_DAYS = 45;
+
+function uploadNearAir(
+  pubDate: number | null | undefined,
+  air: { y: number; m: number; d: number } | null
+): boolean {
+  if (!pubDate || !air) return false;
+  const airMs = Date.UTC(air.y, air.m - 1, air.d);
+  return Math.abs(pubDate - airMs) <= REL_FRESH_DAYS * 86400000;
 }
 
 function parseYmd(s: string): { y: number; m: number; d: number } | null {
@@ -415,6 +456,39 @@ function titleCarriesSeason(p: ParsedRelease, season: number): boolean {
 }
 
 /**
+ * Title-area tokens of a release that the expected titles did not consume —
+ * sequel subtitles ("Sennen Kessen-hen", "Thousand Year Blood War") and
+ * remaster tags ("Kai") surface here. Exported for the anime provider's
+ * batch-range guard.
+ */
+export function unmatchedExtras(p: ParsedRelease, titles: (string | undefined)[]): string[] {
+  return bestTitleMatch(p, titles.filter(Boolean) as string[]).unmatched;
+}
+
+/** release-tag words that trail a title without making it a sequel subtitle */
+const RELEASE_TAG_WORDS = new Set([
+  "dual", "multi", "dub", "dubs", "dubbed", "dublado", "dublada", "legendado", "leg",
+  "sub", "subs", "subbed", "raw", "uncen", "censored",
+  "pt", "br", "es", "lat", "en", "eng", "ja", "jp", "jpn", "ita", "ger", "fre", "fr",
+  "rus", "esp", "por", "chi", "zho", "kor", "ara", "hin", "tam", "tel", "kan",
+  "batch", "complete", "vol", "eps", "episodes", "ep",
+  "dl", "cr", "hd", "sd", "mkv", "mp4", "avi", "ogg", "opus", "tv",
+]);
+
+/**
+ * Sequel-subtitle strength — unmatched title-area words that are neither
+ * numerals, tech tokens, nor release tags: "Sennen Kessen-hen" scores 3,
+ * the remaster tag "Kai" scores 1, "WEB-DL"/"PT-BR"/the episode number
+ * itself score 0. The anime merged-sequel rules require >= 2 so a re-seeded
+ * original-series episode can never pose as a sequel episode.
+ */
+export function subtitleWords(p: ParsedRelease, titles: (string | undefined)[]): string[] {
+  return unmatchedExtras(p, titles).filter(
+    (w) => !/^\d+$/.test(w) && !TECH_TOKEN.test(w) && !RELEASE_TAG_WORDS.has(w)
+  );
+}
+
+/**
  * Classify a TV release for a specific season/episode.
  *  - "verified": name carries the exact SxxEyy requested (or an unambiguous
  *                dated episode / episode-with-title-season equivalent)
@@ -435,13 +509,39 @@ export function matchTv(
   // a release tagged with a different language is a different version of the
   // show ("Bigg Boss Telugu" must never answer for "Bigg Boss" Tamil)
   if (p.language && ctx.showLang && p.language !== ctx.showLang) return null;
+
+  const air = ctx.airDate ? parseYmd(ctx.airDate) : null;
+
+  // ANIME MERGED-SEQUEL RULES — TMDB folds a sequel season into the base show
+  // ("Bleach" S02 = Thousand-Year Blood War) while fansubs index the sequel
+  // as its own series numbered from 1. Only two names identify the episode,
+  // and both may verify ONLY when the upload is fresh (within weeks of the
+  // broadcast) and the name is subtitled (>= 2 unconsumed title words): a
+  // re-seeded "Bleach - 45" or "BLEACH Kai S01E45" of the ORIGINAL series is
+  // years old or carries no sequel subtitle, so it can never slip through.
+  if (ctx.relEpisode != null) {
+    const fresh = uploadNearAir(ctx.pubDate, air);
+    if (fresh && subtitleWords(p, [title, originalTitle]).length >= 2) {
+      // "BLEACH: Sennen Kessen-hen - 45 [1080p]" — bare episode number
+      if (
+        p.season === null &&
+        !p.isSeasonPack &&
+        p.titleTokens.includes(String(ctx.relEpisode))
+      ) {
+        return "verified";
+      }
+      // "BLEACH Thousand Year Blood War S01E45 …" — renumbered-series S/E tag
+      if (p.season === 1 && p.episode === ctx.relEpisode) {
+        return "verified";
+      }
+    }
+  }
+
   // extra title words beyond country/part/date noise mean a different show
   // ("Office Incubation" is not "The Office", but "The Office US" is)
   if (!unmatched.every((w) => TV_EXTRA_OK.has(w) || DATED_EXTRA_OK.has(w) || /^\d+$/.test(w))) {
     return null;
   }
-
-  const air = ctx.airDate ? parseYmd(ctx.airDate) : null;
 
   if (p.season !== null && p.episode !== null) {
     if (p.season !== season || p.episode !== episode) return null;
@@ -454,13 +554,34 @@ export function matchTv(
     return "verified";
   }
   if (p.episode !== null) {
-    // episode number without a season — trust it when the requested season is 1,
-    // when the title itself carries the season ("Bigg Boss 11 — Episode 24"), or
-    // when the release's broadcast date matches the episode's air date
-    if (season === 1) return "verified";
+    // anime absolute numbering: "One Piece - 1085" is TMDB S21E158 — the
+    // broadcast-order number identifies the episode uniquely for long-runners
+    if (ctx.absEpisode != null && p.season === null && p.episode === ctx.absEpisode) {
+      return "verified";
+    }
+    // any other claimed episode number that differs from the request is a
+    // different episode — even when the title carries the right season
+    if (p.episode !== episode) return null;
+    // episode number matches — trust it when the requested season is 1, when
+    // the title itself carries the season ("Bigg Boss 11 — Episode 24"), or
+    // when the release's broadcast date matches the episode's air date.
+    // Anime context is excluded from the season-1 shortcut: fansubs number by
+    // broadcast order there, so only the exact absolute episode may verify.
+    if (season === 1 && ctx.absEpisode == null) return "verified";
     if (titleCarriesSeason(p, season)) return "verified";
     if (p.date && air && dateMatches(p.date, air)) return "verified";
     return null;
+  }
+  // anime fansub style puts the absolute episode as a bare trailing number:
+  // "One Piece - 1085 [1080p]" — too ambiguous for a general rule, but safe
+  // when the exact broadcast-order number is known
+  if (
+    ctx.absEpisode != null &&
+    p.season === null &&
+    p.titleTokens.length > 0 &&
+    p.titleTokens[p.titleTokens.length - 1] === String(ctx.absEpisode)
+  ) {
+    return "verified";
   }
   if (p.isSeasonPack) {
     if (p.seasonRange) {

@@ -1,6 +1,6 @@
 import { MediaItem } from "@/lib/tmdb";
 
-export type ViewType = "home" | "movies" | "tv" | "studios" | "search" | "mylist";
+export type ViewType = "home" | "movies" | "tv" | "anime" | "studios" | "search" | "mylist";
 
 export interface PlayerTarget {
   item: MediaItem;

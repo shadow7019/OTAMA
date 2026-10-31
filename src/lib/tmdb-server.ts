@@ -97,3 +97,56 @@ export async function getTitleMeta(
     return fallback;
   }
 }
+
+/* ---------- absolute (broadcast-order) episode number for anime ---------- */
+
+const absCache = new Map<string, { n: { prior: number; seasonCount: number | null } | null; ts: number }>();
+const ABS_TTL = 24 * 60 * 60 * 1000;
+
+/**
+ * Fansub episode number for a TMDB season/episode pair. Two TMDB numbering
+ * schemes exist and both must map onto the broadcast-order number fansubs
+ * use ("One Piece - 1085"):
+ *  1. broadcast-ordered seasons — One Piece S21 lists episodes 892–1088, so
+ *     episode_number already IS the fansub number (detected when the number
+ *     exceeds the season's own episode count)
+ *  2. per-season numbering — "Bleach" S01E366 → 0 + 366; sequel seasons
+ *     folded into the base show (TYBW as S02) also resolve here, with the
+ *     fansub-relative number handled separately by the matchers
+ */
+export async function getAbsoluteEpisode(
+  tmdbId: number,
+  season: number,
+  episode: number
+): Promise<number | null> {
+  const key = `${tmdbId}:${season}`;
+  const hit = absCache.get(key);
+  if (hit && Date.now() - hit.ts < ABS_TTL) {
+    return hit.n === null ? null : resolveAbs(hit.n, episode);
+  }
+  let n: { prior: number; seasonCount: number | null } | null = null;
+  try {
+    const data = await tmdbServer<{
+      seasons?: { season_number: number; episode_count: number }[];
+    }>(`tv/${tmdbId}`);
+    const seasons = data.seasons ?? [];
+    const prior = seasons
+      .filter((s) => s.season_number >= 1 && s.season_number < season)
+      .reduce((sum, s) => sum + (s.episode_count || 0), 0);
+    const seasonCount = seasons.find((s) => s.season_number === season)?.episode_count ?? null;
+    n = { prior, seasonCount };
+  } catch {
+    n = null;
+  }
+  absCache.set(key, { n, ts: Date.now() });
+  return n === null ? null : resolveAbs(n, episode);
+}
+
+function resolveAbs(
+  { prior, seasonCount }: { prior: number; seasonCount: number | null },
+  episode: number
+): number {
+  // broadcast-ordered season: episode_number is the fansub number itself
+  if (seasonCount != null && episode > seasonCount) return episode;
+  return prior + episode;
+}
