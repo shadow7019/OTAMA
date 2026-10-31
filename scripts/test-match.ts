@@ -172,6 +172,56 @@ tv(
   { showLang: "tamil" }
 );
 
+/* ---------- Indian glued-EP naming (torrents-csv / TamilMV rows) ---------- */
+
+tv(
+  "S10 EP21 glued EP (real TorrentsCSV row) → verified, not pack",
+  "verified",
+  "www.5MovieRulz.company - BIGG BOSS (Telugu) S10 EP21 DAY 20 TRUE WEB-DL - 1080p - AVC - AAC - 950MB.mkv",
+  10, 21,
+  { title: "Bigg Boss", showLang: "telugu", airDate: "2026-09-26" }
+);
+
+tv(
+  "S10 EP21 vs requested EP19 → reject",
+  null,
+  "www.5MovieRulz.company - BIGG BOSS (Telugu) S10 EP21 DAY 20 TRUE WEB-DL - 1080p - AVC - AAC - 950MB.mkv",
+  10, 19,
+  { title: "Bigg Boss", showLang: "telugu" }
+);
+
+tv(
+  "3-digit episode number S20E055 (Hindi 2026 naming)",
+  "verified",
+  "www.1TamilMV.wf - Bigg Boss (2026) S20E055 [Hindi - 1080p HD AVC - x264 - AAC - 2GB].mkv",
+  20, 55,
+  { title: "Bigg Boss", showLang: "hindi", airDate: "2026-10-30" }
+);
+
+tv(
+  "dated Hindi S20 episode (Season 20 - 30th October 2026)",
+  "verified",
+  "Bigg Boss Season 20 - 30th October 2026 - 720p WEB-DL - HWeeknd",
+  20, 55,
+  { title: "Bigg Boss", showLang: "hindi", airDate: "2026-10-30" }
+);
+
+tv(
+  "dated Hindi S20 episode, wrong day → reject",
+  null,
+  "Bigg Boss Season 20 - 29th October 2026 - 720p WEB-DL - HWeeknd",
+  20, 55,
+  { title: "Bigg Boss", showLang: "hindi", airDate: "2026-10-30" }
+);
+
+tv(
+  "bare season stays a pack",
+  "pack",
+  "Bigg Boss Telugu S10 TRUE WEB-DL 1080p AVC AAC - 5MovieRulz",
+  10, 21,
+  { title: "Bigg Boss", showLang: "telugu" }
+);
+
 /* ---------- original mixing regressions ---------- */
 
 tv(

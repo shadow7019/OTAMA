@@ -50,13 +50,26 @@ interface TorrentClient {
 /* ---------- config ---------- */
 
 const TRACKERS = [
+  // top public trackers (ngosang/trackerslist best) — obscure swarms (Indian
+  // daily-show releases) only announce here, so broad coverage matters
   "udp://tracker.opentrackr.org:1337/announce",
-  "udp://open.demonii.com:1337/announce",
   "udp://open.stealth.si:80/announce",
   "udp://tracker.torrent.eu.org:451/announce",
+  "udp://open.demonii.com:1337/announce",
+  "udp://open.tracker.cl:1337/announce",
   "udp://exodus.desync.com:6969/announce",
-  "udp://tracker.tiny-vps.com:6969/announce",
+  "udp://tracker.skynetcloud.site:6969/announce",
+  "udp://tracker.qu.ax:6969/announce",
+  "udp://tracker.corpscorp.online:80/announce",
+  "udp://tracker.ducks.party:1984/announce",
+  "udp://tracker-udp.gbitt.info:80/announce",
+  "udp://explodie.org:6969/announce",
+  "udp://tracker.nyaa.vc:6969/announce",
+  "udp://tracker.gmi.gd:6969/announce",
+  "udp://tracker.peerfect.org:6969/announce",
+  "http://tracker.dler.org:6969/announce",
   "http://tracker.openbittorrent.com/announce",
+  "http://tracker.renfei.net:8080/announce",
   "https://tracker.tiny-vps.com:443/announce",
   "wss://tracker.openwebtorrent.com",
 ];

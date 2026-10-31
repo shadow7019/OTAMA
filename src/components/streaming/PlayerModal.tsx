@@ -109,6 +109,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [status, setStatus] = useState<TorrentStatus | null>(null);
   const [videoNonce, setVideoNonce] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
+  /** automatic re-searches done for the CURRENT episode (reset on ep change) */
+  const [autoRetries, setAutoRetries] = useState(0);
 
   /* ---------------- archive.org direct fallback (movies) ---------------- */
   const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
@@ -252,6 +254,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       cancelled = true;
     };
   }, [target, type, season, episode, searchNonce]);
+  // automatic retries are per-episode: a manual "Search again" must not reset them
+  useEffect(() => {
+    setAutoRetries(0);
+  }, [target, type, season, episode]);
 
   /* ---------------- auto-pick the best untried server ---------------- */
   useEffect(() => {
@@ -445,6 +451,23 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     return null;
   }, [episodes]);
   const currentEpisode = episodes.find((ep) => ep.episode_number === episode);
+
+  /* ---------------- auto-research when an episode has no sources yet ----------------
+   * Brand-new daily-show episodes (Bigg Boss…) are often indexed only hours
+   * after broadcast. When the first scan comes up empty and the episode has
+   * already aired, re-scan automatically every 90s (max 5 tries) so the
+   * torrent appears the moment indexers list it — no manual refresh needed. */
+  const noSourcesYet = serversState === "ready" && servers.length === 0;
+  const episodeAired =
+    type !== "tv" || !currentEpisode?.air_date || currentEpisode.air_date <= todayYmd;
+  useEffect(() => {
+    if (!noSourcesYet || !episodeAired || autoRetries >= 5) return;
+    const t = setTimeout(() => {
+      setAutoRetries((n) => n + 1);
+      setSearchNonce((n) => n + 1);
+    }, 90_000);
+    return () => clearTimeout(t);
+  }, [noSourcesYet, episodeAired, autoRetries, searchNonce]);
 
   if (!target) return null;
 
@@ -871,11 +894,34 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       No playable source found for this episode yet
                     </p>
                     <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
-                      We searched ThePirateBay, Torrentio, BitSearch and EZTV — no healthy
-                      torrent for it right now. Brand-new episodes of daily shows usually
-                      surface on public trackers within hours to a few days. The episode list
-                      and servers refresh automatically, so simply retry later.
+                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch and EZTV — no
+                      healthy torrent for it right now. Brand-new episodes of daily shows usually
+                      surface on public trackers within hours to a few days. The episode list and
+                      servers refresh automatically, so simply retry later.
                     </p>
+                    {type === "tv" && noSourcesYet && autoRetries < 5 && episodeAired && (
+                      <p
+                        className="mx-auto mt-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-sky-300"
+                        data-testid="auto-research-note"
+                      >
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Auto-checking again in ~90 s (attempt {autoRetries + 1} of 5) — the stream
+                        will start on its own once a source appears
+                      </p>
+                    )}
+                    {type === "tv" && latestAired && latestAired.episode_number !== episode && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          goEpisode(latestAired.season_number || season, latestAired.episode_number)
+                        }
+                        className="mx-auto mt-2 block text-[11px] font-semibold text-zinc-400 underline decoration-dotted transition hover:text-zinc-200"
+                      >
+                        Episode {latestAired.episode_number} (aired{" "}
+                        {formatDate(latestAired.air_date) || "recently"}) — try it, older
+                        episodes are usually seeded first
+                      </button>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2.5">
                     <button

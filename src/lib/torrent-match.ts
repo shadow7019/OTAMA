@@ -113,12 +113,18 @@ function isTechy(t: string): boolean {
 
 export function parseRelease(input: string): ParsedRelease {
   // Indian release groups prefix the site name to every upload
-  // ("www.1TamilBlasters.bz - Bigg Boss (2026) S09E101 …") — drop a leading
-  // domain so its tokens are not mistaken for title words
-  const name = input.replace(
-    /^\s*(?:www\.)?[a-z0-9][a-z0-9.\-]{1,48}\.[a-z]{2,4}\s*[-–—]\s*/i,
-    ""
-  );
+  // ("www.1TamilBlasters.bz - Bigg Boss (2026) S09E101 …") — drop it so its
+  // tokens are not mistaken for title words. Two safe forms only:
+  //   1. an explicit "www." host + dash separator (any spacing, long gTLDs ok:
+  //      .company / .homes / .rocks …)
+  //   2. a bare host with a proper " - " separator (spaces required, so the
+  //      "-GROUP" tag of a normal release name can never be eaten)
+  const name = input
+    .replace(
+      /^\s*www\.[a-z0-9][a-z0-9.\-]{1,48}\.[a-z]{2,12}\s*[-–—]\s*/i,
+      ""
+    )
+    .replace(/^\s*[a-z0-9][a-z0-9.\-]{1,48}\.[a-z]{2,12}\s+-\s+/i, "");
   const tks = releaseTokens(name);
   const raw = name.toLowerCase();
 
@@ -169,8 +175,11 @@ export function parseRelease(input: string): ParsedRelease {
       continue;
     }
     m = t.match(EP_ONLY_TOKEN);
-    if (m && season === null && episode === null) {
+    if (m && episode === null && (season === null || isSeasonPack)) {
       episode = Number(m[1]);
+      // "S10 EP21" (Indian daily-show naming) is an episode of that season,
+      // not a season pack — only a bare "S10" stays a pack
+      if (season !== null) isSeasonPack = false;
       cut = Math.min(cut, i);
       continue;
     }

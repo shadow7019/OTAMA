@@ -122,10 +122,12 @@ async function providerTorrentio(
   episode: number,
   year: string
 ): Promise<TorrentSource[]> {
+  // Stremio addon stream ids are single segments: `tt…:season:episode`.
+  // (slash-separated paths 404 since the 2026 addon API tightening)
   const path =
     type === "movie"
       ? `stream/movie/${imdbId}.json`
-      : `stream/series/${imdbId}/${season}/${episode}.json`;
+      : `stream/series/${imdbId}:${season}:${episode}.json`;
   const data = await fetchJson<{ streams?: TorrentioStream[] }>(
     `https://torrentio.strem.fun/${path}`
   );
@@ -402,6 +404,72 @@ async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise
   return out;
 }
 
+interface TorrentsCsvRow {
+  infohash?: string;
+  name?: string;
+  size_bytes?: number;
+  seeders?: number;
+  leechers?: number;
+}
+
+/**
+ * torrents-csv.com — open torrent database with a JSON API. It indexes the
+ * Indian release groups (TamilMV / TamilBlasters / 5MovieRulz …) that publish
+ * daily-show episodes hours after broadcast ("BIGG BOSS (Telugu) S10 EP21 …"),
+ * which the western trackers are slow to pick up. Every row is validated with
+ * the same strict matcher as the other keyword providers.
+ */
+async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
+  const { title, originalTitle, year, season, episode } = ctx;
+  const queries =
+    type === "movie"
+      ? [`${title} ${year ?? ""}`.trim(), title]
+      : [
+          `${title} ${ctx.showLang ?? ""}`.trim(), // "Bigg Boss Telugu" — current-season uploads
+          `${title} s${pad(season)}e${pad(episode)}`,
+          `${title} season ${season}`,
+          title,
+        ];
+
+  const seen = new Map<string, TorrentSource>();
+  for (const q of queries) {
+    if (seen.size >= 5) break;
+    const data = await fetchJson<{ torrents?: TorrentsCsvRow[] }>(
+      `https://torrents-csv.com/service/search?q=${encodeURIComponent(q)}&size=100`,
+      8000
+    );
+    for (const r of data?.torrents ?? []) {
+      if (!r.infohash || !/^[0-9a-f]{40}$/i.test(r.infohash)) continue;
+      const name = (r.name ?? "Torrent").trim();
+      const p = parseRelease(name);
+      const match =
+        type === "movie"
+          ? matchMovie(p, title, originalTitle, year)
+          : matchTv(p, season, episode, title, originalTitle, {
+              airDate: ctx.airDate,
+              showLang: ctx.showLang,
+            });
+      if (!match) continue; // same name, different film/episode/language — reject
+      if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
+      const key = r.infohash.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.set(key, {
+        id: key,
+        releaseName: name,
+        seeders: r.seeders ?? 0,
+        peers: r.leechers ?? 0,
+        sizeBytes: r.size_bytes ?? 0,
+        provider: "TorrentsCSV",
+        quality: detectQuality(name),
+        fileIdx: null,
+        match,
+        score: 0,
+      });
+    }
+  }
+  return [...seen.values()];
+}
+
 interface YtsMovie {
   imdb_code?: string;
   title?: string;
@@ -451,6 +519,23 @@ interface EztvTorrent {
   episode?: number;
 }
 
+/** EZTV rotates domains; the first mirror that answers wins. */
+const EZTV_HOSTS = ["eztvx.to", "eztv.wf", "eztv.tf"];
+
+async function eztvPage(
+  numericId: string,
+  page: number
+): Promise<{ torrents?: EztvTorrent[] } | null> {
+  for (const host of EZTV_HOSTS) {
+    const data = await fetchJson<{ torrents?: EztvTorrent[] }>(
+      `https://${host}/api/get-torrents?imdb_id=${numericId}&limit=100&page=${page}`,
+      7000
+    );
+    if (data) return data; // any well-formed answer — even empty — ends the chain
+  }
+  return null;
+}
+
 /**
  * IMDb-keyed per episode. The API rows carry season/episode metadata and
  * ignore the season/episode query params, so we scan a couple of recency
@@ -465,10 +550,7 @@ async function providerEztv(
   const out: TorrentSource[] = [];
   const numericId = imdbId.replace(/^tt/i, "");
   for (let page = 1; page <= 2 && out.length < 8; page++) {
-    const data = await fetchJson<{ torrents?: EztvTorrent[] }>(
-      `https://eztvx.to/api/get-torrents?imdb_id=${numericId}&limit=100&page=${page}`,
-      7000
-    );
+    const data = await eztvPage(numericId, page);
     const rows = data?.torrents ?? [];
     for (const r of rows) {
       if (!r.hash || !/^[0-9a-f]{40}$/i.test(r.hash)) continue;
@@ -585,6 +667,7 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
     };
     jobs.push(providerPirateBay(type, bayCtx));
     jobs.push(providerBitSearch(type, bayCtx));
+    jobs.push(providerTorrentsCsv(type, bayCtx));
   }
   if (imdbId) {
     jobs.push(providerTorrentio(type, imdbId, season, episode, year));
@@ -614,7 +697,7 @@ export async function quickAvailability(
   const data = await fetchJson<{ streams?: TorrentioStream[] }>(
     type === "movie"
       ? `https://torrentio.strem.fun/stream/movie/${imdbId}.json`
-      : `https://torrentio.strem.fun/stream/series/${imdbId}/${season}/${episode}.json`,
+      : `https://torrentio.strem.fun/stream/series/${imdbId}:${season}:${episode}.json`,
     8000
   );
   const n = (data?.streams ?? []).length;

@@ -30,6 +30,10 @@ interface BrowseGridProps {
   showGenreChips?: boolean;
   /** Small line rendered above the filter bar (catalog description). */
   note?: string;
+  /** When non-empty, `query` is searched INSIDE this brand's catalog
+   *  (search/<kind> + the brand's network/company/provider filter) instead of
+   *  browsing discover. Filter bar hides while a brand search is active. */
+  brandSearchQuery?: string;
   /** Optional back link rendered above the title (e.g. back to the Studios hub) */
   onBack?: () => void;
   backLabel?: string;
@@ -104,6 +108,7 @@ export function BrowseGrid({
   bare = false,
   showGenreChips = false,
   note,
+  brandSearchQuery = "",
   onBack,
   backLabel,
 }: BrowseGridProps) {
@@ -123,13 +128,14 @@ export function BrowseGrid({
 
   const isDiscover = kind === "movie" || kind === "tv";
   const isStoreList = kind === "mylist";
+  const brandSearchActive = isDiscover && brandSearchQuery.trim().length > 0;
 
   // reset when switching tab / query / pinned params
   useEffect(() => {
     setItems([]);
     setPage(1);
     setError(null);
-  }, [kind, query, discoverParams]);
+  }, [kind, query, discoverParams, brandSearchQuery]);
 
   // load genres for discover
   useEffect(() => {
@@ -149,7 +155,17 @@ export function BrowseGrid({
     const run = async () => {
       try {
         let res: PagedResponse<MediaItem>;
-        if (kind === "search") {
+        if (brandSearchActive) {
+          // brand-scoped search: search/<kind> accepts the same network /
+          // company / watch-provider filters as discover, so results stay
+          // inside this studio/service
+          res = await tmdb<PagedResponse<MediaItem>>(`search/${kind}`, {
+            query: brandSearchQuery.trim(),
+            page,
+            include_adult: false,
+            ...(discoverParams ?? {}),
+          });
+        } else if (kind === "search") {
           if (!query.trim()) {
             setItems([]);
             setTotalPages(1);
@@ -179,7 +195,7 @@ export function BrowseGrid({
           )
           .map((r) => ({
             ...r,
-            // discover endpoints don't return media_type — force it by kind
+            // discover and brand-scoped search endpoints are single-type — force by kind
             media_type: kind === "search" ? getMediaType(r) : kind,
           }));
         setItems((prev) => (page === 1 ? media : [...prev, ...media]));
@@ -192,19 +208,19 @@ export function BrowseGrid({
     };
 
     // debounce for search
-    const delay = kind === "search" ? 150 : 0;
+    const delay = kind === "search" || brandSearchActive ? 200 : 0;
     const t = setTimeout(run, delay);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey, discoverParams]);
+  }, [kind, query, page, sortBy, genre, year, isStoreList, reloadKey, discoverParams, brandSearchActive, brandSearchQuery]);
 
   // auto-update: re-pull page 1 when the tab regains focus or every 5 minutes,
   // so new movies/episodes show up on their own — no reload needed. The
   // `_fresh` hint bypasses the TMDB proxy cache for that one request.
   useEffect(() => {
-    if (isStoreList || kind === "search") return;
+    if (isStoreList || kind === "search" || brandSearchActive) return;
     let last = Date.now();
     const bump = () => {
       if (document.visibilityState !== "visible") return;
@@ -248,7 +264,7 @@ export function BrowseGrid({
     [store]
   );
 
-  const hasFilters = isDiscover;
+  const hasFilters = isDiscover && !brandSearchActive;
   const showReset = hasFilters && (sortBy !== "popularity.desc" || genre !== "" || year !== "");
 
   return (
@@ -364,6 +380,20 @@ export function BrowseGrid({
         </p>
       )}
 
+      {/* Brand search empty state (covers the empty grid while searching) */}
+      {brandSearchActive && !loading && !error && items.length === 0 && (
+        <div className="mt-16 flex flex-col items-center gap-3 text-center">
+          <SearchX className="h-12 w-12 text-zinc-700" />
+          <p className="text-lg font-semibold text-zinc-400">
+            No results for &quot;{brandSearchQuery.trim()}&quot; in this catalog
+          </p>
+          <p className="max-w-sm text-sm text-zinc-600">
+            Try the other tab, or a shorter spelling — the search stays inside
+            this studio/service.
+          </p>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="mt-6 rounded-lg bg-red-950/50 px-4 py-3 text-sm text-red-300 ring-1 ring-red-900">
@@ -399,7 +429,7 @@ export function BrowseGrid({
       )}
 
       {/* Discover empty state (e.g. a studio with no series, or over-narrow filters) */}
-      {!isStoreList && kind !== "search" && !loading && !error && items.length === 0 && (
+      {!isStoreList && kind !== "search" && !brandSearchActive && !loading && !error && items.length === 0 && (
         <div className="mt-16 flex flex-col items-center gap-3 text-center">
           <Clapperboard className="h-12 w-12 text-zinc-700" />
           <p className="text-lg font-semibold text-zinc-400">No titles found</p>

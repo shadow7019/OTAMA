@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ChevronLeft, Film, Tv } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, Film, Search, Tv, X } from "lucide-react";
 import { Brand, brandLogoUrl } from "@/lib/brands";
 import { MediaActions } from "./types";
 import { BrowseGrid } from "./BrowseGrid";
@@ -37,6 +37,14 @@ interface Catalog {
  */
 export function BrandView({ brand, actions, onBack, backLabel = "All studios" }: BrandViewProps) {
   const [tab, setTab] = useState<CatalogId>(brand.kind === "movie" ? "movies" : "series");
+  // in-catalog search (like the brand's own site) — flagship titles that sit
+  // deep in the popularity-sorted discover list are one query away
+  const [search, setSearch] = useState("");
+  const [searchQ, setSearchQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQ(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const catalogs = useMemo<Catalog[]>(() => {
     const series: Catalog =
@@ -144,6 +152,33 @@ export function BrandView({ brand, actions, onBack, backLabel = "All studios" }:
               </button>
             );
           })}
+          <div className="ml-auto flex items-center py-2">
+            <label className="relative flex items-center" aria-label={`Search inside ${brand.name}`}>
+              <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setSearch("");
+                }}
+                placeholder={`Search ${tab === "movies" ? "movies" : "series"}…`}
+                aria-label={`Search ${brand.name} catalog`}
+                data-testid="brand-search"
+                className="w-36 rounded-full border border-white/10 bg-white/5 py-1.5 pl-8 pr-7 text-xs text-zinc-200 placeholder:text-zinc-600 focus:w-48 focus:border-red-600 focus:outline-none sm:w-44 sm:focus:w-60"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label="Clear catalog search"
+                  className="absolute right-2 text-zinc-500 transition hover:text-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </label>
+          </div>
         </div>
       </div>
 
@@ -163,6 +198,7 @@ export function BrandView({ brand, actions, onBack, backLabel = "All studios" }:
             note={c.note}
             title={c.label}
             discoverParams={c.params}
+            brandSearchQuery={tab === c.id ? searchQ : ""}
             actions={actions}
           />
         </div>
