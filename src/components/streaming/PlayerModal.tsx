@@ -69,6 +69,10 @@ interface TorrentStatus {
   progress?: number;
   peers?: number;
   speed?: number;
+  /** false = the host's streaming engine itself is broken (native module
+   *  load failure) — an environment problem, not a dead swarm */
+  engineOk?: boolean;
+  engineError?: string;
 }
 
 interface ArchiveMatchClient {
@@ -639,6 +643,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // automatic retries are per-episode: a manual "Search again" must not reset them
   useEffect(() => {
     setAutoRetries(0);
+    setAutoWaves(0);
   }, [target, type, season, episode]);
 
   /* ---------------- subtitle tracks for this title / episode ---------------- */
@@ -845,6 +850,18 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         return; // transient — no failover, no dead marks while offline
       }
       if (cancelled || !j) return;
+      // the host's streaming engine itself is broken: every server would
+      // report not-found and the watchdog would burn the whole strip and
+      // call it "13 dead swarms". Hold position and say what is actually
+      // wrong — this never resolves by switching servers.
+      if (j.engineOk === false) {
+        setBanner(
+          j.engineError
+            ? `Streaming engine unavailable on this host — ${j.engineError}`
+            : "Streaming engine unavailable on this host — torrent playback cannot start here",
+        );
+        return; // no failover, no dead marks: not the servers' fault
+      }
       if (backendDownRef.current) {
         // backend just came back: give the current stream another chance —
         // remount the video (the torrent may still be resolved and buffered).
@@ -1090,6 +1107,31 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     }, 90_000);
     return () => clearTimeout(t);
   }, [noSourcesYet, episodeAired, autoRetries, searchNonce, manualIdx, archiveState]);
+
+  /* ---------------- exhausted → automatic retry waves ----------------
+   * "Every source was tried" usually means thin swarms at that minute, not
+   * 13 dead servers — the banner itself says swarms change by the minute.
+   * So do what it advises: after a cooldown, clear the tried list and go
+   * again (max 2 extra rounds per episode; manual choices stop it). */
+  const [autoWaves, setAutoWaves] = useState(0);
+  useEffect(() => {
+    if (!exhausted || !target || manualIdx !== null || autoWaves >= 2) return;
+    setBanner(
+      `Every server was tried — retrying all of them automatically in 75 s (round ${autoWaves + 2} of 3). Swarms change by the minute…`,
+    );
+    const t = setTimeout(() => {
+      setAutoWaves((w) => w + 1);
+      setTried([]);
+      triedRef.current = [];
+      setExhausted(false);
+      setManualIdx(null);
+      setActiveIdx(null);
+      setVideoState("loading");
+      setStatus(null);
+      setBanner(`Retrying all servers (round ${autoWaves + 2} of 3)…`);
+    }, 75_000);
+    return () => clearTimeout(t);
+  }, [exhausted, target, manualIdx, autoWaves]);
 
   if (!target) return null;
 
