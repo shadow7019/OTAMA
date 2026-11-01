@@ -624,9 +624,100 @@ async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promi
   return [...seen.values()];
 }
 
-/* YTS adapter removed: yts.mx is unreachable from this deployment (instant
- * DNS failure, verified 2026-11-01) and every YTS release also reaches the
- * app through Torrentio, which aggregates the same swarm. */
+interface YtsTorrent {
+  hash?: string;
+  quality?: string;
+  type?: string;
+  size?: string;
+  size_bytes?: number;
+  seeds?: number;
+  peers?: number;
+}
+
+interface YtsMovie {
+  title?: string;
+  year?: number;
+  imdb_code?: string;
+  torrents?: YtsTorrent[];
+}
+
+interface YtsResponse {
+  data?: { movies?: YtsMovie[] | null; movie_count?: number };
+}
+
+/**
+ * YTS — the clean-encode movie tracker (1080p/2160p x264, universally
+ * browser-playable). The official yts.mx is unreachable from this deployment
+ * and several mirror domains are CF-walled, but yts.rs mirrors the same
+ * api-v2 shape and answers fine (verified 2026-11-01). Keyword search is
+ * mirrored but IMDb search is not, so we query by title and pin the movie
+ * down by its imdb_code; every release name is still passed through the
+ * strict movie matcher like any keyword provider.
+ */
+const YTS_HOSTS = ["yts.rs", "yts.mx", "yts.bz"];
+
+async function ytsMovies(query: string): Promise<YtsMovie[]> {
+  for (const host of YTS_HOSTS) {
+    const data = await fetchJson<YtsResponse>(
+      `https://${host}/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}&limit=50&sort_by=seeders&order_by=desc`,
+      8000
+    );
+    if (data) return data.data?.movies ?? []; // any well-formed answer ends the chain
+  }
+  return [];
+}
+
+async function providerYts(
+  type: "movie" | "tv",
+  imdbId: string,
+  ctx: BayContext
+): Promise<TorrentSource[]> {
+  if (type !== "movie") return []; // YTS carries movies only
+  const { title, originalTitle, year } = ctx;
+  const out: TorrentSource[] = [];
+  for (const q of [title, ...(originalTitle && originalTitle !== title ? [originalTitle] : [])]) {
+    const movies = await ytsMovies(q);
+    for (const m of movies) {
+      if (!m.imdb_code || m.imdb_code.toLowerCase() !== imdbId.toLowerCase()) continue;
+      const movieYear = m.year ? String(m.year) : year || "";
+      for (const t of m.torrents ?? []) {
+        if (!t.hash || !/^[0-9a-f]{40}$/i.test(t.hash)) continue;
+        // reconstruct a scene-style release name (YTS API exposes quality but
+        // not the scene name) so parseRelease/matchMovie can validate it
+        const releaseName = [
+          m.title ?? title,
+          movieYear,
+          t.quality ?? "",
+          t.type === "web" ? "WEB" : "BluRay",
+          "x264",
+          "YIFY",
+        ]
+          .filter(Boolean)
+          .join(".")
+          .replace(/[:']/g, "")
+          .replace(/\s+/g, ".");
+        const parsed = parseRelease(releaseName);
+        if (!sanityOk(parsed, "movie", year || movieYear, 1, 1)) continue;
+        const match = matchMovie(parsed, title, originalTitle, year || movieYear);
+        if (!match) continue; // mislabeled imdb_code — same-name different film
+        out.push({
+          id: t.hash.toLowerCase(),
+          releaseName,
+          seeders: t.seeds ?? 0,
+          peers: t.peers ?? 0,
+          sizeBytes: t.size_bytes ?? parseSizeBytes(t.size),
+          provider: "YTS",
+          quality: t.quality ?? detectQuality(releaseName),
+          fileIdx: null,
+          match,
+          score: 0,
+        });
+      }
+    }
+    if (out.length > 0) break; // first query that identifies the movie wins
+  }
+  return out;
+}
 
 interface EztvTorrent {
   hash?: string;
@@ -964,7 +1055,7 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   // layouts, not languages to search for
   const audioLang = args.audioLang && DUB_QUERY[args.audioLang] ? args.audioLang : null;
 
-  const jobs: Promise<TorrentSource[]>[] = [];
+  const jobs: { name: string; run: () => Promise<TorrentSource[]> }[] = [];
   const bayCtx: BayContext = {
     title: matchTitle || title,
     originalTitle: meta.originalTitle ?? undefined,
@@ -980,22 +1071,75 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
     audioLang,
   };
   if (matchTitle) {
-    jobs.push(providerPirateBay(type, bayCtx));
-    jobs.push(providerBitSearch(type, bayCtx));
-    jobs.push(providerTorrentsCsv(type, bayCtx));
-    if (isAnime) jobs.push(providerNyaa(type, bayCtx));
+    jobs.push({ name: "ThePirateBay", run: () => providerPirateBay(type, bayCtx) });
+    jobs.push({ name: "BitSearch", run: () => providerBitSearch(type, bayCtx) });
+    jobs.push({ name: "TorrentsCSV", run: () => providerTorrentsCsv(type, bayCtx) });
+    if (isAnime) jobs.push({ name: "Nyaa", run: () => providerNyaa(type, bayCtx) });
   }
   if (imdbId) {
-    jobs.push(providerTorrentio(type, imdbId, bayCtx, year, airDate));
-    if (type === "tv") jobs.push(providerEztv(imdbId, bayCtx, airDate));
+    jobs.push({
+      name: "Torrentio",
+      run: () => providerTorrentio(type, imdbId, bayCtx, year, airDate),
+    });
+    jobs.push({ name: "YTS", run: () => providerYts(type, imdbId, bayCtx) });
+    if (type === "tv") jobs.push({ name: "EZTV", run: () => providerEztv(imdbId, bayCtx, airDate) });
   }
 
-  const settled = await Promise.allSettled(jobs);
+  // every provider is independent: one being down (CF wall, DNS block, rate
+  // limit) never fails the scan. The telemetry tells the UI / operator WHICH
+  // sources answered when results look thin.
+  const settled = await Promise.allSettled(
+    jobs.map(async (j) => {
+      const t0 = Date.now();
+      try {
+        const rows = await j.run();
+        return { rows, provider: { name: j.name, count: rows.length, ms: Date.now() - t0, ok: true } };
+      } catch (err) {
+        return {
+          rows: [] as TorrentSource[],
+          provider: {
+            name: j.name,
+            count: 0,
+            ms: Date.now() - t0,
+            ok: false,
+            error: String(err instanceof Error ? err.message : err).slice(0, 100),
+          },
+        };
+      }
+    })
+  );
   const all: TorrentSource[] = [];
-  for (const r of settled) if (r.status === "fulfilled") all.push(...r.value);
+  const providers: ProviderStat[] = [];
+  for (const r of settled) {
+    if (r.status === "fulfilled") {
+      all.push(...r.value.rows);
+      providers.push(r.value.provider);
+    }
+  }
   // audio/language tags are parsed once, centrally, for every provider result
   for (const t of all) t.audioTags = detectAudioTags(t.releaseName, isAnime);
-  return merge(all, audioLang);
+  const merged = merge(all, audioLang);
+  // remember which providers actually fed this result set
+  lastProviderStats = providers.sort((a, b) => a.name.localeCompare(b.name));
+  return merged;
+}
+
+export interface ProviderStat {
+  name: string;
+  count: number;
+  ms: number;
+  ok: boolean;
+  error?: string;
+}
+
+/** Stats of the most recent scan (module-level: the route reads them right
+ *  after awaiting searchTorrentSources — safe per-request in Node runtime). */
+let lastProviderStats: ProviderStat[] = [];
+
+export function takeProviderStats(): ProviderStat[] {
+  const s = lastProviderStats;
+  lastProviderStats = [];
+  return s;
 }
 
 /** Cheap availability probe for the auto-content pipeline (Torrentio only). */
