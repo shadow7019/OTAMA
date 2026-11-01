@@ -381,6 +381,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // only when the engine itself reports the torrent gone on 3 consecutive
   // polls, or the user picks a server manually.
   const streamLockedRef = useRef(false);
+  // id of the server the lock was earned on — lets the auto-pick effect
+  // restore THIS server instead of choosing a different one after a re-scan
+  const lockedServerIdRef = useRef<string | null>(null);
   // same-stream remount budget while locked (media errors, pipe flakes) —
   // every successful resume refills it
   const lockedRemountsRef = useRef(0);
@@ -505,7 +508,21 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   /* ---------------- failover ---------------- */
   const failover = useCallback(
-    (reason: string) => {
+    (reason: string, opts?: { manual?: boolean }) => {
+      // FINAL RULE — the user has asked for this repeatedly: once content is
+      // on screen, the player NEVER changes servers on its own. Not for
+      // stalls, not for errors, not for engine blips. Automatic failover
+      // exists only BEFORE content arrives; mid-content the user decides
+      // (server chips below). We say what happened instead of acting on it.
+      if (!opts?.manual && streamLockedRef.current) {
+        if (!lockedFailNoteRef.current) {
+          lockedFailNoteRef.current = true;
+          setBanner(
+            `${reason} — staying on this server. Tap another server below to switch manually.`
+          );
+        }
+        return;
+      }
       // backend unreachable: every request fails, so "every server failed"
       // is an illusion. Hold position — the watchdog reconnects and resumes.
       if (backendDownRef.current) return;
@@ -797,6 +814,20 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   useEffect(() => {
     if (serversState !== "ready") return;
     if (manualIdx !== null || activeIdx !== null || exhausted) return;
+    // content lock: if activeIdx was nulled while a stream was playing (the
+    // re-scan landing on a transient error state), restore THAT server —
+    // picking a different one here is exactly the "random switch" the user
+    // keeps reporting. Only a server genuinely gone from the row re-opens
+    // the choice.
+    if (streamLockedRef.current) {
+      const id = lockedServerIdRef.current;
+      const idx = id != null ? serversRef.current.findIndex((s) => s.id === id) : -1;
+      if (idx >= 0) {
+        setActiveIdx(idx);
+        return;
+      }
+      streamLockedRef.current = false;
+    }
     const idx = orderedIdxs.find((i) => !tried.includes(i));
     if (idx !== undefined) {
       setActiveIdx(idx);
@@ -1114,6 +1145,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         // cross-handler lock: onError / pipe-flake paths read this ref to
         // reconnect the same stream instead of switching servers
         streamLockedRef.current = true;
+        lockedServerIdRef.current = activeServer.id;
       }
       if (videoStateRef.current === "playing") return;
       const elapsed = Date.now() - streamStartRef.current;
@@ -1493,6 +1525,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
    * one. Every auto-opened id is remembered so a dead source is never
    * re-opened; manual chips always work. */
   const autoOpenNextWeb = (reason: string) => {
+    // content lock: never swap a torrent that was playing for a web embed on
+    // our own — that reads as exactly the uninvited switch this must not do
+    if (streamLockedRef.current) return false;
     const rank = (h?: "up" | "popup" | "down") =>
       h === "up" ? 0 : h === "popup" ? 1 : h === "down" ? 2 : 1.5;
     const candidates = WEB_SOURCES.map((s, i) => ({ s, i, r: rank(webHealth[s.id]) }))
@@ -2045,6 +2080,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       // content is on screen: the hard lock engages and the
                       // same-stream recovery budget refills
                       streamLockedRef.current = true;
+                      lockedServerIdRef.current = activeServer?.id ?? null;
                       lockedRemountsRef.current = 0;
                       lockedFailNoteRef.current = false;
                       setVideoState("playing");
@@ -2159,7 +2195,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => failover("Skipped")}
+                      onClick={() => failover("Skipped", { manual: true })}
                       className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
                     >
                       Next server
