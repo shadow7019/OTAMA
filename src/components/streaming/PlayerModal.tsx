@@ -374,6 +374,17 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // request after 120 s; if it is still loading 60 s later, say so.
   const loadingRemountsRef = useRef(0);
   const loadingBannerShownRef = useRef(false);
+  // HARD content lock — the user-facing guarantee: once content is on screen
+  // (the element reported "playing") or the torrent buffered 2%+ of the file,
+  // the server is NOT switched automatically. Recovery reconnects the same
+  // warm stream (its pieces are already on this server); leaving is allowed
+  // only when the engine itself reports the torrent gone on 3 consecutive
+  // polls, or the user picks a server manually.
+  const streamLockedRef = useRef(false);
+  // same-stream remount budget while locked (media errors, pipe flakes) —
+  // every successful resume refills it
+  const lockedRemountsRef = useRef(0);
+  const lockedFailNoteRef = useRef(false);
   // one-time notice: this host's network blocks torrent peer traffic entirely
   const connectivityNoteShownRef = useRef(false);
   // web ids the automatic passes have already opened — manual re-taps are
@@ -540,6 +551,28 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     },
     [stopId, serverLabel, markDeadServers]
   );
+
+  /* ---- locked-stream recovery: reconnect, never switch ---- */
+  // Remount the video against the CURRENT server's warm torrent. Used for
+  // every recovery once the content lock is engaged — a fresh range request
+  // resumes from the engine's cache instead of restarting on another server.
+  const lockedRecover = useCallback(() => {
+    if (lockedRemountsRef.current >= 3) return false;
+    lockedRemountsRef.current += 1;
+    setVideoState("loading");
+    setVideoNonce((n) => n + 1);
+    streamStartRef.current = Date.now();
+    return true;
+  }, []);
+  // recovery budget spent: say plainly that nothing was switched and hand
+  // control to the user (server chips) instead of auto-rotating
+  const lockedExhaustedNote = useCallback(() => {
+    if (lockedFailNoteRef.current) return;
+    lockedFailNoteRef.current = true;
+    setBanner(
+      "This stream keeps failing on this server — automatic switching is off while content has been playing. Pick another server below; it may also resume on its own."
+    );
+  }, []);
 
   /* ---------------- load servers for this title/episode ---------------- */
   useEffect(() => {
@@ -887,6 +920,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // (status not-found, media error) may still switch. Resets per server:
     // this closure re-runs on every switch/remount.
     let contentLocked = false;
+    // consecutive polls reporting found:false on a locked stream (see the
+    // not-found handler) — a blip must not abandon half a buffered show
+    let lostPolls = 0;
     // When the whole backend is unreachable (dev server restart, machine
     // sleep) EVERY request fails at the network level. That is not 14 bad
     // servers — failing over would burn the whole strip and dead-mark it.
@@ -920,7 +956,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           // request; if the pipe keeps dropping, hand playback to the next
           // server instead of reconnect-looping into the same dead pipe
           if (videoStateRef.current === "error" || videoStateRef.current === "loading") {
-            if (pipeRemountsRef.current >= 1) {
+            if (streamLockedRef.current) {
+              // content lock: reconnect the warm stream, never rotate servers
+              if (!lockedRecover()) lockedExhaustedNote();
+            } else if (pipeRemountsRef.current >= 1) {
               pipeRemountsRef.current = 0;
               backendDownRef.current = 0;
               failover("Streaming connection kept dropping");
@@ -960,6 +999,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         backendDownRef.current = 0;
         setBanner(null);
         if (videoStateRef.current === "error") {
+          if (streamLockedRef.current) {
+            // content lock: reconnect the warm stream, never rotate servers
+            if (!lockedRecover()) lockedExhaustedNote();
+            return;
+          }
           if (pipeRemountsRef.current >= 1) {
             pipeRemountsRef.current = 0;
             failover("Streaming connection kept dropping");
@@ -1028,14 +1072,25 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             "Torrent peers cannot be reached from this server's network (no peer connection since startup) — every source will fail here. Playback needs a host or network that allows peer connections.",
           );
         }
-        if (seenAlive) failover("This server dropped the stream");
-        else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS)
+        if (seenAlive) {
+          if (streamLockedRef.current) {
+            // content lock: a single not-found poll can be an engine hiccup
+            // while the torrent is mid-stream — require 3 consecutive misses
+            // (≈6s) before leaving a server that already delivered content
+            lostPolls += 1;
+            if (lostPolls >= 3) failover("This server dropped the stream");
+          } else {
+            failover("This server dropped the stream");
+          }
+        } else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS) {
           // the torrent never even registered (metadata timeout ahead) —
           // don't wait for the stream request's own timeout, move on now
           failover("This server is not responding");
+        }
         return;
       }
       seenAlive = true;
+      lostPolls = 0;
       // metadata still resolving: pieces cannot flow yet, so the no-data and
       // trickle rules below would kill slow-to-resolve swarms (anime fansubs
       // routinely take 20-40 s, thin DHT swarms longer) long before they had
@@ -1056,6 +1111,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         (p >= STREAM_LOCK_BUFFER || videoStateRef.current === "playing")
       ) {
         contentLocked = true;
+        // cross-handler lock: onError / pipe-flake paths read this ref to
+        // reconnect the same stream instead of switching servers
+        streamLockedRef.current = true;
       }
       if (videoStateRef.current === "playing") return;
       const elapsed = Date.now() - streamStartRef.current;
@@ -1111,6 +1169,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     if (currentIdRef.current && currentIdRef.current !== id) stopId(currentIdRef.current);
     currentIdRef.current = id;
   }, [activeServer?.id, stopId]);
+  // the content lock describes the CURRENT stream: a new server (manual pick
+  // or auto failover) starts unlocked, with a fresh recovery budget
+  useEffect(() => {
+    streamLockedRef.current = false;
+    lockedRemountsRef.current = 0;
+    lockedFailNoteRef.current = false;
+  }, [activeServer?.id]);
   useEffect(() => {
     return () => {
       if (currentIdRef.current) stopId(currentIdRef.current);
@@ -1977,6 +2042,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       // playback actually started — any pipe-flake recovery
                       // that got us here succeeded; start counting fresh
                       pipeRemountsRef.current = 0;
+                      // content is on screen: the hard lock engages and the
+                      // same-stream recovery budget refills
+                      streamLockedRef.current = true;
+                      lockedRemountsRef.current = 0;
+                      lockedFailNoteRef.current = false;
                       setVideoState("playing");
                       setNeedsTap(false);
                     }}
@@ -1985,7 +2055,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       // watchdog reconnects, only treat it as a bad server
                       // when the backend answered recently
                       if (backendDownRef.current) setVideoState("error");
-                      else failover("Stream failed on this server");
+                      else if (streamLockedRef.current) {
+                        // content was on screen — the torrent is warm and
+                        // partially buffered on THIS server: reconnect it
+                        // instead of switching (one dropped range request
+                        // must not throw away half a buffered show)
+                        if (!lockedRecover()) lockedExhaustedNote();
+                      } else failover("Stream failed on this server");
                     }}
                     className="h-full w-full bg-black"
                   >
