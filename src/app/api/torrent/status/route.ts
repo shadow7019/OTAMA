@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findTorrent } from "@/lib/torrent-engine";
+import { engineFailure, findTorrent } from "@/lib/torrent-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,13 +7,21 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/torrent/status?id=<infoHash>
  * Live download state used by the player UI (progress, peers, speed).
+ * `engineOk: false` + `engineError` reports a host that cannot run the
+ * streaming engine (native module load failure) instead of a blind 500.
  */
 export async function GET(req: NextRequest) {
   const id = (req.nextUrl.searchParams.get("id") ?? "").toLowerCase();
+  const engineError = engineFailure();
   const torrent = id ? findTorrent(id) : null;
 
   if (!torrent) {
-    return NextResponse.json({ found: false, id });
+    return NextResponse.json({
+      found: false,
+      id,
+      engineOk: !engineError,
+      ...(engineError ? { engineError } : {}),
+    });
   }
 
   return NextResponse.json({
@@ -25,5 +33,6 @@ export async function GET(req: NextRequest) {
     peers: torrent.numPeers,
     speed: torrent.downloadSpeed,
     files: torrent.files?.length ?? 0,
+    engineOk: true,
   });
 }

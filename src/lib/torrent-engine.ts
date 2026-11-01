@@ -98,26 +98,49 @@ interface EngineState {
   sweeper: ReturnType<typeof setInterval> | null;
   /** infoHashes with an open browser stream — eviction must never kill these */
   active: Set<string>;
+  /** set when the engine could not start (native module / fs failure on the
+   *  host) — routes surface it instead of throwing opaque 500s */
+  engineError: string | null;
 }
 
 const g = globalThis as unknown as { __otamaTorrentEngine?: EngineState };
 
 function state(): EngineState {
   if (!g.__otamaTorrentEngine) {
-    g.__otamaTorrentEngine = { client: null, meta: new Map(), sweeper: null, active: new Set() };
+    g.__otamaTorrentEngine = {
+      client: null,
+      meta: new Map(),
+      sweeper: null,
+      active: new Set(),
+      engineError: null,
+    };
   }
   const st = g.__otamaTorrentEngine;
   // the singleton survives Next.js hot reloads (and deploys) with the shape
   // it was first created with — backfill fields this module version expects
   if (!st.active) st.active = new Set<string>();
   if (!st.meta) st.meta = new Map();
+  // singletons created before this field existed (hot reload / deploy) lack it
+  st.engineError ??= null;
   return st;
 }
 
-function getClient(): TorrentClient {
+function getClient(): TorrentClient | null {
   const st = state();
+  if (st.engineError) return null;
   if (!st.client || st.client.destroyed) {
-    st.client = new WebTorrent({ maxConns: 120 }) as unknown as TorrentClient;
+    try {
+      st.client = new WebTorrent({ maxConns: 120 }) as unknown as TorrentClient;
+    } catch (err) {
+      // some runtimes cannot load webtorrent's native peers (old glibc /
+      // musl images, missing libstdc++). A hard throw here turned every
+      // engine route into an opaque 500 — record the reason instead and let
+      // routes answer honestly.
+      st.client = null;
+      st.engineError =
+        err instanceof Error ? err.message : "webtorrent failed to initialize";
+      return null;
+    }
     st.client.on("error", () => {
       /* per-torrent errors are handled where they surface */
     });
@@ -133,6 +156,11 @@ function getClient(): TorrentClient {
     }
   }
   return st.client;
+}
+
+/** Why the engine cannot run on this host, if it cannot (null = healthy). */
+export function engineFailure(): string | null {
+  return state().engineError;
 }
 
 function buildMagnet(infoHash: string, name: string): string {
@@ -260,6 +288,11 @@ export function findTorrent(infoHash: string): Torrent | null {
 export async function ensureTorrent(infoHash: string, displayName: string): Promise<Torrent> {
   if (!isValidInfoHash(infoHash)) throw new Error("Invalid torrent id");
   const client = getClient();
+  if (!client) {
+    throw new Error(
+      `Streaming engine unavailable on this host: ${engineFailure() ?? "unknown reason"}`
+    );
+  }
   const existing = findTorrent(infoHash);
   if (existing) {
     const m = state().meta.get(infoHash);
