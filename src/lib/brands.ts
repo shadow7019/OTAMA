@@ -17,7 +17,12 @@
 export type BrandKind = "movie" | "tv";
 
 export interface Brand {
-  id: number;
+  /**
+   * TMDB company/network id. A pipe-separated string ("a|b|c") means ANY of —
+   * TMDB keeps duplicate company entries for some brands (e.g. Crunchyroll
+   * exists three times), and discover accepts the combined form directly.
+   */
+  id: number | string;
   name: string;
   /** TMDB logo path (null → render the name instead) */
   logo: string | null;
@@ -63,6 +68,10 @@ export const NETWORKS: Brand[] = [
   { id: 453, name: "Hulu", logo: "/pqUTCleNUiTLAVlelGxUgWn1ELh.png", kind: "tv", param: "with_networks", watchProvider: "15", watchRegion: "US", tagline: "Next-day TV, FX originals and streaming films" },
   { id: 4330, name: "Paramount+", logo: "/fi83B1oztoS47xxcemFdPMhIzK.png", kind: "tv", param: "with_networks", watchProvider: "2303|2616", watchRegion: "US", tagline: "Star Trek, CBS shows and the Paramount film vault" },
   { id: 3353, name: "Peacock", logo: "/gIAcGTjKKr0KOHL5s4O36roJ8p7.png", kind: "tv", param: "with_networks", watchProvider: "386|387", watchRegion: "US", tagline: "NBCUniversal originals, Bravo and Premier League" },
+  // TMDB splits Crunchyroll across three duplicate company entries — the
+  // combined form (verified: 164 series, incl. Solo Leveling / BLUE LOCK)
+  // powers the Series catalog; its watch provider id 283 powers Movies.
+  { id: "198847|98553|201119", name: "Crunchyroll", logo: "/qqyXcZlJQKlRmAD1TCKV7mGLQlt.png", kind: "tv", param: "with_companies", watchProvider: "283", watchRegion: "US", tagline: "The world's largest anime library — simulcasts straight from Japan" },
   { id: 88, name: "FX", logo: "/aexGjtcs42DgRtZh7zOxayiry4J.png", kind: "tv", param: "with_networks", tagline: "Prestige originals from FX" },
   { id: 33, name: "MTV", logo: "/w4qtv7xBkSVsbOQdSzjUjlyOuSr.png", kind: "tv", param: "with_networks", tagline: "Reality, music and unscripted classics" },
   { id: 6, name: "NBC", logo: "/cm111bsDVlYaC1foL0itvEI4yLG.png", kind: "tv", param: "with_networks", tagline: "Must-see TV since the beginning" },

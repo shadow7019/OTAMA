@@ -64,8 +64,25 @@ export function BrandView({ brand, actions, onBack, backLabel = "All studios" }:
             params: { with_companies: brand.id },
           };
 
-    const movies: Catalog | null =
-      brand.param === "with_companies"
+    // Movies catalog: a verified watch-provider id beats company credits —
+    // it is what viewers mean by "films on <service>" (all existing provider
+    // brands are with_networks, so behavior for them is unchanged); studios
+    // without a provider fall back to discover/movie?with_companies.
+    const movies: Catalog | null = brand.watchProvider
+      ? {
+          id: "movies",
+          label: "Movies",
+          kind: "movie",
+          note: `Films streaming on ${brand.name} with a subscription${
+            brand.watchRegion && brand.watchRegion !== "US" ? ` (${brand.watchRegion})` : ""
+          }.`,
+          params: {
+            with_watch_providers: brand.watchProvider,
+            watch_region: brand.watchRegion ?? "US",
+            with_watch_monetization_type: "flatrate",
+          },
+        }
+      : brand.param === "with_companies"
         ? {
             id: "movies",
             label: "Movies",
@@ -73,21 +90,7 @@ export function BrandView({ brand, actions, onBack, backLabel = "All studios" }:
             note: `Feature films produced by ${brand.name}.`,
             params: { with_companies: brand.id },
           }
-        : brand.watchProvider
-          ? {
-              id: "movies",
-              label: "Movies",
-              kind: "movie",
-              note: `Films streaming on ${brand.name} with a subscription${
-                brand.watchRegion && brand.watchRegion !== "US" ? ` (${brand.watchRegion})` : ""
-              }.`,
-              params: {
-                with_watch_providers: brand.watchProvider,
-                watch_region: brand.watchRegion ?? "US",
-                with_watch_monetization_type: "flatrate",
-              },
-            }
-          : null;
+        : null;
 
     return brand.kind === "movie" ? [movies as Catalog, series] : [series, ...(movies ? [movies] : [])];
   }, [brand]);
