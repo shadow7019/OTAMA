@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { PwaRegister } from "@/components/pwa-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,8 +19,19 @@ export const metadata: Metadata = {
   description:
     "Browse trending movies and TV shows, watch trailers and stream instantly. Powered by TMDB.",
   keywords: ["movies", "tv shows", "streaming", "watch online", "trailers", "TMDB"],
+  manifest: "/manifest.webmanifest",
+  applicationName: "Otama",
   icons: {
-    icon: "/favicon.svg",
+    icon: [
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Otama",
+    statusBarStyle: "black-translucent",
   },
   openGraph: {
     title: "Otama — Stream Movies & TV Shows",
@@ -30,6 +42,9 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#0b0b10",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -43,6 +58,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen antialiased bg-background text-foreground`}
       >
         {children}
+        <PwaRegister />
         <Toaster />
       </body>
     </html>

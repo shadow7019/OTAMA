@@ -1,0 +1,5 @@
+node_modules/
+# generated native projects (recreate with `npx cap add android|ios`)
+android/
+ios/
+.DS_Store

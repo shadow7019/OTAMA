@@ -1,0 +1,21 @@
+{
+  "name": "otama-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Otama Android/iOS shell (Capacitor) around https://otama2.space-z.ai",
+  "scripts": {
+    "sync": "cap sync",
+    "android": "cap run android",
+    "ios": "cap run ios",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios",
+    "assets": "npx @capacitor/assets generate --iconBackgroundColor '#0b0b10' --splashBackgroundColor '#0b0b10' --splashBackgroundColorDark '#0b0b10'"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6",
+    "@capacitor/app": "^6",
+    "@capacitor/cli": "^6",
+    "@capacitor/core": "^6",
+    "@capacitor/ios": "^6"
+  }
+}
