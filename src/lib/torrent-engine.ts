@@ -6,8 +6,8 @@
  * the browser as ordinary progressive HTTP video with Range support.
  * The browser never touches an ad-serving third party — zero iframes.
  */
-import WebTorrent from "webtorrent";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -96,6 +96,8 @@ interface EngineState {
   client: TorrentClient | null;
   meta: Map<string, { addedAt: number; lastAccess: number }>;
   sweeper: ReturnType<typeof setInterval> | null;
+  /** in-flight kickEngineLoad() — awaited by ensureTorrent before use */
+  loading: Promise<void> | null;
   /** infoHashes with an open browser stream — eviction must never kill these */
   active: Set<string>;
   /** set when the engine could not start (native module / fs failure on the
@@ -111,6 +113,7 @@ function state(): EngineState {
       client: null,
       meta: new Map(),
       sweeper: null,
+      loading: null,
       active: new Set(),
       engineError: null,
     };
@@ -122,15 +125,135 @@ function state(): EngineState {
   if (!st.meta) st.meta = new Map();
   // singletons created before this field existed (hot reload / deploy) lack it
   st.engineError ??= null;
+  st.loading ??= null;
   return st;
+}
+
+/**
+ * Load the WebTorrent constructor without going through the bundler's
+ * synthetic-external machinery when it is broken.
+ *
+ * Why two channels: Turbopack compiles `import("webtorrent")` to
+ * `import("webtorrent-<hash>")` and maps it back with a Node module hook.
+ * The deployed runtime starts server.js with **bun**, whose hook
+ * implementation loses the referrer — the native binding
+ * (node-datachannel) is then resolved relative to "" and every engine
+ * route dies with an opaque 500 (reproduced locally under bun; node is
+ * fine). So: try the normal dynamic import first (node path), and on
+ * failure fall back to a real CJS require — bun accepts require() of an
+ * ESM graph with top-level await, and its own resolver loads the .node
+ * binary correctly.
+ */
+let cachedCtor: (new (opts: { maxConns: number }) => unknown) | null = null;
+/** detailed failures of the last load attempt — surfaced via engineError */
+let lastLoadErrors: string[] = [];
+
+/**
+ * bun + Next standalone: the server's module hooks lose the referrer for
+ * node-datachannel's internal `require("../../../build/Release/….node")`
+ * ("Cannot find module … from ''"), which kills webtorrent at load time even
+ * through a plain require(). Intercept that one request and resolve it by
+ * absolute path (original resolution is tried first; the fallback only fires
+ * when it throws).
+ */
+function patchBindingResolution(): void {
+  const g2 = globalThis as unknown as { __otamaBindingPatch?: boolean };
+  if (g2.__otamaBindingPatch) return;
+  g2.__otamaBindingPatch = true;
+  try {
+    const req = createRequire(path.join(process.cwd(), "engine-load.js"));
+    const Module = req("node:module") as {
+      _resolveFilename?: (request: string, parent: { filename?: string } | null, ...rest: unknown[]) => string;
+    };
+    const pkgDir = path.dirname(req.resolve("node-datachannel/package.json"));
+    const bindingAbs = path.join(pkgDir, "build", "Release", "node_datachannel.node");
+    if (typeof Module._resolveFilename !== "function" || !fs.existsSync(bindingAbs)) return;
+    const orig = Module._resolveFilename;
+    Module._resolveFilename = function (request, parent, ...rest) {
+      if (typeof request === "string" && request.endsWith("node_datachannel.node")) {
+        try {
+          return orig.call(this, request, parent, ...rest);
+        } catch {
+          return bindingAbs;
+        }
+      }
+      return orig.call(this, request, parent, ...rest);
+    };
+  } catch {
+    /* best effort — the normal loader may work without the patch (node does) */
+  }
+}
+
+async function loadWebTorrentCtor(): Promise<(new (opts: { maxConns: number }) => unknown) | null> {
+  if (cachedCtor) return cachedCtor;
+  const errs: string[] = [];
+  try {
+    const mod = (await import("webtorrent")) as
+      | { default?: unknown }
+      | (new (opts: { maxConns: number }) => unknown);
+    const ctor = (mod as { default?: unknown }).default ?? mod;
+    cachedCtor = ctor as new (opts: { maxConns: number }) => unknown;
+    return cachedCtor;
+  } catch (err) {
+    errs.push(`import(): ${err instanceof Error ? err.message : String(err)}`);
+    /* bundler/hook path failed — try the runtime's own resolver below */
+  }
+  try {
+    // base path is opaque to the bundler; resolution walks up from cwd
+    // (standalone / next-service-dist both carry node_modules)
+    patchBindingResolution();
+    const req = createRequire(path.join(process.cwd(), "engine-load.js"));
+    const mod = req("webtorrent") as { default?: unknown };
+    const ctor = (mod?.default ?? mod) as new (opts: { maxConns: number }) => unknown;
+    cachedCtor = ctor;
+    return cachedCtor;
+  } catch (err) {
+    errs.push(`require(): ${err instanceof Error ? err.message : String(err)}`);
+    console.error("[engine] webtorrent load failed:", ...errs);
+    lastLoadErrors = errs;
+    return null;
+  }
 }
 
 function getClient(): TorrentClient | null {
   const st = state();
   if (st.engineError) return null;
   if (!st.client || st.client.destroyed) {
+    // loading is kicked off by kickEngineLoad(); until it resolves we report
+    // "no client yet" and the caller surfaces the loading/error state
+    return null;
+  }
+  return st.client;
+}
+
+/** Start engine creation once; safe to call on every request. */
+function kickEngineLoad(): void {
+  const st = state();
+  if (st.loading || st.client || st.engineError) return;
+  st.loading = (async () => {
     try {
-      st.client = new WebTorrent({ maxConns: 120 }) as unknown as TorrentClient;
+      const Ctor = await loadWebTorrentCtor();
+      if (!Ctor) {
+        st.engineError = `webtorrent could not be loaded — ${lastLoadErrors.join(" | ").slice(0, 300)}`;
+        return;
+      }
+      const client = new (Ctor as new (opts: { maxConns: number }) => TorrentClient)({
+        maxConns: 120,
+      });
+      client.on("error", () => {
+        /* per-torrent errors are handled where they surface */
+      });
+      st.client = client;
+      if (!st.sweeper) {
+        st.sweeper = setInterval(() => {
+          try {
+            sweep();
+          } catch {
+            /* keep the interval alive no matter what */
+          }
+        }, 60_000);
+        st.sweeper.unref?.();
+      }
     } catch (err) {
       // some runtimes cannot load webtorrent's native peers (old glibc /
       // musl images, missing libstdc++). A hard throw here turned every
@@ -139,23 +262,8 @@ function getClient(): TorrentClient | null {
       st.client = null;
       st.engineError =
         err instanceof Error ? err.message : "webtorrent failed to initialize";
-      return null;
     }
-    st.client.on("error", () => {
-      /* per-torrent errors are handled where they surface */
-    });
-    if (!st.sweeper) {
-      st.sweeper = setInterval(() => {
-        try {
-          sweep();
-        } catch {
-          /* keep the interval alive no matter what */
-        }
-      }, 60_000);
-      st.sweeper.unref?.();
-    }
-  }
-  return st.client;
+  })();
 }
 
 /** Why the engine cannot run on this host, if it cannot (null = healthy). */
@@ -287,6 +395,9 @@ export function findTorrent(infoHash: string): Torrent | null {
 /** Add (or reuse) a torrent and wait until its metadata is ready. */
 export async function ensureTorrent(infoHash: string, displayName: string): Promise<Torrent> {
   if (!isValidInfoHash(infoHash)) throw new Error("Invalid torrent id");
+  kickEngineLoad();
+  const st = state();
+  if (st.loading) await st.loading;
   const client = getClient();
   if (!client) {
     throw new Error(

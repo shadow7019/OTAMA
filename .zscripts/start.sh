@@ -90,7 +90,15 @@ if [ -f "./next-service-dist/server.js" ]; then
     fi
     
     # 后台启动 Next.js
-    bun server.js &
+    # 优先 node：Turbopack standalone 的外部模块钩子在 bun 下会丢失 referrer，
+    # 导致 webtorrent 的原生绑定（node-datachannel 的 .node 相对 require）
+    # 解析失败 → 所有 /api/torrent/* 引擎路由 500（node 运行时无此问题）。
+    # 镜像没有 node 时回退 bun（引擎加载器内有 _resolveFilename 补丁兜底）。
+    if command -v node >/dev/null 2>&1; then
+        node server.js &
+    else
+        bun server.js &
+    fi
     NEXT_PID=$!
     pids="$NEXT_PID"
     
