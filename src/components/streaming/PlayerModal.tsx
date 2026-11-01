@@ -103,6 +103,10 @@ const STALL_SWITCH_MS = 60_000;
 const RESOLVE_SWITCH_MS = 100_000;
 /** Absolute start ceiling — 4 minutes on one server before moving on. */
 const HARD_START_MS = 240_000;
+/** Anti-spam floor between watchdog-driven switches: once the player moves to
+ *  a server it stays at least this long before another automatic move.
+ *  Manual server picks bypass failover entirely. */
+const MIN_FAILOVER_GAP_MS = 30_000;
 
 const fmtSize = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
@@ -328,6 +332,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   serversRef.current = servers;
   const activeIdxRef = useRef(activeIdx);
   activeIdxRef.current = activeIdx;
+  const exhaustedRef = useRef(exhausted);
+  exhaustedRef.current = exhausted;
+  // timestamp of the last watchdog-driven switch — enforces the anti-spam
+  // floor between automatic server changes
+  const lastFailoverAtRef = useRef(0);
   // consecutive ticks that failed at the network level — while set, the
   // backend itself is unreachable and failover must not burn the server list
   const backendDownRef = useRef(0);
@@ -450,6 +459,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       // backend unreachable: every request fails, so "every server failed"
       // is an illusion. Hold position — the watchdog reconnects and resumes.
       if (backendDownRef.current) return;
+      // everything already tried: the banner is up; the watchdog must not
+      // re-run the bookkeeping (and re-set the banner) on every 2s tick
+      if (exhaustedRef.current) return;
+      // anti-spam floor: an automatic switch just happened — hold the new
+      // server before the watchdog may switch again (rapid cycling through
+      // the row reads as the player fighting itself)
+      if (Date.now() - lastFailoverAtRef.current < MIN_FAILOVER_GAP_MS) return;
       const cur = activeIdxRef.current;
       const list = serversRef.current;
       const failed = cur !== null ? list[cur] : null;
@@ -470,6 +486,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       if (next !== undefined) {
         // new server, new pipe — the flake counter describes the old one
         pipeRemountsRef.current = 0;
+        lastFailoverAtRef.current = Date.now();
         setActiveIdx(next);
         setVideoState("loading");
         setStatus(null);
@@ -537,12 +554,54 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           );
           return;
         }
-        setServers(results);
+        // anti-spam: a re-scan must never yank a stream that works. Keep the
+        // current server playing unless the user explicitly switched to a
+        // language this server doesn't serve.
+        let next = results;
+        let keepIdx: number | null = null;
+        const cur = activeIdxRef.current;
+        const curSv = cur !== null ? serversRef.current[cur] : null;
+        const stillWatching =
+          videoStateRef.current === "playing" || videoStateRef.current === "loading";
+        if (rescan && curSv && stillWatching) {
+          const tags = curSv.audioTags ?? [];
+          const langOk =
+            langAtScan === "auto" ||
+            tags.includes(langAtScan) ||
+            tags.includes("dual") ||
+            tags.includes("multi");
+          const idx = langOk ? next.findIndex((r) => r.id === curSv.id) : -1;
+          if (idx >= 0) {
+            keepIdx = idx;
+          } else if (langOk) {
+            // the re-scan dropped our server (indexer flake) but it is
+            // mid-watch — keep it at the end of the row instead of killing it
+            next = [...results, curSv];
+            keepIdx = next.length - 1;
+          }
+        }
+        // identical swarm: keep the chip order the user already sees — paced
+        // indexers answer in a slightly different order every scan, and a
+        // reshuffled row reads as churn
+        if (rescan) {
+          const prev = serversRef.current;
+          const nextById = new Map(next.map((s) => [s.id, s]));
+          if (
+            prev.length > 0 &&
+            prev.length === next.length &&
+            prev.every((s) => nextById.has(s.id))
+          ) {
+            next = prev.map((old) => nextById.get(old.id) ?? old);
+            if (curSv && keepIdx !== null) keepIdx = next.findIndex((s) => s.id === curSv.id);
+          }
+        }
+        setServers(next);
         setServersState("ready");
         if (rescan) {
-          // fresh result set for the same title: drop the current pick so the
-          // auto-pick effect restarts playback on the best new server
-          setActiveIdx(null);
+          // same torrent still watchable → stay on it; only when nothing is
+          // playing (or the language changed) does the auto-pick effect
+          // choose the best untried server again
+          setActiveIdx(keepIdx);
         }
       })
       .catch(() => {
