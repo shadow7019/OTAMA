@@ -230,3 +230,92 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
  *    pop-ups, tab redirects or injected ad scripts.
  *  - Otama Direct: public-domain direct streams (archive.org) as fallback.
  */
+
+/**
+ * Web embed servers — restored by user request. These third-party players
+ * are ad-supported (pop-ups / redirects are THEIR pages, inside their
+ * iframe), so they sit AFTER the torrent sources in the server row and are
+ * opt-in per click. They cost nothing to run, carry virtually every title,
+ * and give the player a working source when torrent swarms are thin.
+ */
+export interface WebSource {
+  id: string;
+  name: string;
+  movie: (tmdbId: number) => string;
+  tv: (tmdbId: number, season: number, episode: number) => string;
+}
+
+export const WEB_SOURCES: WebSource[] = [
+  {
+    id: "vidlink",
+    name: "VidLink",
+    movie: (id) => `https://vidlink.org/embed/movie/${id}`,
+    tv: (id, s, e) => `https://vidlink.org/embed/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "vidfast",
+    name: "VidFast",
+    movie: (id) => `https://vidfast.pro/movie/${id}?autoPlay=true`,
+    tv: (id, s, e) => `https://vidfast.pro/tv/${id}/${s}/${e}?autoPlay=true`,
+  },
+  {
+    id: "vidsrc-xyz",
+    name: "VidSrc",
+    movie: (id) => `https://vidsrc.xyz/embed/movie?tmdb=${id}`,
+    tv: (id, s, e) => `https://vidsrc.xyz/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+  },
+  {
+    id: "videasy",
+    name: "Videasy",
+    movie: (id) => `https://player.videasy.net/movie/${id}`,
+    tv: (id, s, e) => `https://player.videasy.net/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "autoembed",
+    name: "AutoEmbed",
+    movie: (id) => `https://autoembed.cc/embed/movie/${id}`,
+    tv: (id, s, e) => `https://autoembed.cc/embed/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "embed-su",
+    name: "Embed.su",
+    movie: (id) => `https://embed.su/embed/movie?tmdb=${id}`,
+    tv: (id, s, e) => `https://embed.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+  },
+  {
+    id: "vidora",
+    name: "Vidora",
+    movie: (id) => `https://vidora.su/movie/${id}`,
+    tv: (id, s, e) => `https://vidora.su/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "moviesapi",
+    name: "MoviesAPI",
+    movie: (id) => `https://moviesapi.club/movie/${id}`,
+    tv: (id, s, e) => `https://moviesapi.club/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "spencerdevs",
+    name: "Spencer",
+    movie: (id) => `https://spencerdevs.xyz/movie/${id}`,
+    tv: (id, s, e) => `https://spencerdevs.xyz/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "2embed",
+    name: "2Embed",
+    movie: (id) => `https://www.2embed.cc/embed/${id}`,
+    tv: (id, s, e) => `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}`,
+  },
+  {
+    id: "multiembed",
+    name: "MultiEmbed",
+    movie: (id) => `https://multiembed.mov/?video_id=${id}&tmdb=1`,
+    tv: (id, s, e) => `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
+  },
+  {
+    id: "vidsrc-vip",
+    name: "VidSrc VIP",
+    movie: (id) => `https://vidsrc.vip/embed/movie?tmdb=${id}`,
+    tv: (id, s, e) => `https://vidsrc.vip/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+  },
+];

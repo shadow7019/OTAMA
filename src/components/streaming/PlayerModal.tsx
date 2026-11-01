@@ -11,6 +11,7 @@ import {
   Info,
   Loader2,
   AlertTriangle,
+  Globe,
   RefreshCw,
   ShieldCheck,
   Zap,
@@ -24,6 +25,7 @@ import {
   MediaItem,
   Episode,
   Video,
+  WEB_SOURCES,
   getTitle,
   getMediaType,
   getYear,
@@ -294,7 +296,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [serversState, setServersState] = useState<"loading" | "ready" | "error">("loading");
   const [searchNonce, setSearchNonce] = useState(0); // bump = manual re-search
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
-  const [manualIdx, setManualIdx] = useState<number | "archive" | "trailer" | null>(null);
+  const [manualIdx, setManualIdx] = useState<
+    number | "archive" | "trailer" | "web" | null
+  >(null);
+  // web embed servers (restored by request): user-picked third-party players.
+  // They are ad-supported — that lives on their page inside their iframe.
+  const [webSourceId, setWebSourceId] = useState<string | null>(null);
+  const [webReloadNonce, setWebReloadNonce] = useState(0);
+  const [webFrame, setWebFrame] = useState<"loading" | "ready" | "timeout">("loading");
+  const [webHealth, setWebHealth] = useState<Record<string, "up" | "popup" | "down">>({});
   const [tried, setTried] = useState<number[]>([]);
   const [exhausted, setExhausted] = useState(false);
   const [videoState, setVideoState] = useState<"loading" | "playing" | "error">("loading");
@@ -359,6 +369,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const loadingBannerShownRef = useRef(false);
   // one-time notice: this host's network blocks torrent peer traffic entirely
   const connectivityNoteShownRef = useRef(false);
+  // the watchdog tick must go idle while a web embed is on screen — the
+  // torrent was stopped on purpose and status polling would just fail over
+  const manualIdxRef = useRef(manualIdx);
+  manualIdxRef.current = manualIdx;
   const triedRef = useRef(tried);
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
@@ -436,6 +450,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const activeServer = activeIdx !== null ? servers[activeIdx] ?? null : null;
   const isArchive = manualIdx === "archive" && archiveState === "found" && !!archive;
   const showTrailer = manualIdx === "trailer";
+  const isWeb = manualIdx === "web" && !!webSourceId;
 
   /* ---------------- subtitle selection ----------------
    * "auto" turns English subs on only while a Japanese-audio server plays
@@ -671,6 +686,33 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       cancelled = true;
     };
   }, [target, type, season, episode, searchNonce]);
+
+  /* ---------------- web embed health probes ----------------
+   * one lightweight probe per provider per title: the strip shows live dots
+   * (green = reachable + embeddable, amber = reachable but blocking iframes,
+   * grey = down) so a dead embed never wastes a click */
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    for (const s of WEB_SOURCES) {
+      const probe = type === "tv" ? s.tv(target.item.id, 1, 1) : s.movie(target.item.id);
+      fetch(`/api/embed-check?url=${encodeURIComponent(probe)}`)
+        .then((r) => r.json())
+        .then((j: { ok?: boolean; frameable?: boolean }) => {
+          if (cancelled) return;
+          setWebHealth((prev) => ({
+            ...prev,
+            [s.id]: !j.ok ? "down" : j.frameable === false ? "popup" : "up",
+          }));
+        })
+        .catch(() => {
+          if (!cancelled) setWebHealth((prev) => ({ ...prev, [s.id]: "down" }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [target, type]);
   // automatic retries are per-episode: a manual "Search again" must not reset them
   useEffect(() => {
     setAutoRetries(0);
@@ -811,7 +853,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // server inherits the previous attempt's stale progress snapshot and is
   // failed over before it can start.
   useEffect(() => {
-    if (!streamUrl || !activeServer) {
+    if (!streamUrl || !activeServer || manualIdxRef.current === "web") {
       setStatus(null);
       return;
     }
@@ -1206,6 +1248,22 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   if (!target) return null;
 
   const item = target.item;
+  // web embed URL/identity — kept after `item` (which lives behind the
+  // null-target guard); the render-time key reset re-arms the frame overlay
+  const webSource = WEB_SOURCES.find((s) => s.id === webSourceId) ?? null;
+  const webSrc = webSource
+    ? type === "tv"
+      ? webSource.tv(item.id, season, episode)
+      : webSource.movie(item.id)
+    : null;
+  const webKey = `${item.id}-${webSourceId ?? "none"}-${
+    type === "tv" ? `${season}-${episode}` : "m"
+  }-${webReloadNonce}`;
+  const [prevWebKey, setPrevWebKey] = useState(webKey);
+  if (prevWebKey !== webKey) {
+    setPrevWebKey(webKey);
+    setWebFrame("loading");
+  }
   const title = getTitle(item);
 
   const goEpisode = (s: number, e: number) => {
@@ -1269,6 +1327,19 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setVideoState("loading");
   };
 
+  // re-clicking the active web chip reloads its iframe (fresh attempt)
+  const selectWeb = (id: string) => {
+    if (manualIdx === "web" && webSourceId === id) {
+      setWebReloadNonce((n) => n + 1);
+      return;
+    }
+    if (activeServer) stopId(activeServer.id);
+    setManualIdx("web");
+    setWebSourceId(id);
+    setExhausted(false);
+    setBanner(null);
+  };
+
   const playTrailer = () => {
     if (!trailer) return;
     if (activeServer) stopId(activeServer.id);
@@ -1296,13 +1367,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const noSources =
     (serversState === "ready" && servers.length === 0) || serversState === "error";
   // exhausted also becomes true when zero servers exist — in that case only
-  // the no-source panel may show, never the "servers failed" panel too
+  // the no-source panel may show, never the "servers failed" panel too.
+  // A web embed on screen owns the stage: never cover it with panels.
   const showFailPanel =
     !noSources &&
+    !isWeb &&
     ((exhausted && !isArchive && !showTrailer) ||
       (videoState === "error" && exhausted && !isArchive && !showTrailer));
   const showNoSourcePanel =
-    noSources && !isArchive && !showTrailer && archiveState !== "found";
+    noSources && !isWeb && !isArchive && !showTrailer && archiveState !== "found";
 
   const downloading = status && (status.progress ?? 0) < 0.999;
   const videoKey = `${streamUrl ?? "none"}-${videoNonce}`;
@@ -1460,6 +1533,53 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             <Loader2 className="h-3 w-3 animate-spin" /> Scanning torrent networks…
           </span>
         )}
+
+        {/* web embed servers — ad-supported third-party players, user opt-in.
+            Dots: green = healthy, amber = reachable but blocks iframes (opens
+            with pop-ups), grey = down. Placed last: torrent servers are
+            ad-free and rank ahead of them. */}
+        <span className="shrink-0 pl-1 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+          Web
+        </span>
+        {WEB_SOURCES.map((ws) => {
+          const active = isWeb && webSourceId === ws.id;
+          const h = webHealth[ws.id];
+          return (
+            <button
+              key={ws.id}
+              type="button"
+              onClick={() => selectWeb(ws.id)}
+              title={
+                h === "up"
+                  ? `${ws.name} — reachable and embeddable (contains ads)`
+                  : h === "popup"
+                    ? `${ws.name} — reachable but may open pop-ups instead of embedding`
+                    : h === "down"
+                      ? `${ws.name} — unreachable right now`
+                      : `${ws.name} — ad-supported web player (contains ads)`
+              }
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                active
+                  ? "bg-amber-600 text-white"
+                  : "bg-white/8 text-zinc-300 hover:bg-white/15 hover:text-white"
+              } ${h === "down" ? "opacity-40" : ""}`}
+            >
+              <Globe className="h-3 w-3" />
+              {ws.name}
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  h === "up"
+                    ? "bg-emerald-400"
+                    : h === "popup"
+                      ? "bg-amber-400"
+                      : h === "down"
+                        ? "bg-zinc-600"
+                        : "bg-zinc-700"
+                }`}
+              />
+            </button>
+          );
+        })}
       </div>
 
       {/* Server audio language — picking one re-scans the indexers for dubs of
@@ -1645,8 +1765,46 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="relative w-full bg-black lg:flex-1">
             <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
-              {/* ---------- trailer fallback ---------- */}
-              {showTrailer && trailer ? (
+              {/* ---------- web embed servers (restored, ad-supported) ---------- */}
+              {isWeb && webSrc && webSource ? (
+                <div className="absolute inset-0">
+                  <iframe
+                    key={webKey}
+                    src={webSrc}
+                    title={`${title} — ${webSource.name}`}
+                    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                    className="h-full w-full border-0 bg-black"
+                    onLoad={() =>
+                      setWebFrame((s) => (s === "loading" ? "ready" : s))
+                    }
+                  />
+                  {webFrame === "loading" && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90">
+                      <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
+                      <p className="text-xs text-zinc-400">
+                        Loading {webSource.name}…
+                      </p>
+                    </div>
+                  )}
+                  {webFrame === "timeout" && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/95 px-6 text-center">
+                      <AlertTriangle className="h-8 w-8 text-amber-400" />
+                      <p className="text-sm font-bold text-white">
+                        {webSource.name} did not load
+                      </p>
+                      <p className="max-w-sm text-xs text-zinc-400">
+                        The provider may be down or blocking embedding. Pick another
+                        server below, or re-tap the same chip to reload it.
+                      </p>
+                    </div>
+                  )}
+                  <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-amber-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+                    <Globe className="h-3 w-3" /> Web · {webSource.name} · ads play on
+                    their page
+                  </div>
+                </div>
+              ) : showTrailer && trailer ? (
                 <iframe
                   key={trailer.key}
                   src={`https://www.youtube-nocookie.com/embed/${trailer.key}?autoplay=1`}
