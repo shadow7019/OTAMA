@@ -79,9 +79,21 @@ const TRACKERS = [
 ];
 
 const DOWNLOAD_DIR = path.join(os.tmpdir(), "otama-torrents");
-// active stream + 2 pre-warmed fallbacks + headroom for a second viewer
-const MAX_TORRENTS = 6;
-const IDLE_DESTROY_MS = 30 * 60 * 1000;
+// active stream + 2 pre-warmed fallbacks + idled leftovers + headroom
+const MAX_TORRENTS = 8;
+// 60 min: a viewer pausing for half an hour must come back to the pieces
+// they already paid for — re-downloading after a pause reads as the player
+// "switching servers". Sweeping reclaims bandwidth only after a full hour
+// with zero stream activity.
+const IDLE_DESTROY_MS = 60 * 60 * 1000;
+/** After a stream response closes, keep the torrent eviction/sweep-immune for
+ *  this long. The browser issues range requests in 12 MB windows and often
+ *  stops requesting entirely once its buffer is large ("half the show
+ *  buffered") — without a grace window the playing torrent looked idle, a
+ *  warm-triggered LRU pass destroyed it (destroyStore wipes the downloaded
+ *  pieces), status went not-found, and the player "unnecessarily" switched
+ *  servers mid-playback. */
+const STREAM_GRACE_MS = 10 * 60 * 1000;
 // DHT-only and thin swarms routinely need 30-60s to answer a metadata
 // request; killing them at 40s turned "slow" into "dead" for the player
 const METADATA_TIMEOUT_MS = 90_000;
@@ -102,6 +114,10 @@ interface EngineState {
   loading: Promise<void> | null;
   /** infoHashes with an open browser stream — eviction must never kill these */
   active: Set<string>;
+  /** infoHash → when its last stream response closed. Within STREAM_GRACE_MS
+   *  the torrent stays protected: the browser pauses range requests while it
+   *  plays from (or holds) a large buffer, and those gaps must not look idle */
+  recentStreams: Map<string, number>;
   /** set when the engine could not start (native module / fs failure on the
    *  host) — routes surface it instead of throwing opaque 500s */
   engineError: string | null;
@@ -117,6 +133,7 @@ function state(): EngineState {
       sweeper: null,
       loading: null,
       active: new Set(),
+      recentStreams: new Map(),
       engineError: null,
     };
   }
@@ -124,6 +141,7 @@ function state(): EngineState {
   // the singleton survives Next.js hot reloads (and deploys) with the shape
   // it was first created with — backfill fields this module version expects
   if (!st.active) st.active = new Set<string>();
+  if (!st.recentStreams) st.recentStreams = new Map<string, number>();
   if (!st.meta) st.meta = new Map();
   // singletons created before this field existed (hot reload / deploy) lack it
   st.engineError ??= null;
@@ -364,9 +382,10 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
     let oldestTs = Infinity;
     for (const t of client.torrents) {
       if (t.infoHash === keepHash) continue;
-      // a torrent with an open browser stream is never an eviction candidate —
-      // killing it would cut the playback that is actually running
-      if (st.active.has(t.infoHash)) continue;
+      // a torrent with an open — or recently closed — browser stream is
+      // NEVER a candidate: killing it cuts playback the user is watching
+      // right now (both passes; there is no "least bad" exception)
+      if (streamProtected(st, t.infoHash)) continue;
       const m = st.meta.get(t.infoHash);
       // torrents still resolving their metadata (just added) are protected —
       // they are the ones a concurrent ensure/warm is waiting on
@@ -381,6 +400,9 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
   };
   while (client.torrents.length >= MAX_TORRENTS) {
     const oldest = pickOldest(true) ?? pickOldest(false);
+    // nothing evictable: every torrent is stream-protected or resolving.
+    // Exceeding MAX_TORRENTS briefly beats destroying a torrent the user is
+    // watching — the sweeper frees capacity once protection lapses.
     if (!oldest) break;
     try {
       oldest.destroy({ destroyStore: true });
@@ -388,17 +410,38 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
       /* already gone */
     }
     st.meta.delete(oldest.infoHash);
+    st.recentStreams.delete(oldest.infoHash);
   }
 }
 
 /** The stream route registers every open video stream so eviction and the
  *  idle sweeper spare the torrent that is actually playing. */
 export function markStreamActive(infoHash: string): void {
-  if (isValidInfoHash(infoHash)) state().active.add(infoHash.toLowerCase());
+  const st = state();
+  const h = infoHash.toLowerCase();
+  st.active.add(h);
+  st.recentStreams.delete(h); // streaming again — the grace clock resets
+  touchMeta(h); // every range request refreshes the sweeper's idle clock
 }
 
 export function markStreamDone(infoHash: string): void {
-  state().active.delete(infoHash.toLowerCase());
+  const st = state();
+  const h = infoHash.toLowerCase();
+  st.active.delete(h);
+  // NOT unprotected yet: the browser closes each 12 MB range response and
+  // simply may not ask again for minutes while it plays from its buffer.
+  // Keep the torrent immune until STREAM_GRACE_MS passes without a request.
+  st.recentStreams.set(h, Date.now());
+  touchMeta(h);
+}
+
+/** True while a torrent may not be evicted or swept: an open browser stream,
+ *  or one whose last stream request is inside the grace window. */
+function streamProtected(st: EngineState, infoHash: string): boolean {
+  const h = infoHash.toLowerCase();
+  if (st.active.has(h)) return true;
+  const ended = st.recentStreams.get(h);
+  return ended !== undefined && Date.now() - ended < STREAM_GRACE_MS;
 }
 
 export function isValidInfoHash(id: string): boolean {
@@ -586,6 +629,8 @@ export function stopTorrent(infoHash: string): boolean {
   }
   st.meta.delete(infoHash);
   st.active.delete(infoHash.toLowerCase());
+  // deliberate teardown (unmount / real stop) — no grace for a dead id
+  st.recentStreams.delete(infoHash.toLowerCase());
   return true;
 }
 
@@ -623,7 +668,7 @@ function sweep() {
   if (!client) return;
   const now = Date.now();
   for (const t of [...client.torrents]) {
-    if (st.active.has(t.infoHash)) continue; // an open stream is never idle
+    if (streamProtected(st, t.infoHash)) continue; // open or recently played stream is never idle
     const last = st.meta.get(t.infoHash)?.lastAccess ?? now;
     if (now - last > IDLE_DESTROY_MS) stopTorrent(t.infoHash);
   }
