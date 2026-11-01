@@ -317,6 +317,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   serversRef.current = servers;
   const activeIdxRef = useRef(activeIdx);
   activeIdxRef.current = activeIdx;
+  // consecutive ticks that failed at the network level — while set, the
+  // backend itself is unreachable and failover must not burn the server list
+  const backendDownRef = useRef(0);
   const triedRef = useRef(tried);
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
@@ -428,6 +431,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   /* ---------------- failover ---------------- */
   const failover = useCallback(
     (reason: string) => {
+      // backend unreachable: every request fails, so "every server failed"
+      // is an illusion. Hold position — the watchdog reconnects and resumes.
+      if (backendDownRef.current) return;
       const cur = activeIdxRef.current;
       const list = serversRef.current;
       const failed = cur !== null ? list[cur] : null;
@@ -692,50 +698,73 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // cycled servers forever without ever starting.
     let lastProgress = -1;
     let lastProgressAt = Date.now();
+    // When the whole backend is unreachable (dev server restart, machine
+    // sleep) EVERY request fails at the network level. That is not 14 bad
+    // servers — failing over would burn the whole strip and dead-mark it.
+    // Instead: hold, show a reconnecting banner, and when the backend is
+    // back remount the same stream (its torrent may even still be warm).
     const tick = async () => {
       if (cancelled) return;
+      let j: TorrentStatus | null = null;
       try {
         const r = await fetch(`/api/torrent/status?id=${activeServer.id}`);
-        const j: TorrentStatus = await r.json();
+        j = await r.json();
+      } catch {
         if (cancelled) return;
-        setStatus(j);
-        if (j.found === false) {
-          if (seenAlive) failover("This server dropped the stream");
-          else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS)
-            // the torrent never even registered (metadata timeout ahead) —
-            // don't wait for the stream request's own timeout, move on now
-            failover("This server is not responding");
+        backendDownRef.current = Math.min((backendDownRef.current ?? 0) + 1, 3);
+        if (backendDownRef.current >= 2) {
+          setBanner("Connection to the streaming server was lost — reconnecting…");
+        }
+        return; // transient — no failover, no dead marks while offline
+      }
+      if (cancelled || !j) return;
+      if (backendDownRef.current) {
+        // backend just came back: give the current stream another chance —
+        // remount the video (the torrent may still be resolved and buffered)
+        backendDownRef.current = 0;
+        setBanner(null);
+        if (videoStateRef.current === "error") {
+          setVideoState("loading");
+          setVideoNonce((n) => n + 1);
+          streamStartRef.current = Date.now();
           return;
         }
-        seenAlive = true;
-        const p = j.progress ?? 0;
-        if (p > lastProgress + 5e-6) {
-          lastProgress = p;
-          lastProgressAt = Date.now();
-        }
-        if (videoStateRef.current === "playing") return;
-        const elapsed = Date.now() - streamStartRef.current;
-        if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
-          failover("No data from this server");
-        } else if (
-          elapsed > TRICKLE_SWITCH_MS &&
-          (j.progress ?? 0) === 0 &&
-          (j.speed ?? 0) < 25_000
-        ) {
-          // data flows but a few KB/s will not produce playable pieces in time
-          failover("This server is too slow");
-        } else if (
-          videoStateRef.current === "loading" &&
-          Date.now() - lastProgressAt > STALL_SWITCH_MS
-        ) {
-          // download has gone quiet for 40s and the video still can't start
-          failover("This server has stopped making progress");
-        } else if (elapsed > HARD_START_MS && videoStateRef.current === "loading") {
-          // absolute ceiling: creeping trickles never hold the player forever
-          failover("This server can't start in time");
-        }
-      } catch {
-        /* transient — next tick retries */
+      }
+      setStatus(j);
+      if (j.found === false) {
+        if (seenAlive) failover("This server dropped the stream");
+        else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS)
+          // the torrent never even registered (metadata timeout ahead) —
+          // don't wait for the stream request's own timeout, move on now
+          failover("This server is not responding");
+        return;
+      }
+      seenAlive = true;
+      const p = j.progress ?? 0;
+      if (p > lastProgress + 5e-6) {
+        lastProgress = p;
+        lastProgressAt = Date.now();
+      }
+      if (videoStateRef.current === "playing") return;
+      const elapsed = Date.now() - streamStartRef.current;
+      if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
+        failover("No data from this server");
+      } else if (
+        elapsed > TRICKLE_SWITCH_MS &&
+        (j.progress ?? 0) === 0 &&
+        (j.speed ?? 0) < 25_000
+      ) {
+        // data flows but a few KB/s will not produce playable pieces in time
+        failover("This server is too slow");
+      } else if (
+        videoStateRef.current === "loading" &&
+        Date.now() - lastProgressAt > STALL_SWITCH_MS
+      ) {
+        // download has gone quiet for 40s and the video still can't start
+        failover("This server has stopped making progress");
+      } else if (elapsed > HARD_START_MS && videoStateRef.current === "loading") {
+        // absolute ceiling: creeping trickles never hold the player forever
+        failover("This server can't start in time");
       }
     };
     tick();
@@ -1391,7 +1420,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       setVideoState("playing");
                       setNeedsTap(false);
                     }}
-                    onError={() => failover("Stream failed on this server")}
+                    onError={() => {
+                      // a dead backend produces this on every remount — the
+                      // watchdog reconnects, only treat it as a bad server
+                      // when the backend answered recently
+                      if (backendDownRef.current) setVideoState("error");
+                      else failover("Stream failed on this server");
+                    }}
                     className="h-full w-full bg-black"
                   >
                     {activeSub && (
