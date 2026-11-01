@@ -10,6 +10,7 @@
  */
 import { getAbsoluteEpisode, getImdbId, getTitleMeta, tmdbServer } from "./tmdb-server";
 import {
+  bestTitleMatch,
   countryPenalty,
   matchMovie,
   matchTv,
@@ -812,18 +813,33 @@ async function providerNyaa(type: "movie" | "tv", ctx: BayContext): Promise<Torr
         });
         if (!match) {
           // multi-episode batch: keep it as a pack — the stream route picks
-          // the right file inside the torrent by episode number. The relative
-          // number is only accepted inside a SUBTITLED release (>= 2 unconsumed
-          // title words — "Sennen Kessen-hen 1-52 Batch"), so the base show's
-          // batches ("Bleach 001~366", "BLEACH Kai 1~366") can never answer
-          // a sequel-season request.
+          // the right file inside the torrent by episode number. The release
+          // must actually carry the show's title (Nyaa results for one anime
+          // routinely contain other shows' batches — "名探偵コナン 第01-105巻"
+          // must never answer a Bleach query just because 1-105 spans the
+          // wanted episode). The relative number is only accepted inside a
+          // SUBTITLED release (>= 2 unconsumed title words — "Sennen
+          // Kessen-hen 1-52 Batch"), so the base show's batches ("Bleach
+          // 001~366", "BLEACH Kai 1~366") can never answer a sequel-season
+          // request.
           const br = batchRange(r.title);
           if (br) {
-            const inAbs = wanted >= br[0] && wanted <= br[1];
-            const inRel =
-              relWanted != null && relWanted >= br[0] && relWanted <= br[1];
-            if (inAbs || (inRel && subtitleWords(p, [title, originalTitle]).length >= 2)) {
-              match = "pack";
+            const tm = bestTitleMatch(p, [title, originalTitle].filter(Boolean) as string[]);
+            // cleanExtras: everything the title match left over is a numeral
+            // or a release/tech tag — a sequel subtitle ("Thousand Year Blood
+            // War", "Sennen Kessen-hen") marks DIFFERENT content, which must
+            // only answer a sequel-season request via its relative number
+            const cleanExtras = subtitleWords(p, [title, originalTitle]).length === 0;
+            if (tm.ratio >= 0.5) {
+              const inAbs = wanted >= br[0] && wanted <= br[1];
+              const inRel =
+                relWanted != null && relWanted >= br[0] && relWanted <= br[1];
+              if (
+                (inAbs && cleanExtras) ||
+                (inRel && subtitleWords(p, [title, originalTitle]).length >= 2)
+              ) {
+                match = "pack";
+              }
             }
           }
         }
@@ -855,9 +871,15 @@ export function scoreTorrent(t: TorrentSource): number {
   else if (t.quality === "2160p") s += 2;
   else if (t.quality === "480p") s += 1;
   const n = t.releaseName.toLowerCase();
-  if (/x265|h\.?265|hevc/.test(n)) s -= 4; // HEVC support is spotty in browsers
+  // Browser codec reality gates the whole list: 10-bit H.264 (Hi10P — the
+  // anime-scene default re-encode) has NO browser software decoder and HEVC
+  // only plays where hardware support exists, so a heavily 10bit/HEVC top of
+  // the strip means every "server" errors out instantly. Sink them far below
+  // any playable release; they only surface when nothing playable was found.
+  if (/x265|h\.?265|hevc/.test(n)) s -= 10;
+  if (/10[\s._-]?bit|hi10\w*/.test(n)) s -= 20;
   if (/av1/.test(n)) s += 1;
-  if (/x264|h\.?264|xvid/.test(n)) s += 2;
+  if (/x264|h\.?264|xvid/.test(n) && !/10[\s._-]?bit|hi10/.test(n)) s += 2;
   if (/\b(cam|ts|telesync|screener|dvdscr|hdts|\btc\b)\b/.test(n)) s -= 12;
   if (/\b3d\b/.test(n)) s -= 6;
   if (/\.mp4\b/.test(n) || /yts/i.test(t.releaseName)) s += 1.5;

@@ -681,6 +681,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   }, [activeSub, streamUrl, videoNonce]);
 
   /* ---------------- live status + watchdog failover ---------------- */
+  // NB: videoNonce is a dependency on purpose — a remount (retry / revive /
+  // backend-recovery) must reset the momentum state below, or a revived
+  // server inherits the previous attempt's stale progress snapshot and is
+  // failed over before it can start.
   useEffect(() => {
     if (!streamUrl || !activeServer) {
       setStatus(null);
@@ -698,6 +702,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // cycled servers forever without ever starting.
     let lastProgress = -1;
     let lastProgressAt = Date.now();
+    // playback momentum for the mid-stream stall detector (playing state)
+    let lastCt = -1;
+    let lastCtAt = Date.now();
     // When the whole backend is unreachable (dev server restart, machine
     // sleep) EVERY request fails at the network level. That is not 14 bad
     // servers — failing over would burn the whole strip and dead-mark it.
@@ -707,7 +714,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       if (cancelled) return;
       let j: TorrentStatus | null = null;
       try {
-        const r = await fetch(`/api/torrent/status?id=${activeServer.id}`);
+        const r = await fetch(`/api/torrent/status?id=${activeServer.id}`, {
+          // a hung backend must register as down within a tick or two, not
+          // hang the poller for the browser's default ~5 minute timeout
+          signal: AbortSignal.timeout(8000),
+        });
         j = await r.json();
       } catch {
         if (cancelled) return;
@@ -731,6 +742,23 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         }
       }
       setStatus(j);
+      // mid-stream stall recovery: the element claims "playing" but frames
+      // stopped arriving (backend restart without a media error, swarm
+      // evaporated, range request died silently). Remount the same stream
+      // once — a fresh video re-requests the range and playback resumes.
+      if (videoStateRef.current === "playing" && videoRef.current) {
+        const v = videoRef.current;
+        if (v.currentTime !== lastCt) {
+          lastCt = v.currentTime;
+          lastCtAt = Date.now();
+        } else if (!v.paused && !v.error && v.readyState < 3 && Date.now() - lastCtAt > 20000) {
+          lastCtAt = Date.now();
+          setVideoState("loading");
+          setVideoNonce((n) => n + 1);
+          streamStartRef.current = Date.now();
+          return;
+        }
+      }
       if (j.found === false) {
         if (seenAlive) failover("This server dropped the stream");
         else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS)
@@ -740,6 +768,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         return;
       }
       seenAlive = true;
+      // metadata still resolving: pieces cannot flow yet, so the no-data and
+      // trickle rules below would kill slow-to-resolve swarms (anime fansubs
+      // routinely take 20-40 s) long before they had a chance. Hold until the
+      // server's own metadata timeout (40 s) plus slack, then move on.
+      if (j.ready === false) {
+        if (Date.now() - streamStartRef.current > 50_000)
+          failover("This server is taking too long to resolve");
+        return;
+      }
       const p = j.progress ?? 0;
       if (p > lastProgress + 5e-6) {
         lastProgress = p;
@@ -773,7 +810,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       cancelled = true;
       clearInterval(iv);
     };
-  }, [streamUrl, activeServer, failover]);
+  }, [streamUrl, activeServer, failover, videoNonce]);
 
   /* ---------------- stop torrents on switch / unmount ---------------- */
   useEffect(() => {
@@ -1282,6 +1319,25 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           Auto
           {subtitleLang === "auto" && activeSub && <span className="text-[9px]">● on</span>}
         </button>
+        {/* pinned language is always visible — when this episode has no such
+            track the chip dims and says so, instead of vanishing (anime fansub
+            episodes rarely have OpenSubtitles community tracks for every
+            language, which read as a broken selector) */}
+        {subtitleLang !== "auto" && subtitleLang !== "off" && !subs.some((r) => r.lang === subtitleLang) && (
+          <button
+            type="button"
+            data-testid={`sub-${subtitleLang}`}
+            aria-pressed={false}
+            onClick={() => setSubtitleLang("auto")}
+            title={`${LANG_LABEL[subtitleLang] ?? subtitleLang} subtitles are not available for this ${
+              type === "tv" ? "episode" : "title"
+            } yet — tapping returns to Auto`}
+            className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-violet-500/40 px-2.5 py-1 text-[11px] font-semibold text-zinc-500 transition hover:text-zinc-300"
+          >
+            {LANG_LABEL[subtitleLang] ?? subtitleLang}
+            <span className="text-[9px] font-normal uppercase">unavailable</span>
+          </button>
+        )}
         {subs.map((r) => {
           const active = subtitleLang === r.lang;
           return (

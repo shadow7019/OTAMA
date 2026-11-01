@@ -328,10 +328,18 @@ function titleSubsequence(
   return { ratio: hits / needles.length, matchedIdx };
 }
 
-function bestTitleMatch(p: ParsedRelease, titles: string[]): { ratio: number; unmatched: string[] } {
+export function bestTitleMatch(
+  p: ParsedRelease,
+  titles: string[]
+): { ratio: number; unmatched: string[] } {
   let best: { ratio: number; unmatched: string[] } | null = null;
   for (const t of titles) {
     const needles = significantTitleTokens(t);
+    // a title that tokenizes to nothing (pure-CJK titles: the tokenizer is
+    // ASCII-only) carries NO signal — scoring it would return the vacuous
+    // ratio 1 and let ANY release verify against it (a Detective Conan batch
+    // answering a Bleach query). Skip needle-less titles instead.
+    if (!needles.length) continue;
     // compare against the title area only, stopwords dropped
     const haystack = p.titleTokens.filter((w) => !STOPWORDS.has(w));
     const { ratio, matchedIdx } = titleSubsequence(needles, haystack);

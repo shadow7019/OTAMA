@@ -170,9 +170,18 @@ function waitForMetadata(client: TorrentClient, magnet: string): Promise<Torrent
     try {
       // webtorrent v3 returns the Torrent synchronously from add()
       added = (client.add(magnet, { path: DOWNLOAD_DIR, announce: TRACKERS }, (t) => {
-        state().meta.set(t.infoHash, { addedAt: Date.now(), lastAccess: Date.now() });
+        touchMeta(t.infoHash);
         finish(null, t);
       }) as Torrent | null | undefined) ?? null;
+      if (added) {
+        // register the slot IMMEDIATELY, not only when metadata arrives: the
+        // meta entry's lastAccess is what shields a torrent from the LRU
+        // evictor, and a resolving torrent (15-40 s) would otherwise look like
+        // the oldest entry (ts 0) and get destroyed by a concurrent warm /
+        // ensure call — e.g. pre-warming the next candidates right after the
+        // user manually picked this server
+        touchMeta(added.infoHash);
+      }
       if (added && typeof added.on === "function") {
         added.on("error", (e?: unknown) =>
           finish(e instanceof Error ? e : new Error("Torrent client error"))
@@ -184,10 +193,18 @@ function waitForMetadata(client: TorrentClient, magnet: string): Promise<Torrent
   });
 }
 
+function touchMeta(infoHash: string) {
+  const st = state();
+  const m = st.meta.get(infoHash);
+  if (m) m.lastAccess = Date.now();
+  else st.meta.set(infoHash, { addedAt: Date.now(), lastAccess: Date.now() });
+}
+
 /** Free capacity by destroying the least-recently-used torrents. */
 function evictIfNeeded(client: TorrentClient, keepHash?: string) {
   const st = state();
-  while (client.torrents.length >= MAX_TORRENTS) {
+  const now = Date.now();
+  const pickOldest = (respectGrace: boolean): Torrent | null => {
     let oldest: Torrent | null = null;
     let oldestTs = Infinity;
     for (const t of client.torrents) {
@@ -195,12 +212,20 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
       // a torrent with an open browser stream is never an eviction candidate —
       // killing it would cut the playback that is actually running
       if (st.active.has(t.infoHash)) continue;
-      const ts = st.meta.get(t.infoHash)?.lastAccess ?? 0;
+      const m = st.meta.get(t.infoHash);
+      // torrents still resolving their metadata (just added) are protected —
+      // they are the ones a concurrent ensure/warm is waiting on
+      if (respectGrace && now - (m?.addedAt ?? 0) < 90_000) continue;
+      const ts = m?.lastAccess ?? 0;
       if (ts < oldestTs) {
         oldestTs = ts;
         oldest = t;
       }
     }
+    return oldest;
+  };
+  while (client.torrents.length >= MAX_TORRENTS) {
+    const oldest = pickOldest(true) ?? pickOldest(false);
     if (!oldest) break;
     try {
       oldest.destroy({ destroyStore: true });
