@@ -88,6 +88,10 @@ const ARCHIVE_ID = "otama-direct";
 const NO_DATA_SWITCH_MS = 15000;
 /** Switch when only a trickle arrives (never has the first playable MBs in time). */
 const TRICKLE_SWITCH_MS = 25000;
+/** Swarm reports alive (speed > 0, pack progress creeping) but the video
+ * element has parsed zero media — the swarm is fetching pieces we don't play.
+ * Don't sit out the 120s absolute ceiling; move on. */
+const FIRST_DATA_SWITCH_MS = 30000;
 /** Fail over when the download has made NO progress for this long. */
 const STALL_SWITCH_MS = 40000;
 /** Absolute start ceiling — even a creeping trickle can't hold the player longer. */
@@ -320,6 +324,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // consecutive ticks that failed at the network level — while set, the
   // backend itself is unreachable and failover must not burn the server list
   const backendDownRef = useRef(0);
+  // remounts issued to recover a flaked streaming pipe (edge proxy cutting
+  // the long video response / status route while the origin itself is up).
+  // One remount gets a fresh range request; a second failure means this
+  // server's pipe is the problem — fail over instead of reconnect-looping.
+  const pipeRemountsRef = useRef(0);
   const triedRef = useRef(tried);
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
@@ -452,6 +461,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       }
       const next = orderedIdxsRef.current.find((i) => i !== cur && !triedNext.has(i));
       if (next !== undefined) {
+        // new server, new pipe — the flake counter describes the old one
+        pipeRemountsRef.current = 0;
         setActiveIdx(next);
         setVideoState("loading");
         setStatus(null);
@@ -722,6 +733,35 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         j = await r.json();
       } catch {
         if (cancelled) return;
+        // status failed — is the whole origin gone, or just this long-lived
+        // route through the edge? Deployed behind proxies that cut idle
+        // streaming responses, the video request can die while the server
+        // itself is perfectly fine (the same cut briefly 502s the poll).
+        let originAlive = false;
+        try {
+          await fetch("/", { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(4000) });
+          originAlive = true;
+        } catch {
+          /* origin unreachable — treat as a real outage below */
+        }
+        if (originAlive) {
+          // stream pipe flaked: remount the video once for a fresh range
+          // request; if the pipe keeps dropping, hand playback to the next
+          // server instead of reconnect-looping into the same dead pipe
+          if (videoStateRef.current === "error" || videoStateRef.current === "loading") {
+            if (pipeRemountsRef.current >= 1) {
+              pipeRemountsRef.current = 0;
+              backendDownRef.current = 0;
+              failover("Streaming connection kept dropping");
+            } else {
+              pipeRemountsRef.current += 1;
+              setVideoState("loading");
+              setVideoNonce((n) => n + 1);
+              streamStartRef.current = Date.now();
+            }
+          }
+          return;
+        }
         backendDownRef.current = Math.min((backendDownRef.current ?? 0) + 1, 3);
         if (backendDownRef.current >= 2) {
           setBanner("Connection to the streaming server was lost — reconnecting…");
@@ -731,10 +771,18 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       if (cancelled || !j) return;
       if (backendDownRef.current) {
         // backend just came back: give the current stream another chance —
-        // remount the video (the torrent may still be resolved and buffered)
+        // remount the video (the torrent may still be resolved and buffered).
+        // But a server whose stream dies with every outage must not absorb
+        // endless remounts either: after one, switch.
         backendDownRef.current = 0;
         setBanner(null);
         if (videoStateRef.current === "error") {
+          if (pipeRemountsRef.current >= 1) {
+            pipeRemountsRef.current = 0;
+            failover("Streaming connection kept dropping");
+            return;
+          }
+          pipeRemountsRef.current += 1;
           setVideoState("loading");
           setVideoNonce((n) => n + 1);
           streamStartRef.current = Date.now();
@@ -787,12 +835,22 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
         failover("No data from this server");
       } else if (
+        videoStateRef.current === "loading" &&
         elapsed > TRICKLE_SWITCH_MS &&
         (j.progress ?? 0) === 0 &&
         (j.speed ?? 0) < 25_000
       ) {
         // data flows but a few KB/s will not produce playable pieces in time
         failover("This server is too slow");
+      } else if (
+        videoStateRef.current === "loading" &&
+        elapsed > FIRST_DATA_SWITCH_MS &&
+        (videoRef.current?.readyState ?? 0) === 0
+      ) {
+        // the swarm looks alive (speed > 0, pack progress creeping) but zero
+        // media reached the element in 30s — it is downloading the wrong
+        // pieces; this video will not start no matter how long we wait
+        failover("This server is not delivering video data");
       } else if (
         videoStateRef.current === "loading" &&
         Date.now() - lastProgressAt > STALL_SWITCH_MS
@@ -1473,6 +1531,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     preload="auto"
                     onCanPlay={handleCanPlay}
                     onPlaying={() => {
+                      // playback actually started — any pipe-flake recovery
+                      // that got us here succeeded; start counting fresh
+                      pipeRemountsRef.current = 0;
                       setVideoState("playing");
                       setNeedsTap(false);
                     }}
