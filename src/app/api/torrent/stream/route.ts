@@ -83,6 +83,14 @@ export async function GET(req: NextRequest) {
 
   // make the swarm fetch the requested range first so playback starts fast
   prioritizeRange(torrent, file, start, 6 * 1024 * 1024);
+  // select the whole file so the stream never runs past the critical window
+  // (pre-warmed torrents arrive with every file deselected; for freshly added
+  // ones this just trims selection down from "all files" to the one we play)
+  try {
+    file.select?.();
+  } catch {
+    /* selection is best-effort */
+  }
 
   const raw = file.createReadStream({ start, end });
   // stop pulling pieces when the browser aborts (pause / close / server switch)

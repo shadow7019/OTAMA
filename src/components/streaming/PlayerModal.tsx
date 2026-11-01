@@ -86,6 +86,8 @@ interface ArchiveMatchClient {
 const ARCHIVE_ID = "otama-direct";
 /** Switch when peers exist but no data ever arrives — dead/poisoned swarm. */
 const NO_DATA_SWITCH_MS = 15000;
+/** Switch when only a trickle arrives (never has the first playable MBs in time). */
+const TRICKLE_SWITCH_MS = 25000;
 /** Switch when data flows but the video still can't start. */
 const STALL_SWITCH_MS = 40000;
 
@@ -319,6 +321,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   videoStateRef.current = videoState;
   const streamStartRef = useRef(0);
   const currentIdRef = useRef<string | null>(null);
+  /** server ids already sent to /api/torrent/warm (dedupe, and stop on close) */
+  const warmedRef = useRef<Set<string>>(new Set());
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const serverLangRef = useRef(serverLang);
   serverLangRef.current = serverLang;
@@ -550,6 +554,26 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     }
   }, [serversState, orderedIdxs, tried, activeIdx, manualIdx, exhausted]);
 
+  /* ---------------- pre-warm the next server candidates ----------------
+   * Metadata resolution (15–25 s) is the entire startup cost. Resolving the
+   * next candidates in parallel while the current server tries means every
+   * failover lands on an already-resolved torrent and starts in seconds. */
+  useEffect(() => {
+    if (serversState !== "ready" || !servers.length) return;
+    const cands = orderedIdxs
+      .filter((i) => i !== activeIdx && !tried.includes(i))
+      .slice(0, 2)
+      .map((i) => servers[i])
+      .filter((s) => s && !warmedRef.current.has(s.id));
+    if (!cands.length) return;
+    for (const s of cands) warmedRef.current.add(s.id);
+    fetch("/api/torrent/warm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: cands.map((s) => ({ id: s.id, dn: s.releaseName })) }),
+    }).catch(() => {});
+  }, [serversState, servers, orderedIdxs, activeIdx, tried]);
+
   /* ---------------- Otama Direct for episodes with no torrent sources ----------------
    * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
    * trackers but uploaded to archive.org within hours of broadcast. When the
@@ -621,6 +645,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         setStatus(j);
         if (j.found === false) {
           if (seenAlive) failover("This server dropped the stream");
+          else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS)
+            // the torrent never even registered (metadata timeout ahead) —
+            // don't wait for the stream request's own timeout, move on now
+            failover("This server is not responding");
           return;
         }
         seenAlive = true;
@@ -628,6 +656,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         const elapsed = Date.now() - streamStartRef.current;
         if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
           failover("No data from this server");
+        } else if (
+          elapsed > TRICKLE_SWITCH_MS &&
+          (j.progress ?? 0) === 0 &&
+          (j.speed ?? 0) < 25_000
+        ) {
+          // data flows but a few KB/s will not produce playable pieces in time
+          failover("This server is too slow");
         } else if (elapsed > STALL_SWITCH_MS && videoStateRef.current === "loading") {
           // data may be flowing but the wrong pieces — this server can't start in time
           failover("This server is too slow to start");
@@ -653,6 +688,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   useEffect(() => {
     return () => {
       if (currentIdRef.current) stopId(currentIdRef.current);
+      // pre-warmed fallbacks have no player attached — free them too
+      for (const id of warmedRef.current) {
+        if (id !== currentIdRef.current) stopId(id);
+      }
     };
   }, [stopId]);
 
@@ -1351,6 +1390,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   {activeServer && (
                     <p className="max-w-md truncate text-[11px] text-zinc-600">
                       {activeServer.releaseName} · {fmtSize(activeServer.sizeBytes)}
+                    </p>
+                  )}
+                  {status && (status.progress ?? 0) === 0 && (status.peers ?? 0) > 0 && (
+                    <p className="text-[11px] text-zinc-500">
+                      Contacting {status.peers} peers — fetching first pieces…
                     </p>
                   )}
                   {status && (status.progress ?? 0) > 0 && (

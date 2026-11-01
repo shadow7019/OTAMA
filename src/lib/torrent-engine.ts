@@ -22,6 +22,10 @@ export interface TorrentFile {
   /** byte offset of this file inside the torrent */
   offset: number;
   createReadStream(opts: { start: number; end: number }): NodeJS.ReadableStream;
+  /** start downloading this file (whole range, normal priority) */
+  select?(start?: number, end?: number): void;
+  /** stop downloading this file (used to idle pre-warmed torrents) */
+  deselect?(): void;
 }
 
 export interface Torrent {
@@ -75,7 +79,8 @@ const TRACKERS = [
 ];
 
 const DOWNLOAD_DIR = path.join(os.tmpdir(), "otama-torrents");
-const MAX_TORRENTS = 4;
+// active stream + 2 pre-warmed fallbacks + headroom for a second viewer
+const MAX_TORRENTS = 6;
 const IDLE_DESTROY_MS = 30 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 40_000;
 
@@ -362,6 +367,20 @@ export function stopTorrent(infoHash: string): boolean {
   }
   st.meta.delete(infoHash);
   return true;
+}
+
+/**
+ * Put a pre-warmed torrent in idle mode: metadata + peer connections are
+ * kept (that's the expensive part of startup) but no file is selected, so
+ * it pulls no data while another server streams. When the stream route
+ * later serves a file it re-selects it.
+ */
+export function idleTorrent(t: Torrent): void {
+  try {
+    for (const f of t.files ?? []) f.deselect?.();
+  } catch {
+    /* best-effort */
+  }
 }
 
 /** Destroy idle torrents to free bandwidth, connections and disk. */
