@@ -1497,10 +1497,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         </div>
       </div>
 
-      {/* Server strip — every chip is an ad-free torrent source */}
-      <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5">
-        <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
-          Server
+      {/* Server strip — group 1: AD-FREE sources. Auto, Direct and every
+          S-chip play through our own player: no third-party iframe, no ads. */}
+      <div
+        className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
+        role="group"
+        aria-label="Ad-free servers (torrent sources and direct streams)"
+      >
+        <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-600/40">
+          <ShieldCheck className="h-3 w-3" /> Ad-free
         </span>
 
         <button
@@ -1590,13 +1595,19 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             <Loader2 className="h-3 w-3 animate-spin" /> Scanning torrent networks…
           </span>
         )}
+      </div>
 
-        {/* web embed servers — ad-supported third-party players, user opt-in.
-            Dots: green = healthy, amber = reachable but blocks iframes (opens
-            with pop-ups), grey = down. Placed last: torrent servers are
-            ad-free and rank ahead of them. */}
-        <span className="shrink-0 pl-1 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
-          Web
+      {/* Server strip — group 2: AD-SUPPORTED web embeds, restored on request.
+          Everything here is a third-party page inside an iframe: pop-ups,
+          redirects and ads belong to the provider. User opt-in per click, and
+          the auto pass only reaches this row after the ad-free group fails. */}
+      <div
+        className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
+        role="group"
+        aria-label="Ad-supported web servers (contain ads)"
+      >
+        <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300 ring-1 ring-amber-600/40">
+          <Globe className="h-3 w-3" /> Ads
         </span>
         {WEB_SOURCES.map((ws) => {
           const active = isWeb && webSourceId === ws.id;
