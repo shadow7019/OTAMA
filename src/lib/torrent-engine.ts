@@ -96,15 +96,22 @@ interface EngineState {
   client: TorrentClient | null;
   meta: Map<string, { addedAt: number; lastAccess: number }>;
   sweeper: ReturnType<typeof setInterval> | null;
+  /** infoHashes with an open browser stream — eviction must never kill these */
+  active: Set<string>;
 }
 
 const g = globalThis as unknown as { __otamaTorrentEngine?: EngineState };
 
 function state(): EngineState {
   if (!g.__otamaTorrentEngine) {
-    g.__otamaTorrentEngine = { client: null, meta: new Map(), sweeper: null };
+    g.__otamaTorrentEngine = { client: null, meta: new Map(), sweeper: null, active: new Set() };
   }
-  return g.__otamaTorrentEngine;
+  const st = g.__otamaTorrentEngine;
+  // the singleton survives Next.js hot reloads (and deploys) with the shape
+  // it was first created with — backfill fields this module version expects
+  if (!st.active) st.active = new Set<string>();
+  if (!st.meta) st.meta = new Map();
+  return st;
 }
 
 function getClient(): TorrentClient {
@@ -144,19 +151,28 @@ function waitForMetadata(client: TorrentClient, magnet: string): Promise<Torrent
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (err || !torrent) reject(err ?? new Error("failed to add torrent"));
-      else resolve(torrent);
+      if (err || !torrent) {
+        // a lookup that never resolved must not keep holding client slots,
+        // DHT/peer connections and re-announce timers (zombie torrent)
+        try {
+          added?.destroy({ destroyStore: true });
+        } catch {
+          /* already gone */
+        }
+        reject(err ?? new Error("failed to add torrent"));
+      } else resolve(torrent);
     };
     const timer = setTimeout(
       () => finish(new Error("No peers responded for this torrent — it may have no seeders right now")),
       METADATA_TIMEOUT_MS
     );
+    let added: Torrent | null = null;
     try {
       // webtorrent v3 returns the Torrent synchronously from add()
-      const added = client.add(magnet, { path: DOWNLOAD_DIR, announce: TRACKERS }, (t) => {
+      added = (client.add(magnet, { path: DOWNLOAD_DIR, announce: TRACKERS }, (t) => {
         state().meta.set(t.infoHash, { addedAt: Date.now(), lastAccess: Date.now() });
         finish(null, t);
-      }) as Torrent | null | undefined;
+      }) as Torrent | null | undefined) ?? null;
       if (added && typeof added.on === "function") {
         added.on("error", (e?: unknown) =>
           finish(e instanceof Error ? e : new Error("Torrent client error"))
@@ -176,6 +192,9 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
     let oldestTs = Infinity;
     for (const t of client.torrents) {
       if (t.infoHash === keepHash) continue;
+      // a torrent with an open browser stream is never an eviction candidate —
+      // killing it would cut the playback that is actually running
+      if (st.active.has(t.infoHash)) continue;
       const ts = st.meta.get(t.infoHash)?.lastAccess ?? 0;
       if (ts < oldestTs) {
         oldestTs = ts;
@@ -190,6 +209,16 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
     }
     st.meta.delete(oldest.infoHash);
   }
+}
+
+/** The stream route registers every open video stream so eviction and the
+ *  idle sweeper spare the torrent that is actually playing. */
+export function markStreamActive(infoHash: string): void {
+  if (isValidInfoHash(infoHash)) state().active.add(infoHash.toLowerCase());
+}
+
+export function markStreamDone(infoHash: string): void {
+  state().active.delete(infoHash.toLowerCase());
 }
 
 export function isValidInfoHash(id: string): boolean {
@@ -366,6 +395,7 @@ export function stopTorrent(infoHash: string): boolean {
     /* already destroyed */
   }
   st.meta.delete(infoHash);
+  st.active.delete(infoHash.toLowerCase());
   return true;
 }
 
@@ -383,6 +413,19 @@ export function idleTorrent(t: Torrent): void {
   }
 }
 
+/** Idle a torrent by id — same as idleTorrent but callable from the API
+ *  routes. Keeps metadata, peers and downloaded pieces so a retry (e.g. the
+ *  user reviving a failed server chip) starts without paying either the
+ *  metadata wait or the bytes again. */
+export function idleTorrentById(infoHash: string): boolean {
+  const t = findTorrent(infoHash);
+  if (!t) return false;
+  idleTorrent(t);
+  const m = state().meta.get(infoHash.toLowerCase());
+  if (m) m.lastAccess = Date.now();
+  return true;
+}
+
 /** Destroy idle torrents to free bandwidth, connections and disk. */
 function sweep() {
   const st = state();
@@ -390,6 +433,7 @@ function sweep() {
   if (!client) return;
   const now = Date.now();
   for (const t of [...client.torrents]) {
+    if (st.active.has(t.infoHash)) continue; // an open stream is never idle
     const last = st.meta.get(t.infoHash)?.lastAccess ?? now;
     if (now - last > IDLE_DESTROY_MS) stopTorrent(t.infoHash);
   }

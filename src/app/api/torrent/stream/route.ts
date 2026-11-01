@@ -3,6 +3,8 @@ import { Readable } from "node:stream";
 import {
   contentTypeFor,
   ensureTorrent,
+  markStreamActive,
+  markStreamDone,
   pickVideoFile,
   prioritizeRange,
 } from "@/lib/torrent-engine";
@@ -93,6 +95,11 @@ export async function GET(req: NextRequest) {
   }
 
   const raw = file.createReadStream({ start, end });
+  // while this stream is open the torrent must not be evicted or swept —
+  // a warm-triggered LRU pass would otherwise cut the playing video
+  markStreamActive(id);
+  const done = () => markStreamDone(id);
+  (raw as NodeJS.ReadableStream).once?.("close", done);
   // stop pulling pieces when the browser aborts (pause / close / server switch)
   req.signal.addEventListener("abort", () => {
     try {
@@ -100,6 +107,7 @@ export async function GET(req: NextRequest) {
     } catch {
       /* already closed */
     }
+    done();
   });
   // webtorrent's createReadStream lacks the highWaterMark metadata that
   // Readable.toWeb demands on Node 24 — re-wrap it as a proper Readable

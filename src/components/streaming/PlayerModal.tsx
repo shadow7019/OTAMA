@@ -88,8 +88,10 @@ const ARCHIVE_ID = "otama-direct";
 const NO_DATA_SWITCH_MS = 15000;
 /** Switch when only a trickle arrives (never has the first playable MBs in time). */
 const TRICKLE_SWITCH_MS = 25000;
-/** Switch when data flows but the video still can't start. */
+/** Fail over when the download has made NO progress for this long. */
 const STALL_SWITCH_MS = 40000;
+/** Absolute start ceiling — even a creeping trickle can't hold the player longer. */
+const HARD_START_MS = 120000;
 
 const fmtSize = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
@@ -344,17 +346,25 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   /* play order: live servers first, matching the picked audio language;
      falls back to every live server when the filter would empty the list */
   const orderedIdxs = useMemo(() => {
-    const alive = servers.map((_, i) => i).filter((i) => !deadIdxs.has(i));
-    if (serverLang === "auto") return alive;
-    const matching = alive.filter((i) => {
-      const tags = servers[i].audioTags ?? [];
-      // dual/multi-audio releases may carry the chosen language (track lists
-      // aren't in the release name) — they stay visible under any language
-      return (
-        tags.includes(serverLang) || tags.includes("dual") || tags.includes("multi")
-      );
-    });
-    return matching.length ? matching : alive;
+    const all = servers.map((_, i) => i);
+    const pick = (pool: number[]) => {
+      if (serverLang === "auto") return pool;
+      const matching = pool.filter((i) => {
+        const tags = servers[i].audioTags ?? [];
+        // dual/multi-audio releases may carry the chosen language (track lists
+        // aren't in the release name) — they stay visible under any language
+        return (
+          tags.includes(serverLang) || tags.includes("dual") || tags.includes("multi")
+        );
+      });
+      return matching.length ? matching : pool;
+    };
+    const alive = all.filter((i) => !deadIdxs.has(i));
+    const chosen = pick(alive);
+    // every server of this scan is dead-marked: swarms recover (that is why
+    // the dead-mark TTL is short), so retry them instead of showing a dead
+    // player with no way forward
+    return chosen.length ? chosen : pick(all);
   }, [servers, serverLang, deadIdxs]);
   const orderedIdxsRef = useRef(orderedIdxs);
   orderedIdxsRef.current = orderedIdxs;
@@ -403,12 +413,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   const trailer: Video | null = useMemo(() => (details ? trailerOf(details) : null), [details]);
 
-  const stopId = useCallback((id: string | null) => {
+  const stopId = useCallback((id: string | null, mode: "stop" | "idle" = "stop") => {
     if (!id) return;
     fetch("/api/torrent/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, mode }),
       keepalive: true,
     }).catch(() => {});
   }, []);
@@ -426,7 +436,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       triedRef.current = [...triedNext];
       setTried([...triedNext]);
       if (failed) {
-        stopId(failed.id);
+        // idle (not destroy): metadata, peers and already-downloaded pieces
+        // stay — if this server is revived later, or the title is reopened,
+        // playback resumes without paying the bytes again
+        stopId(failed.id, "idle");
         // a server that failed playback stays out of rotation for
         // DEAD_SERVER_TTL — then it re-enters automatically
         markDeadServers([failed.id]);
@@ -672,6 +685,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // lands — the first ticks can legitimately report found:false, so fail
     // over for a "dropped" stream only after we saw it alive at least once
     let seenAlive = false;
+    // progress momentum: a server that keeps downloading — even slowly — is
+    // alive and gets as long as it needs to deliver the first pieces. Failing
+    // over on total elapsed time instead killed healthy-but-slow swarms mid-
+    // download and every switch restarted the bytes from zero, so the player
+    // cycled servers forever without ever starting.
+    let lastProgress = -1;
+    let lastProgressAt = Date.now();
     const tick = async () => {
       if (cancelled) return;
       try {
@@ -688,6 +708,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           return;
         }
         seenAlive = true;
+        const p = j.progress ?? 0;
+        if (p > lastProgress + 5e-6) {
+          lastProgress = p;
+          lastProgressAt = Date.now();
+        }
         if (videoStateRef.current === "playing") return;
         const elapsed = Date.now() - streamStartRef.current;
         if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
@@ -699,9 +724,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         ) {
           // data flows but a few KB/s will not produce playable pieces in time
           failover("This server is too slow");
-        } else if (elapsed > STALL_SWITCH_MS && videoStateRef.current === "loading") {
-          // data may be flowing but the wrong pieces — this server can't start in time
-          failover("This server is too slow to start");
+        } else if (
+          videoStateRef.current === "loading" &&
+          Date.now() - lastProgressAt > STALL_SWITCH_MS
+        ) {
+          // download has gone quiet for 40s and the video still can't start
+          failover("This server has stopped making progress");
+        } else if (elapsed > HARD_START_MS && videoStateRef.current === "loading") {
+          // absolute ceiling: creeping trickles never hold the player forever
+          failover("This server can't start in time");
         }
       } catch {
         /* transient — next tick retries */

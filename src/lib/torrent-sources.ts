@@ -623,44 +623,9 @@ async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promi
   return [...seen.values()];
 }
 
-interface YtsMovie {
-  imdb_code?: string;
-  title?: string;
-  year?: number;
-  torrents?: { hash?: string; quality?: string; size?: string; seeds?: number; peers?: number }[];
-}
-
-/** IMDb-keyed, but the endpoint fuzzy-matches — pin to the exact IMDb code. */
-async function providerYts(imdbId: string, year: string, timeoutMs = 7000): Promise<TorrentSource[]> {
-  const data = await fetchJson<{ data?: { movies?: YtsMovie[] } }>(
-    `https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(imdbId)}&limit=5`,
-    timeoutMs
-  );
-  const movies = (data?.data?.movies ?? []).filter(
-    (mv) => (mv.imdb_code ?? "").toLowerCase() === imdbId.toLowerCase()
-  );
-  const out: TorrentSource[] = [];
-  for (const mv of movies) {
-    // sanity: YTS metadata year must agree with TMDB (±1)
-    if (year && mv.year && Math.abs(mv.year - Number(year)) > 1) continue;
-    for (const t of mv.torrents ?? []) {
-      if (!t.hash || !/^[0-9a-f]{40}$/i.test(t.hash)) continue;
-      out.push({
-        id: t.hash.toLowerCase(),
-        releaseName: `${mv.title ?? "Movie"} ${mv.year ?? ""} ${t.quality ?? ""} YTS`.replace(/\s+/g, " ").trim(),
-        seeders: t.seeds ?? 0,
-        peers: t.peers ?? 0,
-        sizeBytes: parseSizeBytes(t.size),
-        provider: "YTS",
-        quality: t.quality ?? detectQuality(`${t.size}`),
-        fileIdx: null,
-        match: "verified",
-        score: 0,
-      });
-    }
-  }
-  return out;
-}
+/* YTS adapter removed: yts.mx is unreachable from this deployment (instant
+ * DNS failure, verified 2026-11-01) and every YTS release also reaches the
+ * app through Torrentio, which aggregates the same swarm. */
 
 interface EztvTorrent {
   hash?: string;
@@ -1000,8 +965,7 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   }
   if (imdbId) {
     jobs.push(providerTorrentio(type, imdbId, bayCtx, year, airDate));
-    if (type === "movie") jobs.push(providerYts(imdbId, year));
-    else jobs.push(providerEztv(imdbId, bayCtx, airDate));
+    if (type === "tv") jobs.push(providerEztv(imdbId, bayCtx, airDate));
   }
 
   const settled = await Promise.allSettled(jobs);
