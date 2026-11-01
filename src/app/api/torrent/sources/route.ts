@@ -8,8 +8,9 @@ export const dynamic = "force-dynamic";
  * GET /api/torrent/sources[?refresh=1]
  * Probe every torrent source with a lightweight real query and report which
  * ones are working right now (ok / degraded / down), with latency, result
- * counts, mirror host and rolling uptime. Cached for 5 minutes; `refresh=1`
- * forces a fresh scan.
+ * counts, mirror host and rolling uptime. Cached for 10 minutes; `refresh=1`
+ * forces a fresh scan but is honored at most once every 2 minutes — the
+ * indexers are slow and hammering them makes everything look down.
  */
 export async function GET(req: NextRequest) {
   const force = req.nextUrl.searchParams.get("refresh") === "1";

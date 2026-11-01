@@ -14,6 +14,8 @@
 
 export type SourceState = "ok" | "degraded" | "down";
 
+import { mapPool, pacedFetch } from "./net-pacer";
+
 export interface SourceStatus {
   name: string;
   /** what content the source is useful for */
@@ -48,7 +50,11 @@ interface HistoryEntry {
 }
 
 const HISTORY_LIMIT = 20;
-const ANALYSIS_TTL = 5 * 60 * 1000;
+/** how long a full analysis is served from cache (sites are slow — probing
+ *  them often just burns goodwill with the indexers) */
+const ANALYSIS_TTL = 10 * 60 * 1000;
+/** ?refresh=1 is honored at most this often; sooner callers get the cache */
+const FORCE_COOLDOWN_MS = 2 * 60 * 1000;
 
 const history = new Map<string, HistoryEntry[]>();
 
@@ -79,9 +85,11 @@ const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 async function fetchWithTimeout(url: string, timeoutMs: number, accept: string): Promise<string> {
-  const res = await fetch(url, {
+  // pacedFetch: per-host spacing + global cap + bench on 429/5xx, so the
+  // analysis never contributes to the throttling it is trying to observe
+  const res = await pacedFetch(url, {
     headers: { accept, "user-agent": UA },
-    signal: AbortSignal.timeout(timeoutMs),
+    timeoutMs: Math.max(timeoutMs, 12000),
     redirect: "follow",
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -208,49 +216,44 @@ let inFlight: Promise<SourceAnalysis> | null = null;
 
 async function runAnalysis(): Promise<SourceAnalysis> {
   const t0 = Date.now();
-  const settled = await Promise.allSettled(
-    PROBE_ORDER.map(async (name) => {
-      const pt0 = Date.now();
-      try {
-        const r = await probe(name);
-        const state: SourceState = r.results > 0 ? "ok" : "degraded";
-        const latencyMs = Date.now() - pt0;
-        pushHistory(name, state, latencyMs);
-        return { name, state, latencyMs, results: r.results, host: r.host, error: undefined };
-      } catch (err) {
-        const latencyMs = Date.now() - pt0;
-        pushHistory(name, "down", latencyMs);
-        return {
-          name,
-          state: "down" as SourceState,
-          latencyMs,
-          results: 0,
-          host: undefined,
-          error: String(err instanceof Error ? err.message : err).slice(0, 120),
-        };
-      }
-    })
-  );
-  const sources: SourceStatus[] = settled.map((s, i) => {
-    const name = PROBE_ORDER[i];
+  // two probes at a time with per-host pacing — eight at once was exactly
+  // the burst that made the indexers throttle us (sites are slow; treat
+  // them accordingly). Each probe catches its own errors, so the pool
+  // always resolves with one entry per source.
+  const probeResults = await mapPool(PROBE_ORDER, 2, async (name): Promise<SourceStatus> => {
+    const pt0 = Date.now();
     const { pct, runs } = uptimeFor(name);
-    if (s.status === "fulfilled") {
-      return { ...s.value, role: ROLES[name], checkedAt: Date.now(), uptimePct: pct, runs };
+    try {
+      const r = await probe(name);
+      const state: SourceState = r.results > 0 ? "ok" : "degraded";
+      pushHistory(name, state, Date.now() - pt0);
+      return {
+        name,
+        role: ROLES[name],
+        state,
+        latencyMs: Date.now() - pt0,
+        results: r.results,
+        host: r.host,
+        checkedAt: Date.now(),
+        uptimePct: pct,
+        runs,
+      };
+    } catch (err) {
+      pushHistory(name, "down", Date.now() - pt0);
+      return {
+        name,
+        role: ROLES[name],
+        state: "down",
+        latencyMs: Date.now() - pt0,
+        results: 0,
+        error: String(err instanceof Error ? err.message : err).slice(0, 120),
+        checkedAt: Date.now(),
+        uptimePct: pct,
+        runs,
+      };
     }
-    // Promise.allSettled can only reject if the probe wrapper itself throws —
-    // it never does; classify as down to be safe
-    return {
-      name,
-      role: ROLES[name],
-      state: "down",
-      latencyMs: 0,
-      results: 0,
-      error: "probe crashed",
-      checkedAt: Date.now(),
-      uptimePct: pct,
-      runs,
-    };
   });
+  const sources: SourceStatus[] = probeResults;
   return {
     sources,
     checkedAt: Date.now(),
@@ -266,8 +269,11 @@ async function runAnalysis(): Promise<SourceAnalysis> {
 }
 
 export async function getAnalysis(force = false): Promise<SourceAnalysis> {
-  if (!force && lastAnalysis && Date.now() - lastAnalysis.checkedAt < ANALYSIS_TTL) {
-    return { ...lastAnalysis, cached: true };
+  const fresh = lastAnalysis && Date.now() - lastAnalysis.checkedAt < ANALYSIS_TTL;
+  const canForce =
+    force && (!lastAnalysis || Date.now() - lastAnalysis.checkedAt > FORCE_COOLDOWN_MS);
+  if (!canForce && fresh) {
+    return { ...lastAnalysis!, cached: true };
   }
   // concurrent callers share one probe run
   if (!inFlight) {

@@ -19,6 +19,7 @@ import {
   type MatchClass,
   type ParsedRelease,
 } from "./torrent-match";
+import { mapPool, pacedFetch, pacedJson } from "./net-pacer";
 
 export interface TorrentSource {
   /** BitTorrent info hash (40 hex chars) — doubles as the server id */
@@ -187,16 +188,9 @@ function detectQuality(name: string): string {
 }
 
 async function fetchJson<T>(url: string, timeoutMs = 8000): Promise<T | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0" },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
+  // paced per host + global cap; slow indexers get at least 12s before the
+  // abort fires — cutting them off early just wasted the request
+  return pacedJson<T>(url, Math.max(timeoutMs, 12000));
 }
 
 /* ---------- strict validation ---------- */
@@ -487,13 +481,13 @@ async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise
   const cards = new Map<string, BitsearchCard>();
   const scrape = async (q: string) => {
     try {
-      const res = await fetch(`https://bitsearch.eu/search?q=${encodeURIComponent(q)}`, {
+      const res = await pacedFetch(`https://bitsearch.eu/search?q=${encodeURIComponent(q)}`, {
         headers: {
           accept: "text/html,application/xhtml+xml",
           "user-agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         },
-        signal: AbortSignal.timeout(9000),
+        timeoutMs: 13000,
         redirect: "follow",
       });
       if (!res.ok) return;
@@ -523,7 +517,9 @@ async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise
     }
   };
 
-  await Promise.all(queries.map(scrape));
+  // bitsearch is the most rate-limit-sensitive scraper: one query at a time,
+  // spaced by the pacer — a parallel burst here got the whole site to choke
+  await mapPool(queries, 1, scrape);
 
   const out: TorrentSource[] = [];
   for (const c of cards.values()) {
@@ -890,14 +886,14 @@ interface NyaaItem {
 /** RSS search on nyaa.si — the primary public index for fansubbed anime. */
 async function nyaaSearch(query: string): Promise<NyaaItem[]> {
   try {
-    const res = await fetch(
+    const res = await pacedFetch(
       `https://nyaa.si/?page=rss&f=0&c=0_0&q=${encodeURIComponent(query)}`,
       {
         headers: {
           accept: "application/rss+xml",
           "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0",
         },
-        signal: AbortSignal.timeout(9000),
+        timeoutMs: 12000,
       }
     );
     if (!res.ok) return [];
@@ -1195,33 +1191,32 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   // every provider is independent: one being down (CF wall, DNS block, rate
   // limit) never fails the scan. The telemetry tells the UI / operator WHICH
   // sources answered when results look thin.
-  const settled = await Promise.allSettled(
-    jobs.map(async (j) => {
-      const t0 = Date.now();
-      try {
-        const rows = await j.run();
-        return { rows, provider: { name: j.name, count: rows.length, ms: Date.now() - t0, ok: true } };
-      } catch (err) {
-        return {
-          rows: [] as TorrentSource[],
-          provider: {
-            name: j.name,
-            count: 0,
-            ms: Date.now() - t0,
-            ok: false,
-            error: String(err instanceof Error ? err.message : err).slice(0, 100),
-          },
-        };
-      }
-    })
-  );
+  // Providers run 3 at a time (not 8 at once) — a full parallel burst made
+  // the indexers throttle this IP, which then read as "all sources dead".
+  // Each job catches its own errors, so the pool always resolves.
+  const settled = await mapPool(jobs, 3, async (j) => {
+    const t0 = Date.now();
+    try {
+      const rows = await j.run();
+      return { rows, provider: { name: j.name, count: rows.length, ms: Date.now() - t0, ok: true } };
+    } catch (err) {
+      return {
+        rows: [] as TorrentSource[],
+        provider: {
+          name: j.name,
+          count: 0,
+          ms: Date.now() - t0,
+          ok: false,
+          error: String(err instanceof Error ? err.message : err).slice(0, 100),
+        },
+      };
+    }
+  });
   const all: TorrentSource[] = [];
   const providers: ProviderStat[] = [];
   for (const r of settled) {
-    if (r.status === "fulfilled") {
-      all.push(...r.value.rows);
-      providers.push(r.value.provider);
-    }
+    all.push(...r.rows);
+    providers.push(r.provider);
   }
   // audio/language tags are parsed once, centrally, for every provider result
   for (const t of all) t.audioTags = detectAudioTags(t.releaseName, isAnime);
