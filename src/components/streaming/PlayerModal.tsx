@@ -110,6 +110,13 @@ const STALL_SWITCH_MS = 60_000;
 /** Metadata never resolved at all — belt-and-braces behind the engine's own
  *  90s metadata timeout, which reports not-found first. */
 const RESOLVE_SWITCH_MS = 100_000;
+/** Content lock: once this share of the file has buffered (or playback is
+ *  actually running), the stream is ENGAGED — timing-based failover rules
+ *  (stall, hard-start) stop firing. A server that delivered real content has
+ *  done the hard part; the browser will start it and keep up. From here only
+ *  TRUE death may switch: status not-found, a media error, or a stream that
+ *  still delivers zero bytes to the element after a reconnect remount. */
+const STREAM_LOCK_BUFFER = 0.02; // 2% of the file
 /** Absolute start ceiling — 4 minutes on one server before moving on. */
 const HARD_START_MS = 240_000;
 /** Anti-spam floor between watchdog-driven switches: once the player moves to
@@ -875,6 +882,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // playback momentum for the mid-stream stall detector (playing state)
     let lastCt = -1;
     let lastCtAt = Date.now();
+    // content lock (STREAM_LOCK_BUFFER): once true, the stream has real
+    // content buffered and timing-based failover stops — only true death
+    // (status not-found, media error) may still switch. Resets per server:
+    // this closure re-runs on every switch/remount.
+    let contentLocked = false;
     // When the whole backend is unreachable (dev server restart, machine
     // sleep) EVERY request fails at the network level. That is not 14 bad
     // servers — failing over would burn the whole strip and dead-mark it.
@@ -1039,6 +1051,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         lastProgress = p;
         lastProgressAt = Date.now();
       }
+      if (
+        !contentLocked &&
+        (p >= STREAM_LOCK_BUFFER || videoStateRef.current === "playing")
+      ) {
+        contentLocked = true;
+      }
       if (videoStateRef.current === "playing") return;
       const elapsed = Date.now() - streamStartRef.current;
       if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
@@ -1062,12 +1080,20 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         failover("This server is not delivering video data");
       } else if (
         videoStateRef.current === "loading" &&
+        !contentLocked &&
         Date.now() - lastProgressAt > STALL_SWITCH_MS
       ) {
-        // download has gone quiet for 40s and the video still can't start
+        // download has gone quiet for 40s and the video still can't start —
+        // only checked BEFORE the content lock: a server that already buffered
+        // 2%+ is left alone to start (piece batches pause between bursts)
         failover("This server has stopped making progress");
-      } else if (elapsed > HARD_START_MS && videoStateRef.current === "loading") {
-        // absolute ceiling: creeping trickles never hold the player forever
+      } else if (
+        elapsed > HARD_START_MS &&
+        videoStateRef.current === "loading" &&
+        !contentLocked
+      ) {
+        // absolute ceiling — for servers with no content buffered yet; a
+        // locked stream (2%+ buffered) is never abandoned on a timer
         failover("This server can't start in time");
       }
     };
