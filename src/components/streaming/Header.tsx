@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, X, Menu, Clapperboard } from "lucide-react";
 import { ViewType } from "./types";
+import { SourcesDialog } from "./SourcesDialog";
 
 interface HeaderProps {
   active: ViewType;
@@ -98,8 +99,9 @@ export function Header({ active, query, onNavigate, onSearch }: HeaderProps) {
           ))}
         </nav>
 
-        {/* Search + mobile buttons */}
+        {/* Search + source status + mobile buttons */}
         <div className="flex items-center gap-2">
+          <SourcesDialog />
           <div className="relative hidden sm:block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input
