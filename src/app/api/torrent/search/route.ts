@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchTorrentSources, takeProviderStats } from "@/lib/torrent-sources";
-import { recordSearchStats } from "@/lib/source-health";
+import { searchTorrentSources } from "@/lib/torrent-sources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,15 +56,9 @@ export async function GET(req: NextRequest) {
       episode,
       audioLang: langParam || null,
     });
-    // per-provider scan telemetry — shows which sources answered when the
-    // result list looks thin (a provider being down never fails the scan)
-    const providers = takeProviderStats();
-    // real traffic feeds the source-health history the analysis panel shows
-    recordSearchStats(providers);
     const payload = {
       results,
       searchedWith: { title, year, season, episode, lang: langParam },
-      providers,
     };
     if (cache.size > MAX_CACHE) {
       const oldest = cache.keys().next().value;

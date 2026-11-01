@@ -1189,59 +1189,21 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   }
 
   // every provider is independent: one being down (CF wall, DNS block, rate
-  // limit) never fails the scan. The telemetry tells the UI / operator WHICH
-  // sources answered when results look thin.
+  // limit) never fails the scan.
   // Providers run 3 at a time (not 8 at once) — a full parallel burst made
   // the indexers throttle this IP, which then read as "all sources dead".
   // Each job catches its own errors, so the pool always resolves.
-  const settled = await mapPool(jobs, 3, async (j) => {
-    const t0 = Date.now();
+  const settled = await mapPool(jobs, 3, async (j): Promise<TorrentSource[]> => {
     try {
-      const rows = await j.run();
-      return { rows, provider: { name: j.name, count: rows.length, ms: Date.now() - t0, ok: true } };
-    } catch (err) {
-      return {
-        rows: [] as TorrentSource[],
-        provider: {
-          name: j.name,
-          count: 0,
-          ms: Date.now() - t0,
-          ok: false,
-          error: String(err instanceof Error ? err.message : err).slice(0, 100),
-        },
-      };
+      return await j.run();
+    } catch {
+      return [];
     }
   });
-  const all: TorrentSource[] = [];
-  const providers: ProviderStat[] = [];
-  for (const r of settled) {
-    all.push(...r.rows);
-    providers.push(r.provider);
-  }
+  const all: TorrentSource[] = settled.flat();
   // audio/language tags are parsed once, centrally, for every provider result
   for (const t of all) t.audioTags = detectAudioTags(t.releaseName, isAnime);
-  const merged = merge(all, audioLang);
-  // remember which providers actually fed this result set
-  lastProviderStats = providers.sort((a, b) => a.name.localeCompare(b.name));
-  return merged;
-}
-
-export interface ProviderStat {
-  name: string;
-  count: number;
-  ms: number;
-  ok: boolean;
-  error?: string;
-}
-
-/** Stats of the most recent scan (module-level: the route reads them right
- *  after awaiting searchTorrentSources — safe per-request in Node runtime). */
-let lastProviderStats: ProviderStat[] = [];
-
-export function takeProviderStats(): ProviderStat[] {
-  const s = lastProviderStats;
-  lastProviderStats = [];
-  return s;
+  return merge(all, audioLang);
 }
 
 /** Cheap availability probe for the auto-content pipeline (Torrentio only). */
