@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { engineFailure, findTorrent } from "@/lib/torrent-engine";
+import { engineFailure, findTorrent, peersEverConnected } from "@/lib/torrent-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +9,9 @@ export const dynamic = "force-dynamic";
  * Live download state used by the player UI (progress, peers, speed).
  * `engineOk: false` + `engineError` reports a host that cannot run the
  * streaming engine (native module load failure) instead of a blind 500.
+ * `everConnectedPeers: false` across failed servers means the host's
+ * network blocks torrent peer traffic — the player says so instead of
+ * cycling sources forever.
  */
 export async function GET(req: NextRequest) {
   const id = (req.nextUrl.searchParams.get("id") ?? "").toLowerCase();
@@ -20,6 +23,7 @@ export async function GET(req: NextRequest) {
       found: false,
       id,
       engineOk: !engineError,
+      everConnectedPeers: peersEverConnected(),
       ...(engineError ? { engineError } : {}),
     });
   }
@@ -34,5 +38,6 @@ export async function GET(req: NextRequest) {
     speed: torrent.downloadSpeed,
     files: torrent.files?.length ?? 0,
     engineOk: true,
+    everConnectedPeers: true,
   });
 }

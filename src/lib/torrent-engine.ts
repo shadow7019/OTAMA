@@ -149,6 +149,11 @@ function state(): EngineState {
 let cachedCtor: (new (opts: { maxConns: number }) => unknown) | null = null;
 /** detailed failures of the last load attempt — surfaced via engineError */
 let lastLoadErrors: string[] = [];
+/** set the first time ANY torrent connects a peer. A host whose egress
+ *  firewall blocks peer traffic (random high TCP ports, UDP) never sets it —
+ *  every torrent then fails identically, which is the "all servers dead"
+ *  signature. Surfaced via /status so the player can name the real cause. */
+let peersEverConnectedFlag = false;
 
 /**
  * bun + Next standalone: the server's module hooks lose the referrer for
@@ -273,6 +278,14 @@ export function engineFailure(): string | null {
   return state().engineError;
 }
 
+/** Whether any torrent has connected a single peer since server start.
+ *  false across multiple failed servers means the host's network blocks
+ *  torrent peer traffic — no source can play, and saying so beats an
+ *  endless "switching servers" loop. */
+export function peersEverConnected(): boolean {
+  return peersEverConnectedFlag;
+}
+
 function buildMagnet(infoHash: string, name: string): string {
   // NB: build manually — URLSearchParams percent-encodes the colons in
   // "urn:btih:" and webtorrent v3 then rejects the magnet as invalid.
@@ -324,6 +337,10 @@ function waitForMetadata(client: TorrentClient, magnet: string): Promise<Torrent
         added.on("error", (e?: unknown) =>
           finish(e instanceof Error ? e : new Error("Torrent client error"))
         );
+        // first inbound or outbound wire = the host CAN reach peers
+        added.on("wire", () => {
+          peersEverConnectedFlag = true;
+        });
       }
     } catch (err) {
       finish(err instanceof Error ? err : new Error("failed to add torrent"));

@@ -88,11 +88,15 @@ export async function GET(req: NextRequest) {
   // and the player is "stuck on loading". A bounded 206 finishes in seconds,
   // forces the flush, and the browser simply issues the next Range request —
   // the exact pattern progressive video over HTTP is designed around.
-  const STREAM_WINDOW = 4 * 1024 * 1024;
+  // 12 MB: a <video> element keeps only ONE range request in flight, so the
+  // window IS the lookahead buffer — too small and the buffer runs dry
+  // between chunks (constant rebuffering), too big and a buffering proxy
+  // delays first byte. ~12 s of 1080p at typical swarm speeds is the balance.
+  const STREAM_WINDOW = 12 * 1024 * 1024;
   end = Math.min(end, start + STREAM_WINDOW - 1);
 
   // make the swarm fetch the requested range first so playback starts fast
-  prioritizeRange(torrent, file, start, 6 * 1024 * 1024);
+  prioritizeRange(torrent, file, start, Math.max(6 * 1024 * 1024, STREAM_WINDOW));
   // select the whole file so the stream never runs past the critical window
   // (pre-warmed torrents arrive with every file deselected; for freshly added
   // ones this just trims selection down from "all files" to the one we play)

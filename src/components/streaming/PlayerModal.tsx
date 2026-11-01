@@ -73,6 +73,9 @@ interface TorrentStatus {
    *  load failure) — an environment problem, not a dead swarm */
   engineOk?: boolean;
   engineError?: string;
+  /** false = not a single peer has connected since server start: the host's
+   *  network blocks torrent peer traffic and every source will fail */
+  everConnectedPeers?: boolean;
 }
 
 interface ArchiveMatchClient {
@@ -354,6 +357,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // request after 120 s; if it is still loading 60 s later, say so.
   const loadingRemountsRef = useRef(0);
   const loadingBannerShownRef = useRef(false);
+  // one-time notice: this host's network blocks torrent peer traffic entirely
+  const connectivityNoteShownRef = useRef(false);
   const triedRef = useRef(tried);
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
@@ -953,6 +958,19 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         }
       }
       if (j.found === false) {
+        // a server that never registers happens on dead swarms — but if NO
+        // server has ever connected a peer on this host, the network itself
+        // blocks torrent traffic. Name it once instead of cycling silently.
+        if (
+          j.everConnectedPeers === false &&
+          !connectivityNoteShownRef.current &&
+          Date.now() - streamStartRef.current > 60_000
+        ) {
+          connectivityNoteShownRef.current = true;
+          setBanner(
+            "Torrent peers cannot be reached from this server's network (no peer connection since startup) — every source will fail here. Playback needs a host or network that allows peer connections.",
+          );
+        }
         if (seenAlive) failover("This server dropped the stream");
         else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS)
           // the torrent never even registered (metadata timeout ahead) —
