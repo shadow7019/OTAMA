@@ -17,6 +17,7 @@ import {
   Magnet,
   Play,
   FastForward,
+  Captions,
 } from "lucide-react";
 import {
   MediaDetails,
@@ -31,7 +32,7 @@ import {
   trailerOf,
   formatDate,
 } from "@/lib/tmdb";
-import { useMediaStore, useMounted } from "@/hooks/use-media-store";
+import { useMediaStore, useMounted, isServerDead } from "@/hooks/use-media-store";
 import { MediaActions } from "./types";
 
 interface PlayerModalProps {
@@ -57,6 +58,8 @@ interface TorrentServer {
   fileIdx: number | null;
   /** verified = exact title/episode match · pack = season pack (right file auto-picked) · weak = title-only match */
   match: "verified" | "pack" | "weak";
+  /** audio/language tags parsed from the release name (sub / eng / hindi / dual…) */
+  audioTags?: string[];
   score: number;
 }
 
@@ -92,6 +95,169 @@ const fmtSpeed = (bps: number) =>
   bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} MB/s` : `${Math.round(bps / 1e3)} KB/s`;
 const fmtSeeders = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+/** pretty labels for the language chips */
+const LANG_LABEL: Record<string, string> = {
+  auto: "All languages",
+  sub: "Subbed",
+  eng: "English",
+  hindi: "Hindi",
+  tamil: "Tamil",
+  telugu: "Telugu",
+  malayalam: "Malayalam",
+  kannada: "Kannada",
+  bengali: "Bengali",
+  marathi: "Marathi",
+  punjabi: "Punjabi",
+  dual: "Dual audio",
+  multi: "Multi audio",
+  jap: "Japanese",
+  raw: "Raw",
+  spa: "Spanish",
+  por: "Portuguese",
+  chi: "Chinese",
+  kor: "Korean",
+  rus: "Russian",
+  ukr: "Ukrainian",
+  ita: "Italian",
+  fre: "French",
+  ger: "German",
+  unknown: "Unknown",
+};
+
+/** one selectable subtitle language from /api/subtitles */
+interface SubtitleRow {
+  id: string;
+  /** ISO code ("eng", "por"…) — doubles as the <track> language */
+  lang: string;
+  langName: string;
+  /** same-origin /api/subtitles/file VTT proxy URL */
+  src: string;
+  fileName?: string;
+}
+
+/** one row in the CC dropdown */
+function SubMenuItem({
+  label, hint, active, onClick,
+}: {
+  label: string;
+  hint?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={active}
+      onClick={onClick}
+      className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold transition ${
+        active ? "bg-violet-600/25 text-white" : "text-zinc-300 hover:bg-white/10"
+      }`}
+    >
+      <span className="flex items-center gap-2">
+        <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-violet-400" : "bg-transparent"}`} />
+        {label}
+      </span>
+      {hint && <span className="text-[10px] font-bold uppercase text-violet-300">{hint}</span>}
+    </button>
+  );
+}
+
+/**
+ * CC button + subtitle-language dropdown, overlaid directly on the video —
+ * reachable without scrolling, on both torrent and direct streams.
+ * Mirrors the Subs chip row below the player ("Off / Auto / languages").
+ */
+function SubtitleMenu({
+  subs, subState, subtitleLang, setSubtitleLang, activeSub, emptyText,
+}: {
+  subs: SubtitleRow[];
+  subState: "loading" | "ready" | "error";
+  subtitleLang: string;
+  setSubtitleLang: (lang: string) => void;
+  activeSub: SubtitleRow | null;
+  emptyText: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const on = !!activeSub;
+  return (
+    <div className="absolute right-3 top-3 z-30">
+      {open && (
+        <button
+          type="button"
+          aria-label="Close subtitle menu"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 cursor-default"
+        />
+      )}
+      <button
+        type="button"
+        data-testid="cc-button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        title="Subtitle language"
+        className={`relative z-40 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide backdrop-blur transition ${
+          on ? "bg-violet-600/95 text-white" : "bg-black/70 text-zinc-200 hover:bg-black/85"
+        }`}
+      >
+        <Captions className="h-4 w-4" />
+        CC
+        {on && <span className="h-1.5 w-1.5 rounded-full bg-violet-300" />}
+      </button>
+      {open && (
+        <div
+          data-testid="cc-menu"
+          role="menu"
+          className="absolute right-0 top-11 z-40 w-60 overflow-hidden rounded-xl border border-white/10 bg-zinc-900/95 shadow-2xl backdrop-blur"
+        >
+          <div className="border-b border-white/10 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            Subtitle language
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1">
+            <SubMenuItem
+              label="Off"
+              active={subtitleLang === "off"}
+              onClick={() => {
+                setSubtitleLang("off");
+                setOpen(false);
+              }}
+            />
+            <SubMenuItem
+              label="Auto"
+              hint={subtitleLang === "auto" && activeSub ? "on" : undefined}
+              active={subtitleLang === "auto"}
+              onClick={() => {
+                setSubtitleLang("auto");
+                setOpen(false);
+              }}
+            />
+            {subs.map((r) => (
+              <SubMenuItem
+                key={r.lang}
+                label={r.langName}
+                active={subtitleLang === r.lang}
+                onClick={() => {
+                  setSubtitleLang(r.lang);
+                  setOpen(false);
+                }}
+              />
+            ))}
+            {subState === "loading" && (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs text-zinc-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading subtitles…
+              </div>
+            )}
+            {subState !== "loading" && subs.length === 0 && (
+              <div className="px-3 py-2 text-xs text-zinc-500">{emptyText}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // remounted per target via key — initial state is safe to derive from props
   const type = target ? getMediaType(target.item) : "movie";
@@ -113,6 +279,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   /** automatic re-searches done for the CURRENT episode (reset on ep change) */
   const [autoRetries, setAutoRetries] = useState(0);
 
+  /* ---------------- subtitles (OpenSubtitles → our VTT proxy) ---------------- */
+  const [subs, setSubs] = useState<SubtitleRow[]>([]);
+  const [subState, setSubState] = useState<"loading" | "ready" | "error">("loading");
+
   /* ---------------- archive.org direct fallback (movies) ---------------- */
   const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
   const [archiveState, setArchiveState] = useState<"loading" | "found" | "none">("loading");
@@ -129,6 +299,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const addContinue = useMediaStore((s) => s.addContinue);
   const toggleWatchlist = useMediaStore((s) => s.toggleWatchlist);
   const watchlist = useMediaStore((s) => s.watchlist);
+  const serverLang = useMediaStore((s) => s.serverLang);
+  const setServerLang = useMediaStore((s) => s.setServerLang);
+  const subtitleLang = useMediaStore((s) => s.subtitleLang);
+  const setSubtitleLang = useMediaStore((s) => s.setSubtitleLang);
+  const deadServers = useMediaStore((s) => s.deadServers);
+  const markDeadServers = useMediaStore((s) => s.markDeadServers);
+  const reviveServer = useMediaStore((s) => s.reviveServer);
+  const sweepDeadServers = useMediaStore((s) => s.sweepDeadServers);
 
   // refs so callbacks/effects always read the latest values
   const serversRef = useRef(servers);
@@ -142,6 +320,49 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const streamStartRef = useRef(0);
   const currentIdRef = useRef<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const serverLangRef = useRef(serverLang);
+  serverLangRef.current = serverLang;
+
+  /* servers hidden because they already failed playback (auto-revive after
+     DEAD_SERVER_TTL) */
+  const deadIdxs = useMemo(() => {
+    const s = new Set<number>();
+    if (!mounted) return s;
+    servers.forEach((sv, i) => {
+      if (isServerDead(deadServers, sv.id)) s.add(i);
+    });
+    return s;
+  }, [servers, deadServers, mounted]);
+
+  /* play order: live servers first, matching the picked audio language;
+     falls back to every live server when the filter would empty the list */
+  const orderedIdxs = useMemo(() => {
+    const alive = servers.map((_, i) => i).filter((i) => !deadIdxs.has(i));
+    if (serverLang === "auto") return alive;
+    const matching = alive.filter((i) => {
+      const tags = servers[i].audioTags ?? [];
+      // dual/multi-audio releases may carry the chosen language (track lists
+      // aren't in the release name) — they stay visible under any language
+      return (
+        tags.includes(serverLang) || tags.includes("dual") || tags.includes("multi")
+      );
+    });
+    return matching.length ? matching : alive;
+  }, [servers, serverLang, deadIdxs]);
+  const orderedIdxsRef = useRef(orderedIdxs);
+  orderedIdxsRef.current = orderedIdxs;
+
+  /* language chips present in the current scan results */
+  const langChips = useMemo(() => {
+    const order = [
+      "sub", "eng", "hindi", "tamil", "telugu", "malayalam", "kannada",
+      "bengali", "marathi", "punjabi", "dual", "multi", "jap", "raw", "spa", "por",
+      "chi", "kor", "rus", "ukr", "ita", "fre", "ger",
+    ];
+    const present = new Set<string>();
+    for (const s of servers) for (const t of s.audioTags ?? []) present.add(t);
+    return order.filter((t) => present.has(t));
+  }, [servers]);
 
   // When the browser blocks autoplay we surface a tap-to-play overlay instead
   // of a stuck black frame (video data is already buffered at that point).
@@ -156,6 +377,22 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const activeServer = activeIdx !== null ? servers[activeIdx] ?? null : null;
   const isArchive = manualIdx === "archive" && archiveState === "found" && !!archive;
   const showTrailer = manualIdx === "trailer";
+
+  /* ---------------- subtitle selection ----------------
+   * "auto" turns English subs on only while a Japanese-audio server plays
+   * (the default anime shape); a pinned language wins whenever it exists. */
+  const japaneseAudio =
+    !!activeServer &&
+    (activeServer.audioTags ?? []).includes("jap") &&
+    !(activeServer.audioTags ?? []).includes("eng");
+  const activeSub = useMemo(() => {
+    if (!subs.length) return null;
+    if (subtitleLang !== "auto" && subtitleLang !== "off") {
+      return subs.find((r) => r.lang === subtitleLang) ?? null;
+    }
+    if (subtitleLang === "off") return null;
+    return japaneseAudio ? subs.find((r) => r.lang === "eng") ?? null : null;
+  }, [subs, subtitleLang, japaneseAudio]);
 
   const trailer: Video | null = useMemo(() => (details ? trailerOf(details) : null), [details]);
 
@@ -176,14 +413,19 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     (reason: string) => {
       const cur = activeIdxRef.current;
       const list = serversRef.current;
-      const next = list.findIndex((_, i) => i !== cur && !triedRef.current.includes(i));
+      const failed = cur !== null ? list[cur] : null;
       const triedNext = new Set(triedRef.current);
       if (cur !== null) triedNext.add(cur);
       triedRef.current = [...triedNext];
       setTried([...triedNext]);
-      const failed = cur !== null ? serversRef.current[cur] : null;
-      if (failed) stopId(failed.id);
-      if (next >= 0) {
+      if (failed) {
+        stopId(failed.id);
+        // a server that failed playback stays out of rotation for
+        // DEAD_SERVER_TTL — then it re-enters automatically
+        markDeadServers([failed.id]);
+      }
+      const next = orderedIdxsRef.current.find((i) => i !== cur && !triedNext.has(i));
+      if (next !== undefined) {
         setActiveIdx(next);
         setVideoState("loading");
         setStatus(null);
@@ -194,7 +436,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         setBanner(reason);
       }
     },
-    [stopId, serverLabel]
+    [stopId, serverLabel, markDeadServers]
   );
 
   /* ---------------- load servers for this title/episode ---------------- */
@@ -222,6 +464,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       params.set("season", String(season));
       params.set("episode", String(episode));
     }
+    // a picked audio language steers the scan itself: indexers get an extra
+    // dub-targeted query ("english dub", "hindi dubbed"…) for that language
+    if (serverLangRef.current !== "auto") params.set("lang", serverLangRef.current);
     fetch(`/api/torrent/search?${params.toString()}`)
       .then((r) => r.json())
       .then((j: { results?: TorrentServer[] }) => {
@@ -260,19 +505,50 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setAutoRetries(0);
   }, [target, type, season, episode]);
 
+  /* ---------------- subtitle tracks for this title / episode ---------------- */
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    setSubs([]);
+    setSubState("loading");
+    const params = new URLSearchParams({ type, id: String(target.item.id) });
+    if (type === "tv") {
+      params.set("season", String(season));
+      params.set("episode", String(episode));
+    }
+    fetch(`/api/subtitles?${params.toString()}`)
+      .then((r) => r.json())
+      .then((j: { languages?: SubtitleRow[] }) => {
+        if (cancelled) return;
+        setSubs(Array.isArray(j.languages) ? j.languages : []);
+        setSubState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setSubState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target, type, season, episode]);
+
+  /* expired dead-server marks re-enter rotation silently */
+  useEffect(() => {
+    if (mounted) sweepDeadServers();
+  }, [mounted, sweepDeadServers]);
+
   /* ---------------- auto-pick the best untried server ---------------- */
   useEffect(() => {
     if (serversState !== "ready") return;
     if (manualIdx !== null || activeIdx !== null || exhausted) return;
-    const idx = servers.findIndex((_, i) => !tried.includes(i));
-    if (idx >= 0) {
+    const idx = orderedIdxs.find((i) => !tried.includes(i));
+    if (idx !== undefined) {
       setActiveIdx(idx);
       setVideoState("loading");
       streamStartRef.current = Date.now();
     } else {
       setExhausted(true);
     }
-  }, [serversState, servers, tried, activeIdx, manualIdx, exhausted]);
+  }, [serversState, orderedIdxs, tried, activeIdx, manualIdx, exhausted]);
 
   /* ---------------- Otama Direct for episodes with no torrent sources ----------------
    * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
@@ -305,6 +581,25 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setStatus(null);
     setNeedsTap(false);
   }, [streamUrl, videoNonce]);
+
+  /* ---------------- keep the chosen subtitle track showing ----------------
+   * `default` covers a freshly mounted <video>; after switching languages
+   * mid-playback (or an auto language flip on server change) the mode must
+   * be forced, since browsers keep the previous track's mode. */
+  useEffect(() => {
+    if (!activeSub) return;
+    const apply = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      for (const t of Array.from(v.textTracks)) {
+        t.mode =
+          t.kind === "subtitles" && t.language === activeSub.lang ? "showing" : "disabled";
+      }
+    };
+    apply();
+    const timer = setTimeout(apply, 500);
+    return () => clearTimeout(timer);
+  }, [activeSub, streamUrl, videoNonce]);
 
   /* ---------------- live status + watchdog failover ---------------- */
   useEffect(() => {
@@ -512,6 +807,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   /* ---------------- user actions ---------------- */
   const selectTorrent = (idx: number) => {
+    const sv = servers[idx];
+    // clicking a server the user marked dead revives it explicitly
+    if (sv && deadIdxs.has(idx)) reviveServer(sv.id);
     if (idx === activeIdx) {
       // re-selecting the active server = manual retry
       setVideoState("loading");
@@ -702,14 +1000,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
               key={s.id}
               type="button"
               onClick={() => selectTorrent(i)}
-              title={`${s.releaseName}\n${s.seeders} seeders · ${fmtSize(s.sizeBytes)} · ${s.provider}\n${matchBadge.hint}`}
+              title={`${deadIdxs.has(i) ? "⚠ marked dead — tap to retry\n" : ""}${s.releaseName}\n${s.seeders} seeders · ${fmtSize(s.sizeBytes)} · ${s.provider}\n${matchBadge.hint}`}
               className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
                 active
                   ? "bg-red-600 text-white"
                   : tried.includes(i)
                     ? "bg-white/5 text-zinc-600 hover:bg-white/10"
                     : "bg-white/8 text-zinc-300 hover:bg-white/15 hover:text-white"
-              }`}
+              } ${deadIdxs.has(i) ? "opacity-40" : ""}`}
             >
               <Magnet className="h-3 w-3" />
               S{i + 1} · {s.quality}
@@ -735,6 +1033,145 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-zinc-500">
             <Loader2 className="h-3 w-3 animate-spin" /> Scanning torrent networks…
           </span>
+        )}
+      </div>
+
+      {/* Server audio language — picking one re-scans the indexers for dubs of
+          that language and ranks matching servers first */}
+      {mounted && langChips.length > 0 && (
+        <div
+          className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
+          role="group"
+          aria-label="Server audio language"
+          data-testid="server-language-row"
+        >
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+            Lang
+          </span>
+          <button
+            type="button"
+            data-testid="lang-all"
+            aria-pressed={serverLang === "auto"}
+            onClick={() => {
+              setServerLang("auto");
+              if (serverLang !== "auto") setSearchNonce((n) => n + 1);
+            }}
+            title="No language filter — always play the best server"
+            className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+              serverLang === "auto"
+                ? "bg-sky-600 text-white"
+                : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+            }`}
+          >
+            All
+          </button>
+          {langChips.map((tag) => {
+            const count = servers.filter((s) => {
+              const tags = s.audioTags ?? [];
+              return tags.includes(tag) || tags.includes("dual") || tags.includes("multi");
+            }).length;
+            const active = serverLang === tag;
+            return (
+              <button
+                key={tag}
+                type="button"
+                data-testid={`lang-${tag}`}
+                aria-pressed={active}
+                onClick={() => {
+                  setServerLang(tag);
+                  // picking a language re-scans the indexers for dubs of it —
+                  // "All" simply clears the filter over the current results
+                  if (tag !== serverLang) setSearchNonce((n) => n + 1);
+                }}
+                title={`Only ${LANG_LABEL[tag] ?? tag} servers (${count} found)`}
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                  active
+                    ? "bg-sky-600 text-white"
+                    : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+                }`}
+              >
+                {LANG_LABEL[tag] ?? tag}
+                <span className="ml-1 text-[9px] font-normal opacity-70">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Subtitle language — rendered natively by the player (<track>) on both
+          torrent and direct streams. "Auto" = English subs on Japanese audio.
+          The CC button over the video opens the same menu. */}
+      <div
+        className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
+        role="group"
+        aria-label="Subtitle language"
+        data-testid="subtitle-row"
+      >
+        <span className="flex shrink-0 items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+          <Captions className="h-3 w-3" />
+          Subs
+        </span>
+        <button
+          type="button"
+          data-testid="sub-off"
+          aria-pressed={subtitleLang === "off"}
+          onClick={() => setSubtitleLang("off")}
+          title="No subtitles"
+          className={`flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            subtitleLang === "off"
+              ? "bg-violet-600 text-white"
+              : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+          }`}
+        >
+          Off
+        </button>
+        <button
+          type="button"
+          data-testid="sub-auto"
+          aria-pressed={subtitleLang === "auto"}
+          onClick={() => setSubtitleLang("auto")}
+          title="English subtitles only while a Japanese-audio server plays"
+          className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+            subtitleLang === "auto"
+              ? "bg-violet-600 text-white"
+              : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+          }`}
+        >
+          Auto
+          {subtitleLang === "auto" && activeSub && <span className="text-[9px]">● on</span>}
+        </button>
+        {subs.map((r) => {
+          const active = subtitleLang === r.lang;
+          return (
+            <button
+              key={r.lang}
+              type="button"
+              data-testid={`sub-${r.lang}`}
+              aria-pressed={active}
+              onClick={() => setSubtitleLang(r.lang)}
+              title={`${r.langName}${r.fileName ? ` · ${r.fileName}` : ""}`}
+              className={`flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                active
+                  ? "bg-violet-600 text-white"
+                  : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+              }`}
+            >
+              {r.langName}
+            </button>
+          );
+        })}
+        {subState === "loading" && (
+          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-zinc-500">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading subtitles…
+          </span>
+        )}
+        {subState === "ready" && subs.length === 0 && (
+          <span className="shrink-0 text-[11px] text-zinc-600">
+            No subtitles found for this {type === "tv" ? "episode" : "title"} yet
+          </span>
+        )}
+        {subState === "error" && (
+          <span className="shrink-0 text-[11px] text-zinc-600">Subtitles unavailable</span>
         )}
       </div>
 
@@ -792,11 +1229,32 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       setExhausted(true);
                     }}
                     className="h-full w-full bg-black"
-                  />
+                  >
+                    {activeSub && (
+                      <track
+                        key={activeSub.id}
+                        kind="subtitles"
+                        src={activeSub.src}
+                        srcLang={activeSub.lang}
+                        label={activeSub.langName}
+                        default
+                      />
+                    )}
+                  </video>
                   <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
                     <ShieldCheck className="h-3 w-3" />{" "}
                     {archive.kind === "tv" ? "Ad-free · Direct episode" : "Ad-free · Public domain"}
                   </div>
+                  <SubtitleMenu
+                    subs={subs}
+                    subState={subState}
+                    subtitleLang={subtitleLang}
+                    setSubtitleLang={setSubtitleLang}
+                    activeSub={activeSub}
+                    emptyText={
+                      type === "tv" ? "No subtitles found for this episode yet" : "No subtitles found for this title yet"
+                    }
+                  />
                   <p className="absolute inset-x-3 bottom-2 truncate text-[10px] text-zinc-500">
                     {archive.title}
                     {archive.year ? ` (${archive.year})` : ""} · archive.org
@@ -822,10 +1280,31 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     }}
                     onError={() => failover("Stream failed on this server")}
                     className="h-full w-full bg-black"
-                  />
+                  >
+                    {activeSub && (
+                      <track
+                        key={activeSub.id}
+                        kind="subtitles"
+                        src={activeSub.src}
+                        srcLang={activeSub.lang}
+                        label={activeSub.langName}
+                        default
+                      />
+                    )}
+                  </video>
                   <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
                     <ShieldCheck className="h-3 w-3" /> Ad-free · P2P direct
                   </div>
+                  <SubtitleMenu
+                    subs={subs}
+                    subState={subState}
+                    subtitleLang={subtitleLang}
+                    setSubtitleLang={setSubtitleLang}
+                    activeSub={activeSub}
+                    emptyText={
+                      type === "tv" ? "No subtitles found for this episode yet" : "No subtitles found for this title yet"
+                    }
+                  />
                   {videoState === "playing" && downloading && (
                     <div className="absolute bottom-2 left-3 flex items-center gap-2 rounded-full bg-black/70 px-2.5 py-1 text-[10px] font-semibold text-zinc-200 backdrop-blur">
                       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />

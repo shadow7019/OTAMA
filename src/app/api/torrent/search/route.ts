@@ -34,7 +34,11 @@ export async function GET(req: NextRequest) {
   }
 
   const cacheKey = `${type}:${id}:${type === "tv" ? `${season}:${episode}` : "m"}`;
-  const cached = cache.get(cacheKey);
+  // a language-targeted scan is a different result set — never serve the
+  // unfiltered one from cache (and vice versa)
+  const langParam = (sp.get("lang") ?? "").trim().toLowerCase();
+  const cacheKeyWithLang = langParam ? `${cacheKey}:${langParam}` : cacheKey;
+  const cached = cache.get(cacheKeyWithLang);
   if (cached && Date.now() - cached.ts < cached.ttl) {
     return NextResponse.json(cached.data, { headers: { "X-Cache": "HIT" } });
   }
@@ -43,13 +47,21 @@ export async function GET(req: NextRequest) {
   const year = (sp.get("year") ?? "").trim().slice(0, 4);
 
   try {
-    const results = await searchTorrentSources({ type, tmdbId: id, title, year, season, episode });
-    const payload = { results, searchedWith: { title, year, season, episode } };
+    const results = await searchTorrentSources({
+      type,
+      tmdbId: id,
+      title,
+      year,
+      season,
+      episode,
+      audioLang: langParam || null,
+    });
+    const payload = { results, searchedWith: { title, year, season, episode, lang: langParam } };
     if (cache.size > MAX_CACHE) {
       const oldest = cache.keys().next().value;
       if (oldest) cache.delete(oldest);
     }
-    cache.set(cacheKey, {
+    cache.set(cacheKeyWithLang, {
       data: payload,
       ts: Date.now(),
       ttl: results.length ? TTL : EMPTY_TTL,

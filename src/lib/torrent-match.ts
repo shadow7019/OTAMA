@@ -512,6 +512,13 @@ export function matchTv(
 
   const air = ctx.airDate ? parseYmd(ctx.airDate) : null;
 
+  // A year token far from the episode's air year marks a reboot, remake or a
+  // different production sharing the title ("ONE PIECE 2023" — the Netflix
+  // live-action — must never answer the 1999 anime's S01E01). Long-running
+  // shows are unaffected: their releases either carry no year token or the
+  // season's own year, which equals the air year.
+  if (p.year !== null && air && Math.abs(p.year - air.y) > 3) return null;
+
   // ANIME MERGED-SEQUEL RULES — TMDB folds a sequel season into the base show
   // ("Bleach" S02 = Thousand-Year Blood War) while fansubs index the sequel
   // as its own series numbered from 1. Only two names identify the episode,
