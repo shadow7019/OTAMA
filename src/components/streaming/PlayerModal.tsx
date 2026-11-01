@@ -326,6 +326,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const serverLangRef = useRef(serverLang);
   serverLangRef.current = serverLang;
+  /* scan key (type:id:se:ep) of the last torrent scan — lets a language
+     re-scan of the same title keep the current swarm instead of wiping it */
+  const lastScanKeyRef = useRef<string | null>(null);
 
   /* servers hidden because they already failed playback (auto-revive after
      DEAD_SERVER_TTL) */
@@ -447,16 +450,26 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   useEffect(() => {
     if (!target) return;
     let cancelled = false;
-    setServers([]);
+    const scanKey = `${type}:${target.item.id}:${type === "tv" ? `${season}:${episode}` : "m"}`;
+    // same-title re-scan (language switch / "Search again"): keep the swarm
+    // and the running stream alive while the indexers answer — an empty or
+    // failed scan must never blank the server row or strand the player
+    const rescan = lastScanKeyRef.current === scanKey;
+    lastScanKeyRef.current = scanKey;
+    const prevCount = rescan ? serversRef.current.length : 0;
+    const langAtScan = serverLangRef.current;
     setServersState("loading");
     setTried([]);
     triedRef.current = [];
-    setActiveIdx(null);
     setManualIdx(null);
     setExhausted(false);
-    setVideoState("loading");
     setStatus(null);
     setBanner(null);
+    if (!rescan) {
+      setServers([]);
+      setActiveIdx(null);
+      setVideoState("loading");
+    }
 
     const params = new URLSearchParams({
       type,
@@ -470,16 +483,39 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     }
     // a picked audio language steers the scan itself: indexers get an extra
     // dub-targeted query ("english dub", "hindi dubbed"…) for that language
-    if (serverLangRef.current !== "auto") params.set("lang", serverLangRef.current);
+    if (langAtScan !== "auto") params.set("lang", langAtScan);
     fetch(`/api/torrent/search?${params.toString()}`)
       .then((r) => r.json())
       .then((j: { results?: TorrentServer[] }) => {
         if (cancelled) return;
-        setServers(Array.isArray(j.results) ? j.results : []);
+        const results = Array.isArray(j.results) ? j.results : [];
+        if (!results.length && prevCount > 0) {
+          // keep the previous swarm and the stream that is already playing —
+          // picking a language that no indexer serves must not empty the row
+          setServersState("ready");
+          setBanner(
+            langAtScan !== "auto"
+              ? `No ${LANG_LABEL[langAtScan] ?? langAtScan} servers found — showing all ${prevCount}`
+              : `Re-scan found nothing new — keeping all ${prevCount} servers`,
+          );
+          return;
+        }
+        setServers(results);
         setServersState("ready");
+        if (rescan) {
+          // fresh result set for the same title: drop the current pick so the
+          // auto-pick effect restarts playback on the best new server
+          setActiveIdx(null);
+        }
       })
       .catch(() => {
-        if (!cancelled) setServersState("error");
+        if (cancelled) return;
+        if (prevCount > 0) {
+          setServersState("ready");
+          setBanner("Re-scan failed — still playing the current server");
+        } else {
+          setServersState("error");
+        }
       });
 
     // Otama Direct: movies → public-domain copy; TV episodes → episode lookup
@@ -1081,8 +1117,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       </div>
 
       {/* Server audio language — picking one re-scans the indexers for dubs of
-          that language and ranks matching servers first */}
-      {mounted && langChips.length > 0 && (
+          that language and ranks matching servers first. Stays mounted while a
+          language is pinned so "All" is always reachable, even after a scan
+          that found nothing for it. */}
+      {mounted && (langChips.length > 0 || serverLang !== "auto") && (
         <div
           className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
           role="group"
