@@ -624,8 +624,86 @@ async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promi
   return [...seen.values()];
 }
 
-interface YtsTorrent {
-  hash?: string;
+interface SolidTorrentsRow {
+  infohash?: string;
+  title?: string;
+  size?: number;
+  /** older API responses carried a swarm object; newer ones may omit it */
+  swarm?: { seeders?: number; leechers?: number } | null;
+  seeders?: number;
+  leechers?: number;
+}
+
+/**
+ * SolidTorrents — JSON API index (solidtorrents.eu; the .to domain redirects
+ * and answers the same shape). Infohash-keyed so results stream directly from
+ * the engine. Seed counts are often absent — unknown-seeder rows rank low in
+ * merge() but still give the player a working backup pipe when the big
+ * indexers are walled. Verified reachable 2026-11-01.
+ */
+const SOLID_HOSTS = ["solidtorrents.eu", "solidtorrents.to"];
+
+async function providerSolidTorrents(
+  type: "movie" | "tv",
+  ctx: BayContext
+): Promise<TorrentSource[]> {
+  const { title, originalTitle, year, season, episode } = ctx;
+  const queries =
+    type === "movie"
+      ? [`${title} ${year ?? ""}`.trim(), title]
+      : [
+          `${title} s${pad(season)}e${pad(episode)}`,
+          `${title} ${ctx.showLang ?? ""}`.trim(),
+          title,
+        ];
+  const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
+  if (dub) queries.push(`${title} ${dub}`);
+
+  const seen = new Map<string, TorrentSource>();
+  for (const q of queries) {
+    if (seen.size >= 5) break;
+    let data: { results?: SolidTorrentsRow[] } | null = null;
+    for (const host of SOLID_HOSTS) {
+      data = await fetchJson<{ results?: SolidTorrentsRow[] }>(
+        `https://${host}/api/v1/search?q=${encodeURIComponent(q)}`,
+        8000
+      );
+      if (data) break; // any well-formed answer ends the chain
+    }
+    for (const r of data?.results ?? []) {
+      if (!r.infohash || !/^[0-9a-f]{40}$/i.test(r.infohash)) continue;
+      const name = (r.title ?? "Torrent").trim();
+      const p = parseRelease(name);
+      const match =
+        type === "movie"
+          ? matchMovie(p, title, originalTitle, year)
+          : matchTv(p, season, episode, title, originalTitle, {
+              airDate: ctx.airDate,
+              showLang: ctx.showLang,
+              absEpisode: ctx.absEpisode,
+            });
+      if (!match) continue;
+      if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
+      const key = r.infohash.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.set(key, {
+        id: key,
+        releaseName: name,
+        seeders: r.swarm?.seeders ?? r.seeders ?? 0,
+        peers: r.swarm?.leechers ?? r.leechers ?? 0,
+        sizeBytes: r.size ?? 0,
+        provider: "SolidTorrents",
+        quality: detectQuality(name),
+        fileIdx: null,
+        match,
+        score: 0,
+      });
+    }
+  }
+  return [...seen.values()];
+}
+
+interface YtsTorrent {  hash?: string;
   quality?: string;
   type?: string;
   size?: string;
@@ -867,20 +945,24 @@ export function batchRange(name: string): [number, number] | null {
  */
 async function providerNyaa(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
   const { title, originalTitle, season, episode, absEpisode, relEpisode, isAnime } = ctx;
-  if (!isAnime) return [];
+  if (type !== "movie" && !isAnime && !title) return [];
   const wanted = absEpisode ?? episode;
   const relWanted = relEpisode ?? null;
   const queries =
     type === "movie"
       ? [`${title} ${ctx.year ?? ""}`.trim(), title, ...(originalTitle ? [originalTitle] : [])]
-      : [
-          `${title} ${wanted}`,
-          // merged sequel seasons are fansub-numbered from 1 ("Sennen
-          // Kessen-hen - 45"), which differs from the broadcast-order number
-          ...(relWanted != null && relWanted !== wanted ? [`${title} ${relWanted}`] : []),
-          ...(originalTitle ? [`${originalTitle} ${wanted}`] : []),
-          `${title} s${pad(season)}e${pad(episode)}`,
-        ];
+      : isAnime
+        ? [
+            `${title} ${wanted}`,
+            // merged sequel seasons are fansub-numbered from 1 ("Sennen
+            // Kessen-hen - 45"), which differs from the broadcast-order number
+            ...(relWanted != null && relWanted !== wanted ? [`${title} ${relWanted}`] : []),
+            ...(originalTitle ? [`${originalTitle} ${wanted}`] : []),
+            `${title} s${pad(season)}e${pad(episode)}`,
+          ]
+        : // western shows on Nyaa use standard SxxEyy naming — bare episode
+          // numbers ("Friends 8") would just return noise
+          [`${title} s${pad(season)}e${pad(episode)}`, title];
   // "english dub" etc — Nyaa carries tagged dub uploads for popular anime
   const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
   if (dub) queries.push(`${title} ${dub}`);
@@ -986,6 +1068,26 @@ const MATCH_RANK: Record<MatchClass, number> = {
   weak: -6,
 };
 
+/** Trust adjustment per indexer, added on top of the content score. Measured
+ * on 2026-11-01: BitSearch's top "167 seeders" hit for Bleach S02E01 failed
+ * to resolve metadata at all (stale scrape counts), while Nyaa's 67-seeder
+ * result streamed at 1.2 MB/s — curated/indexed sources rank above scrapers.
+ * Unknown providers get 0 (neutral). */
+const PROVIDER_TRUST: Record<string, number> = {
+  Nyaa: 4,
+  // Torrentio rows carry their upstream tracker's name in `provider`
+  // (parsed from its "⚙️ <tracker>" meta line) — Nyaa-fed rows arrive as
+  // "NyaaSi" and must get the same trust as direct Nyaa results
+  NyaaSi: 4,
+  Torrentio: 3,
+  EZTV: 2,
+  YTS: 2,
+  SolidTorrents: 1,
+  ThePirateBay: 0,
+  TorrentsCSV: 0,
+  BitSearch: -3,
+};
+
 function merge(sources: TorrentSource[], audioLang?: string | null): TorrentSource[] {
   const best = new Map<string, TorrentSource>();
   for (const t of sources) {
@@ -994,7 +1096,8 @@ function merge(sources: TorrentSource[], audioLang?: string | null): TorrentSour
   }
   const list = [...best.values()];
   for (const t of list) {
-    let s = scoreTorrent(t) + MATCH_RANK[t.match] + (t.countryPenalty ?? 0);
+    let s =
+      scoreTorrent(t) + MATCH_RANK[t.match] + (t.countryPenalty ?? 0) + (PROVIDER_TRUST[t.provider] ?? 0);
     // an explicitly picked audio language ranks matching releases up, so the
     // player's auto-pick starts with a server that speaks the chosen language.
     // dual/multi releases may carry it (their track lists aren't in the name)
@@ -1074,7 +1177,11 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
     jobs.push({ name: "ThePirateBay", run: () => providerPirateBay(type, bayCtx) });
     jobs.push({ name: "BitSearch", run: () => providerBitSearch(type, bayCtx) });
     jobs.push({ name: "TorrentsCSV", run: () => providerTorrentsCsv(type, bayCtx) });
-    if (isAnime) jobs.push({ name: "Nyaa", run: () => providerNyaa(type, bayCtx) });
+    jobs.push({ name: "SolidTorrents", run: () => providerSolidTorrents(type, bayCtx) });
+    // Nyaa carries more than Japanese anime — western animation and
+    // fansub-adjacent shows live there too. One or two cheap RSS calls;
+    // the strict matcher rejects everything that isn't this show.
+    if (type === "tv") jobs.push({ name: "Nyaa", run: () => providerNyaa(type, bayCtx) });
   }
   if (imdbId) {
     jobs.push({

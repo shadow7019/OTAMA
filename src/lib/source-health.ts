@@ -117,6 +117,7 @@ const PROBE_ORDER = [
   "EZTV",
   "BitSearch",
   "TorrentsCSV",
+  "SolidTorrents",
   "Nyaa",
 ] as const;
 
@@ -127,7 +128,8 @@ const ROLES: Record<(typeof PROBE_ORDER)[number], string> = {
   EZTV: "tv",
   BitSearch: "movies · tv",
   TorrentsCSV: "movies · tv",
-  Nyaa: "anime",
+  SolidTorrents: "movies · tv · anime",
+  Nyaa: "anime · tv",
 };
 
 async function probe(name: string): Promise<ProbeResult> {
@@ -178,6 +180,13 @@ async function probe(name: string): Promise<ProbeResult> {
         "application/json"
       );
       return { results: ((JSON.parse(body).torrents ?? []) as unknown[]).length };
+    }
+    case "SolidTorrents": {
+      return firstHost(
+        ["solidtorrents.eu", "solidtorrents.to"],
+        (h) => `https://${h}/api/v1/search?q=inception`,
+        (body) => ((JSON.parse(body).results ?? []) as unknown[]).length
+      );
     }
     case "Nyaa": {
       const body = await fetchWithTimeout(
