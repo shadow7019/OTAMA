@@ -84,9 +84,9 @@ interface ArchiveMatchClient {
 }
 
 const ARCHIVE_ID = "otama-direct";
-/** Switch servers when the swarm gives us nothing at all. */
-const NO_PEER_SWITCH_MS = 18000;
-/** Switch when peers exist but data never arrives. */
+/** Switch when peers exist but no data ever arrives — dead/poisoned swarm. */
+const NO_DATA_SWITCH_MS = 15000;
+/** Switch when data flows but the video still can't start. */
 const STALL_SWITCH_MS = 40000;
 
 const fmtSize = (b: number) =>
@@ -608,6 +608,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       return;
     }
     let cancelled = false;
+    // the torrent registers in the engine only once the video's first request
+    // lands — the first ticks can legitimately report found:false, so fail
+    // over for a "dropped" stream only after we saw it alive at least once
+    let seenAlive = false;
     const tick = async () => {
       if (cancelled) return;
       try {
@@ -616,13 +620,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         if (cancelled) return;
         setStatus(j);
         if (j.found === false) {
-          failover("This server dropped the stream");
+          if (seenAlive) failover("This server dropped the stream");
           return;
         }
+        seenAlive = true;
         if (videoStateRef.current === "playing") return;
         const elapsed = Date.now() - streamStartRef.current;
-        if (elapsed > NO_PEER_SWITCH_MS && (j.peers ?? 0) === 0 && (j.progress ?? 0) === 0) {
-          failover("No peers on this server");
+        if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
+          failover("No data from this server");
         } else if (elapsed > STALL_SWITCH_MS && videoStateRef.current === "loading") {
           // data may be flowing but the wrong pieces — this server can't start in time
           failover("This server is too slow to start");

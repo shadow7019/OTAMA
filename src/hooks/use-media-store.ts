@@ -47,8 +47,10 @@ interface MediaStore {
   clearContinue: () => void;
 }
 
-/** how long a failed server stays hidden before we automatically retry it */
-export const DEAD_SERVER_TTL = 6 * 60 * 60 * 1000;
+/** how long a failed server stays hidden before we automatically retry it.
+ *  Short on purpose: swarms recover (seeders come back), and a long TTL turns
+ *  one bad session into a strip full of dead servers that are fine again. */
+export const DEAD_SERVER_TTL = 45 * 60 * 1000;
 
 export function isServerDead(
   dead: Record<string, number>,
@@ -165,7 +167,13 @@ export const useMediaStore = create<MediaStore>()(
 
       clearContinue: () => set({ continueWatching: [] }),
     }),
-    { name: STORAGE_KEY }
+    {
+      name: STORAGE_KEY,
+      // v1: the dead-server TTL was 6h and one bad session poisoned the
+      // strip — drop accumulated marks once on upgrade
+      version: 1,
+      migrate: (st) => ({ ...(st as Record<string, unknown>), deadServers: {} }),
+    }
   )
 );
 
