@@ -258,6 +258,32 @@ export const WEB_SOURCES: WebSource[] = [
     movie: (id) => `https://vidfast.pro/movie/${id}?autoPlay=true`,
     tv: (id, s, e) => `https://vidfast.pro/tv/${id}/${s}/${e}?autoPlay=true`,
   },
+  // verified live (movie+tv endpoints answer 200): ranked right after the
+  // two most reliable so the auto-fallback opens something that works
+  {
+    id: "vidsrc-to",
+    name: "VidSrc.to",
+    movie: (id) => `https://vidsrc.to/embed/movie/${id}`,
+    tv: (id, s, e) => `https://vidsrc.to/embed/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "vidsrc-su",
+    name: "VidSrc.su",
+    movie: (id) => `https://vidsrc.su/embed/movie?tmdb=${id}`,
+    tv: (id, s, e) => `https://vidsrc.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+  },
+  {
+    id: "111movies",
+    name: "111Movies",
+    movie: (id) => `https://111movies.com/movie/${id}`,
+    tv: (id, s, e) => `https://111movies.com/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "vidjoy",
+    name: "VidJoy",
+    movie: (id) => `https://vidjoy.pro/embed/movie/${id}`,
+    tv: (id, s, e) => `https://vidjoy.pro/embed/tv/${id}/${s}/${e}`,
+  },
   {
     id: "vidsrc-xyz",
     name: "VidSrc",

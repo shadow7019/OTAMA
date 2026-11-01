@@ -369,6 +369,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const loadingBannerShownRef = useRef(false);
   // one-time notice: this host's network blocks torrent peer traffic entirely
   const connectivityNoteShownRef = useRef(false);
+  // web ids the automatic passes have already opened — manual re-taps are
+  // always allowed, the auto chain just never re-opens a dead one
+  const autoWebTriedRef = useRef<Set<string>>(new Set());
   // the watchdog tick must go idle while a web embed is on screen — the
   // torrent was stopped on purpose and status polling would just fail over
   const manualIdxRef = useRef(manualIdx);
@@ -1213,6 +1216,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     if (!noSourcesYet || !episodeAired || autoRetries >= 5) return;
     // a direct episode stream that is already playing must not be interrupted
     if (manualIdx === "archive" && archiveState === "found") return;
+    // same for a web embed: rescans must not yank the user off a playing source
+    if (manualIdx === "web") return;
     const t = setTimeout(() => {
       setAutoRetries((n) => n + 1);
       setSearchNonce((n) => n + 1);
@@ -1264,6 +1269,16 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setPrevWebKey(webKey);
     setWebFrame("loading");
   }
+  // cross-origin frames give no error events: if nothing fired onLoad in 20s,
+  // treat the embed as failed (the auto chain then moves to the next server)
+  useEffect(() => {
+    if (!isWeb || webFrame !== "loading") return;
+    const t = setTimeout(
+      () => setWebFrame((s) => (s === "loading" ? "timeout" : s)),
+      20_000,
+    );
+    return () => clearTimeout(t);
+  }, [isWeb, webKey, webFrame]);
   const title = getTitle(item);
 
   const goEpisode = (s: number, e: number) => {
@@ -1329,6 +1344,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   // re-clicking the active web chip reloads its iframe (fresh attempt)
   const selectWeb = (id: string) => {
+    autoWebTriedRef.current.add(id); // the auto chain never re-opens this one
     if (manualIdx === "web" && webSourceId === id) {
       setWebReloadNonce((n) => n + 1);
       return;
@@ -1376,6 +1392,47 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       (videoState === "error" && exhausted && !isArchive && !showTrailer));
   const showNoSourcePanel =
     noSources && !isWeb && !isArchive && !showTrailer && archiveState !== "found";
+
+  /* ---------------- auto-open the best available server ----------------
+   * Torrent sources are preferred (ad-free) and tried first. When they are
+   * exhausted — or the indexers found nothing at all — the player
+   * automatically opens the healthiest web embed (health dots from the
+   * probes: up > popup > unknown > down) instead of leaving a dead panel.
+   * If that embed fails to load too, the chain advances to the next best
+   * one. Every auto-opened id is remembered so a dead source is never
+   * re-opened; manual chips always work. */
+  const autoOpenNextWeb = (reason: string) => {
+    const rank = (h?: "up" | "popup" | "down") =>
+      h === "up" ? 0 : h === "popup" ? 1 : h === "down" ? 2 : 1.5;
+    const candidates = WEB_SOURCES.map((s, i) => ({ s, i, r: rank(webHealth[s.id]) }))
+      .filter((c) => !autoWebTriedRef.current.has(c.s.id) && c.r < 2)
+      .sort((a, b) => a.r - b.r || a.i - b.i);
+    const next = candidates[0];
+    if (!next) return false;
+    autoWebTriedRef.current.add(next.s.id);
+    if (activeServer) stopId(activeServer.id);
+    setManualIdx("web");
+    setWebSourceId(next.s.id);
+    setExhausted(false);
+    setWebFrame("loading");
+    setBanner(`${reason} — auto-opened ${next.s.name} (web). Ads play on their page.`);
+    return true;
+  };
+  useEffect(() => {
+    if (serversState === "loading" || isWeb || isArchive || showTrailer) return;
+    if (exhausted)
+      autoOpenNextWeb("Every torrent server was tried");
+    else if (noSources && mounted)
+      autoOpenNextWeb("No torrent server found for this title");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the exhaustion/no-source transition; webHealth read via closure is current at that moment
+  }, [exhausted, noSources, serversState, isWeb, isArchive, showTrailer, mounted]);
+  // chain within web servers: an embed that never loaded hands playback to
+  // the next best untried one; when all are consumed the timeout panel stays
+  useEffect(() => {
+    if (webFrame !== "timeout" || !isWeb) return;
+    autoOpenNextWeb(`${webSource?.name ?? "This web server"} did not load`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- webHealth re-runs the chain decision with fresh probe data
+  }, [webFrame, isWeb, webHealth]);
 
   const downloading = status && (status.progress ?? 0) < 0.999;
   const videoKey = `${streamUrl ?? "none"}-${videoNonce}`;
