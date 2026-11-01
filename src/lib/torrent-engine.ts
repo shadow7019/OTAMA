@@ -82,7 +82,9 @@ const DOWNLOAD_DIR = path.join(os.tmpdir(), "otama-torrents");
 // active stream + 2 pre-warmed fallbacks + headroom for a second viewer
 const MAX_TORRENTS = 6;
 const IDLE_DESTROY_MS = 30 * 60 * 1000;
-const METADATA_TIMEOUT_MS = 40_000;
+// DHT-only and thin swarms routinely need 30-60s to answer a metadata
+// request; killing them at 40s turned "slow" into "dead" for the player
+const METADATA_TIMEOUT_MS = 90_000;
 
 try {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
@@ -410,7 +412,9 @@ export async function ensureTorrent(infoHash: string, displayName: string): Prom
     if (m) m.lastAccess = Date.now();
     if (!existing.ready) {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timed out waiting for torrent metadata")), 30_000);
+        // aligned with METADATA_TIMEOUT_MS: a torrent mid-resolution gets the
+        // same patience here as a fresh add would
+        const timer = setTimeout(() => reject(new Error("Timed out waiting for torrent metadata")), 75_000);
         existing.on("ready", () => {
           clearTimeout(timer);
           resolve();

@@ -84,18 +84,25 @@ interface ArchiveMatchClient {
 }
 
 const ARCHIVE_ID = "otama-direct";
-/** Switch when peers exist but no data ever arrives — dead/poisoned swarm. */
-const NO_DATA_SWITCH_MS = 15000;
-/** Switch when only a trickle arrives (never has the first playable MBs in time). */
-const TRICKLE_SWITCH_MS = 25000;
-/** Swarm reports alive (speed > 0, pack progress creeping) but the video
- * element has parsed zero media — the swarm is fetching pieces we don't play.
- * Don't sit out the 120s absolute ceiling; move on. */
-const FIRST_DATA_SWITCH_MS = 30000;
-/** Fail over when the download has made NO progress for this long. */
-const STALL_SWITCH_MS = 40000;
-/** Absolute start ceiling — even a creeping trickle can't hold the player longer. */
-const HARD_START_MS = 120000;
+/* Failover philosophy: a torrent swarm routinely needs 30-60s just to resolve
+ * metadata and announce to trackers — "slow" is NORMAL, only DEATH is a reason
+ * to switch. The 2s status poll checks the server continuously; as long as it
+ * shows any life (peers, speed, creeping progress) the player stays on it.
+ * A threshold below fires only on evidence the server cannot work. */
+/** Nothing at all after 45s — no peers, no data: dead or poisoned swarm. */
+const NO_DATA_SWITCH_MS = 45_000;
+/** Data crawling at a trickle and the video still can't start after 75s. */
+const TRICKLE_SWITCH_MS = 75_000;
+/** Swarm alive and downloading but the video element parsed zero media —
+ *  it is fetching pieces this video never plays. */
+const FIRST_DATA_SWITCH_MS = 90_000;
+/** The download went completely quiet (no progress) for this long. */
+const STALL_SWITCH_MS = 60_000;
+/** Metadata never resolved at all — belt-and-braces behind the engine's own
+ *  90s metadata timeout, which reports not-found first. */
+const RESOLVE_SWITCH_MS = 100_000;
+/** Absolute start ceiling — 4 minutes on one server before moving on. */
+const HARD_START_MS = 240_000;
 
 const fmtSize = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
@@ -672,6 +679,16 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setNeedsTap(false);
   }, [streamUrl, videoNonce]);
 
+  /* seconds counter while connecting — makes the patient server check visible
+   * instead of looking frozen */
+  const [checkTick, setCheckTick] = useState(0);
+  useEffect(() => {
+    setCheckTick(0);
+    if (videoState !== "loading") return;
+    const iv = setInterval(() => setCheckTick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, [videoState, streamUrl, videoNonce]);
+
   /* ---------------- keep the chosen subtitle track showing ----------------
    * `default` covers a freshly mounted <video>; after switching languages
    * mid-playback (or an auto language flip on server change) the mode must
@@ -818,10 +835,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       seenAlive = true;
       // metadata still resolving: pieces cannot flow yet, so the no-data and
       // trickle rules below would kill slow-to-resolve swarms (anime fansubs
-      // routinely take 20-40 s) long before they had a chance. Hold until the
-      // server's own metadata timeout (40 s) plus slack, then move on.
+      // routinely take 20-40 s, thin DHT swarms longer) long before they had
+      // a chance. Hold until past the engine's own 90s metadata timeout —
+      // the engine reports not-found first when the torrent is truly dead.
       if (j.ready === false) {
-        if (Date.now() - streamStartRef.current > 50_000)
+        if (Date.now() - streamStartRef.current > RESOLVE_SWITCH_MS)
           failover("This server is taking too long to resolve");
         return;
       }
@@ -1608,6 +1626,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     </span>
                     …
                   </p>
+                  {checkTick > 0 && (
+                    <p className="text-[11px] text-zinc-500">
+                      Checking this server — {checkTick}s · it only switches if this one is truly dead
+                    </p>
+                  )}
                   {activeServer && (
                     <p className="max-w-md truncate text-[11px] text-zinc-600">
                       {activeServer.releaseName} · {fmtSize(activeServer.sizeBytes)}
