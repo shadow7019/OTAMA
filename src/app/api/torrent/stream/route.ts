@@ -82,6 +82,14 @@ export async function GET(req: NextRequest) {
       end = Math.max(start, Math.min(end, file.length - 1));
     }
   }
+  // Cap every response to a bounded window. An open-ended `bytes=X-` response
+  // stays open until the client walks away — behind buffering proxies/edges
+  // (which only flush once a response COMPLETES) the video then waits forever
+  // and the player is "stuck on loading". A bounded 206 finishes in seconds,
+  // forces the flush, and the browser simply issues the next Range request —
+  // the exact pattern progressive video over HTTP is designed around.
+  const STREAM_WINDOW = 4 * 1024 * 1024;
+  end = Math.min(end, start + STREAM_WINDOW - 1);
 
   // make the swarm fetch the requested range first so playback starts fast
   prioritizeRange(torrent, file, start, 6 * 1024 * 1024);
@@ -117,6 +125,8 @@ export async function GET(req: NextRequest) {
     "Content-Type": contentTypeFor(file.name),
     "Accept-Ranges": "bytes",
     "Cache-Control": "no-store",
+    // hint reverse proxies not to buffer this response
+    "X-Accel-Buffering": "no",
     "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
     "Content-Length": String(end - start + 1),
   });

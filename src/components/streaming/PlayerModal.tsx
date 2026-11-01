@@ -349,6 +349,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // One remount gets a fresh range request; a second failure means this
   // server's pipe is the problem — fail over instead of reconnect-looping.
   const pipeRemountsRef = useRef(0);
+  // "stuck on loading" recovery: torrent downloads but the video element
+  // never starts (buffering proxy / cut long responses). One fresh video
+  // request after 120 s; if it is still loading 60 s later, say so.
+  const loadingRemountsRef = useRef(0);
+  const loadingBannerShownRef = useRef(false);
   const triedRef = useRef(tried);
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
@@ -490,6 +495,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       if (next !== undefined) {
         // new server, new pipe — the flake counter describes the old one
         pipeRemountsRef.current = 0;
+        loadingRemountsRef.current = 0;
+        loadingBannerShownRef.current = false;
         lastFailoverAtRef.current = Date.now();
         setActiveIdx(next);
         setVideoState("loading");
@@ -685,6 +692,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     if (idx !== undefined) {
       setActiveIdx(idx);
       setVideoState("loading");
+      loadingRemountsRef.current = 0;
+      loadingBannerShownRef.current = false;
       streamStartRef.current = Date.now();
     } else {
       setExhausted(true);
@@ -883,6 +892,30 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         }
       }
       setStatus(j);
+      // "stuck on loading" recovery: the torrent downloads (progress grows)
+      // but the video element never starts — bytes are not reaching the
+      // browser (buffering proxy, edge cutting long responses). One fresh
+      // video request after 120 s; if it is still loading 60 s later, say
+      // what is happening instead of spinning forever.
+      if (videoStateRef.current === "loading" && j.found && (j.progress ?? 0) > 0) {
+        const elapsed = Date.now() - streamStartRef.current;
+        if (elapsed > 120_000 && loadingRemountsRef.current < 1) {
+          loadingRemountsRef.current += 1;
+          setVideoNonce((n) => n + 1);
+          streamStartRef.current = Date.now();
+          return;
+        }
+        if (
+          loadingRemountsRef.current >= 1 &&
+          elapsed > 60_000 &&
+          !loadingBannerShownRef.current
+        ) {
+          loadingBannerShownRef.current = true;
+          setBanner(
+            `Still buffering — the download is progressing (${Math.round((j.progress ?? 0) * 100)}%, ${j.peers ?? 0} peers), but the video is not starting. The network in between may be buffering or blocking the stream; switching servers will not change that.`,
+          );
+        }
+      }
       // mid-stream stall recovery: the element claims "playing" but frames
       // stopped arriving (backend restart without a media error, swarm
       // evaporated, range request died silently). Remount the same stream
@@ -1174,6 +1207,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setExhausted(false);
     setVideoState("loading");
     setActiveIdx(idx);
+    loadingRemountsRef.current = 0;
+    loadingBannerShownRef.current = false;
     streamStartRef.current = Date.now();
   };
 
