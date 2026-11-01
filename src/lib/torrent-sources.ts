@@ -1126,7 +1126,27 @@ export interface SearchArgs {
   audioLang?: string | null;
 }
 
-export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSource[]> {
+/** Per-provider outcome of a scan — surfaced in the search payload so an
+ *  empty result on the deployed host is diagnosable (egress blocked vs
+ *  genuinely no sources). `ok` means "the network answered": a provider
+ *  that answers with zero results is healthy, one that times out is not. */
+export interface ProviderStat {
+  name: string;
+  ms: number;
+  count: number;
+  ok: boolean;
+  error?: string;
+}
+
+/** Hard ceiling per provider. One hung indexer (CF wall, dead mirror) must
+ *  never stretch the scan past a couple of waves of these — every fetch
+ *  inside has its own timeouts, this catches the multi-query stacks. */
+const PROVIDER_DEADLINE_MS = 10_000;
+
+export async function searchTorrentSources(
+  args: SearchArgs,
+  onProvider?: (stat: ProviderStat) => void
+): Promise<TorrentSource[]> {
   const { type, tmdbId, title, season, episode } = args;
   const [imdbId, meta] = await Promise.all([getImdbId(type, tmdbId), getTitleMeta(type, tmdbId)]);
   // TMDB's own year is canonical (guards against stale/rounded client data)
@@ -1194,9 +1214,30 @@ export async function searchTorrentSources(args: SearchArgs): Promise<TorrentSou
   // the indexers throttle this IP, which then read as "all sources dead".
   // Each job catches its own errors, so the pool always resolves.
   const settled = await mapPool(jobs, 3, async (j): Promise<TorrentSource[]> => {
+    const t0 = Date.now();
     try {
-      return await j.run();
-    } catch {
+      const r = await Promise.race([
+        j.run(),
+        new Promise<TorrentSource[]>((res) => setTimeout(() => res([]), PROVIDER_DEADLINE_MS)),
+      ]);
+      const ms = Date.now() - t0;
+      const timedOut = ms >= PROVIDER_DEADLINE_MS;
+      onProvider?.({
+        name: j.name,
+        ms,
+        count: r.length,
+        ok: !timedOut,
+        error: timedOut ? "timeout" : undefined,
+      });
+      return r;
+    } catch (err) {
+      onProvider?.({
+        name: j.name,
+        ms: Date.now() - t0,
+        count: 0,
+        ok: false,
+        error: err instanceof Error ? err.message.slice(0, 100) : "error",
+      });
       return [];
     }
   });

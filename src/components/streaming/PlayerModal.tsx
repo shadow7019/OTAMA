@@ -551,20 +551,38 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     if (langAtScan !== "auto") params.set("lang", langAtScan);
     fetch(`/api/torrent/search?${params.toString()}`)
       .then((r) => r.json())
-      .then((j: { results?: TorrentServer[] }) => {
-        if (cancelled) return;
-        const results = Array.isArray(j.results) ? j.results : [];
-        if (!results.length && prevCount > 0) {
-          // keep the previous swarm and the stream that is already playing —
-          // picking a language that no indexer serves must not empty the row
-          setServersState("ready");
-          setBanner(
-            langAtScan !== "auto"
-              ? `No ${LANG_LABEL[langAtScan] ?? langAtScan} servers found — showing all ${prevCount}`
-              : `Re-scan found nothing new — keeping all ${prevCount} servers`,
-          );
-          return;
-        }
+      .then(
+        (j: {
+          results?: TorrentServer[];
+          providerStatus?: { name: string; ms: number; count: number; ok: boolean; error?: string }[];
+        }) => {
+          if (cancelled) return;
+          const results = Array.isArray(j.results) ? j.results : [];
+          if (!results.length && prevCount > 0) {
+            // keep the previous swarm and the stream that is already playing —
+            // picking a language that no indexer serves must not empty the row
+            setServersState("ready");
+            setBanner(
+              langAtScan !== "auto"
+                ? `No ${LANG_LABEL[langAtScan] ?? langAtScan} servers found — showing all ${prevCount}`
+                : `Re-scan found nothing new — keeping all ${prevCount} servers`,
+            );
+            return;
+          }
+          if (!results.length) {
+            // zero servers AND zero previous: the difference between "this
+            // title has no seeds" and "this host cannot reach the indexers"
+            // is exactly what providerStatus records — say it out loud
+            const stats = Array.isArray(j.providerStatus) ? j.providerStatus : [];
+            const dead = stats.filter((s) => !s.ok);
+            if (stats.length && dead.length > 0 && dead.length >= stats.length - dead.length) {
+              setBanner(
+                `${dead.length} of ${stats.length} torrent sources were unreachable from this network (${dead
+                  .map((s) => s.name)
+                  .join(", ")}) — the rest found nothing for this title.`,
+              );
+            }
+          }
         // anti-spam: a re-scan must never yank a stream that works. Keep the
         // current server playing unless the user explicitly switched to a
         // language this server doesn't serve.
@@ -614,7 +632,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           // choose the best untried server again
           setActiveIdx(keepIdx);
         }
-      })
+      }
+      )
       .catch(() => {
         if (cancelled) return;
         if (prevCount > 0) {

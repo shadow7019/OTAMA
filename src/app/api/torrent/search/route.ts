@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchTorrentSources } from "@/lib/torrent-sources";
+import { searchTorrentSources, type ProviderStat } from "@/lib/torrent-sources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,17 +47,22 @@ export async function GET(req: NextRequest) {
   const year = (sp.get("year") ?? "").trim().slice(0, 4);
 
   try {
-    const results = await searchTorrentSources({
-      type,
-      tmdbId: id,
-      title,
-      year,
-      season,
-      episode,
-      audioLang: langParam || null,
-    });
+    const providerStatus: ProviderStat[] = [];
+    const results = await searchTorrentSources(
+      {
+        type,
+        tmdbId: id,
+        title,
+        year,
+        season,
+        episode,
+        audioLang: langParam || null,
+      },
+      (s) => providerStatus.push(s)
+    );
     const payload = {
       results,
+      providerStatus,
       searchedWith: { title, year, season, episode, lang: langParam },
     };
     if (cache.size > MAX_CACHE) {
