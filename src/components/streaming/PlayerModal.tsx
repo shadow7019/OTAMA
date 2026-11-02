@@ -55,6 +55,9 @@ interface TorrentServer {
   provider: string;
   quality: string;
   fileIdx: number | null;
+  /** broadcast-order episode of merged-sequel anime (TMDB S02E01 = TYBW 14)
+   *  — lets the stream route pick "S17E14" inside a pack answering S02E01 */
+  absEpisode?: number | null;
   /** verified = exact title/episode match · pack = season pack (right file auto-picked) · weak = title-only match */
   match: "verified" | "pack" | "weak";
   score: number;
@@ -315,10 +318,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     const file = activeServer.fileIdx != null ? `&file=${activeServer.fileIdx}` : "";
     // season/episode steer file selection inside season packs and year
     // steers multi-year movie collections — so the exact requested content
-    // plays instead of the pack's biggest file
+    // plays instead of the pack's biggest file. absEpisode additionally
+    // steers packs that number files by broadcast order ("S17E14" for a
+    // S02E01 request of a merged-sequel anime).
+    const abs = activeServer.absEpisode != null ? `&abs=${activeServer.absEpisode}` : "";
     const hints =
       type === "tv"
-        ? `&season=${season}&episode=${episode}`
+        ? `&season=${season}&episode=${episode}${abs}`
         : `&year=${getYear(target.item)}`;
     return `/api/torrent/stream?id=${activeServer.id}&dn=${encodeURIComponent(activeServer.releaseName)}${file}${hints}`;
   }, [activeServer, type, season, episode, target?.item]);

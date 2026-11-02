@@ -587,6 +587,10 @@ function extOf(name: string): string {
 export interface EpisodeHint {
   season: number;
   episode: number;
+  /** broadcast-order episode for merged-sequel / long-runner anime
+   *  ("Sennen Kessen-hen S01E14" = TMDB S02E01) — providers stamp it on
+   *  every candidate so pack files number-matched by it can play */
+  abs?: number | null;
 }
 
 /**
@@ -596,9 +600,21 @@ export interface EpisodeHint {
 function epMatchScore(name: string, hint: EpisodeHint): 0 | 1 | 2 {
   const n = `${name}`.toLowerCase();
   let m = n.match(/\bs(\d{1,2})[\s._-]*e(\d{1,3})\b/);
-  if (m) return Number(m[1]) === hint.season && Number(m[2]) === hint.episode ? 2 : 0;
-  m = n.match(/\b(\d{1,2})x(\d{1,3})\b/);
-  if (m) return Number(m[1]) === hint.season && Number(m[2]) === hint.episode ? 2 : 0;
+  if (m) {
+    if (Number(m[1]) === hint.season && Number(m[2]) === hint.episode) return 2;
+  } else {
+    m = n.match(/\b(\d{1,2})x(\d{1,3})\b/);
+    if (m && Number(m[1]) === hint.season && Number(m[2]) === hint.episode) return 2;
+  }
+  // Merged-sequel / long-runner packs number files by the broadcast-order
+  // episode ("Sennen Kessen-hen S01E14", "Bleach - 14.mkv", "[EP: 14]") —
+  // providers stamp that number on every candidate, so steer by it when the
+  // direct SxxEyy match above missed
+  if (hint.abs != null && Number.isFinite(hint.abs)) {
+    if (new RegExp(`\\bs\\d{1,2}[\\s._-]*e0*${hint.abs}\\b`).test(n)) return 1;
+    if (new RegExp(`\\be(?:p)?[\\s._:]*0*${hint.abs}\\b`, "i").test(n)) return 1;
+    if (new RegExp(`(?:^|[\\s._\\[(~-])0*${hint.abs}(?!\\d)`, "i").test(n)) return 1;
+  }
   const hasSeason = new RegExp(`\\b(?:s|season[\\s._-]*)0*${hint.season}\\b`).test(n);
   m = n.match(/\be(?:p)?[\s._-]*(\d{1,3})\b/);
   if (m) {
@@ -607,6 +623,9 @@ function epMatchScore(name: string, hint: EpisodeHint): 0 | 1 | 2 {
   }
   m = n.match(/\bepisode[\s._-]*(\d{1,3})\b/);
   if (m) return Number(m[1]) === hint.episode ? 1 : 0;
+  // bare trailing episode number ("Blood War - 01 [1080p]") — the per-season
+  // fansub convention inside packs
+  if (new RegExp(`(?:^|[\\s._\\[(~-])0*${hint.episode}(?!\\d)`, "i").test(n)) return 1;
   return 0;
 }
 

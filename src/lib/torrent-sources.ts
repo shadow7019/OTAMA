@@ -36,6 +36,10 @@ export interface TorrentSource {
   match: MatchClass;
   /** negative when the release is tagged with a country the show isn't from */
   countryPenalty?: number;
+  /** broadcast-order episode of the requested anime episode (TMDB season
+   *  math) — lets the stream route pick "S17E14" inside a pack that answers
+   *  a S02E01 request */
+  absEpisode?: number | null;
   score: number;
 }
 
@@ -175,14 +179,6 @@ async function providerTorrentio(
   return out;
 }
 
-interface ApibayResult {
-  name?: string;
-  info_hash?: string;
-  leechers?: string;
-  seeders?: string;
-  size?: string;
-}
-
 /** TMDB original_language code → the word Indian releases use for it */
 export const LANG_WORD: Record<string, string> = {
   ta: "tamil",
@@ -241,90 +237,6 @@ interface BayContext {
   relEpisode?: number | null;
   /** Japanese-language title → fansub indexers (Nyaa) get queried too */
   isAnime?: boolean;
-}
-
-/**
- * Keyword provider — answers on title words alone, so every result is
- * strictly validated here against the requested year (movies) or
- * season/episode (TV) before it may enter the candidate list.
- */
-async function providerPirateBay(
-  type: "movie" | "tv",
-  ctx: BayContext
-): Promise<TorrentSource[]> {
-  const { title, originalTitle, year, season, episode } = ctx;
-  const queries =
-    type === "movie"
-      ? [`${title} ${year ?? ""}`.trim(), title]
-      : [
-          `${title} s${pad(season)}e${pad(episode)}`,
-          // language variant — Indian versions ("Bigg Boss Telugu") overflow the
-          // bare-title result window on trackers
-          ...(ctx.showLang ? [`${title} ${ctx.showLang}`] : []),
-          `${title} ${season}x${pad(episode)}`,
-          title, // dated daily-show names carry no SxxExx — match by name + air date
-        ];
-  const seen = new Map<string, TorrentSource>();
-  const collect = (rows: ApibayResult[]) => {
-    for (const r of rows) {
-      if (!r.info_hash || !/^[0-9a-f]{40}$/i.test(r.info_hash)) continue;
-      const name = (r.name ?? "Torrent").trim();
-      if (name === "No results") continue;
-      const p = parseRelease(name);
-      const match =
-        type === "movie"
-          ? matchMovie(p, title, originalTitle, year)
-          : matchTv(p, season, episode, title, originalTitle, {
-              airDate: ctx.airDate,
-              showLang: ctx.showLang,
-              absEpisode: ctx.absEpisode,
-            });
-      if (!match) continue; // same name, different film/episode — reject
-      const cPen = type === "tv" ? countryPenalty(p, ctx.countries) : 0;
-      // an explicit country tag that contradicts the show ("The.Office.US"
-      // when the TMDB show is GB) is a different show — hard reject
-      if (cPen < 0) continue;
-      const key = r.info_hash.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.set(key, {
-        id: key,
-        releaseName: name,
-        seeders: parseCount(r.seeders),
-        peers: parseCount(r.leechers),
-        sizeBytes: parseSizeBytes(r.size),
-        provider: "ThePirateBay",
-        quality: detectQuality(name),
-        fileIdx: null,
-        match,
-        countryPenalty: cPen,
-        score: 0,
-      });
-    }
-  };
-
-  // apibay answers tiny JSON quickly; sequential keeps request count low
-  for (const q of queries) {
-    if (seen.size >= 5) break;
-    const rows = await fetchJson<ApibayResult[]>(
-      `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=`,
-      7000
-    );
-    if (rows && Array.isArray(rows)) collect(rows);
-  }
-
-  // episode-level search came up empty → try season packs for TV
-  if (type === "tv" && seen.size === 0) {
-    const packQueries = [`${title} s${pad(season)}`, `${title} season ${season}`];
-    for (const q of packQueries) {
-      const rows = await fetchJson<ApibayResult[]>(
-        `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=`,
-        7000
-      );
-      if (rows && Array.isArray(rows)) collect(rows);
-      if (seen.size > 0) break;
-    }
-  }
-  return [...seen.values()];
 }
 
 interface BitsearchCard {
@@ -453,7 +365,7 @@ async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promi
         ];
   const seen = new Map<string, TorrentSource>();
   for (const q of queries) {
-    if (seen.size >= 5) break;
+    if (seen.size >= 15) break;
     const data = await fetchJson<{ torrents?: TorrentsCsvRow[] }>(
       `https://torrents-csv.com/service/search?q=${encodeURIComponent(q)}&size=100`,
       8000
@@ -525,7 +437,7 @@ async function providerSolidTorrents(
         ];
   const seen = new Map<string, TorrentSource>();
   for (const q of queries) {
-    if (seen.size >= 5) break;
+    if (seen.size >= 15) break;
     let data: { results?: SolidTorrentsRow[] } | null = null;
     for (const host of SOLID_HOSTS) {
       data = await fetchJson<{ results?: SolidTorrentsRow[] }>(
@@ -661,84 +573,6 @@ async function providerYts(
   return out;
 }
 
-interface EztvTorrent {
-  hash?: string;
-  filename?: string;
-  size_bytes?: number;
-  seeds?: number;
-  peers?: number;
-  season?: number;
-  episode?: number;
-}
-
-/** EZTV rotates domains; the first mirror that answers wins. */
-const EZTV_HOSTS = ["eztvx.to", "eztv.wf", "eztv.tf"];
-
-async function eztvPage(
-  numericId: string,
-  page: number
-): Promise<{ torrents?: EztvTorrent[] } | null> {
-  for (const host of EZTV_HOSTS) {
-    const data = await fetchJson<{ torrents?: EztvTorrent[] }>(
-      `https://${host}/api/get-torrents?imdb_id=${numericId}&limit=100&page=${page}`,
-      7000
-    );
-    if (data) return data; // any well-formed answer — even empty — ends the chain
-  }
-  return null;
-}
-
-/**
- * IMDb-keyed per episode. The API rows carry season/episode metadata and
- * ignore the season/episode query params, so we scan a couple of recency
- * pages; the filename is cross-checked so a mislabeled row can't leak wrong
- * episodes into same-named shows.
- */
-async function providerEztv(
-  imdbId: string,
-  ctx: BayContext,
-  airDate: string | null
-): Promise<TorrentSource[]> {
-  const season = ctx.season;
-  const episode = ctx.episode;
-  const out: TorrentSource[] = [];
-  const numericId = imdbId.replace(/^tt/i, "");
-  for (let page = 1; page <= 2 && out.length < 8; page++) {
-    const data = await eztvPage(numericId, page);
-    const rows = data?.torrents ?? [];
-    for (const r of rows) {
-      if (!r.hash || !/^[0-9a-f]{40}$/i.test(r.hash)) continue;
-      if (r.season && season && r.season !== season) continue;
-      if (r.episode && episode && r.episode !== episode) continue;
-      const filename = (r.filename ?? "Episode").trim();
-      const p = parseRelease(filename);
-      // full name-level validation against the requested show/episode
-      const match = matchTv(p, season, episode, ctx.title, ctx.originalTitle, {
-        airDate,
-        showLang: ctx.showLang ?? null,
-        absEpisode: ctx.absEpisode ?? null,
-        relEpisode: ctx.relEpisode ?? null,
-      });
-      if (!match) continue;
-      out.push({
-        id: r.hash.toLowerCase(),
-        releaseName: filename,
-        seeders: r.seeds ?? 0,
-        peers: r.peers ?? 0,
-        sizeBytes: r.size_bytes ?? 0,
-        provider: "EZTV",
-        quality: detectQuality(filename),
-        fileIdx: null,
-        match,
-        score: 0,
-      });
-      if (out.length >= 8) break;
-    }
-    if (rows.length < 100) break; // no more pages for this show
-  }
-  return out;
-}
-
 /* ---------- anime: nyaa.si (fansub indexers) ---------- */
 
 interface NyaaItem {
@@ -815,21 +649,28 @@ async function providerNyaa(type: "movie" | "tv", ctx: BayContext): Promise<Torr
   const queries =
     type === "movie"
       ? [`${title} ${ctx.year ?? ""}`.trim(), title, ...(originalTitle ? [originalTitle] : [])]
-      : isAnime
-        ? [
-            `${title} ${wanted}`,
-            // merged sequel seasons are fansub-numbered from 1 ("Sennen
-            // Kessen-hen - 45"), which differs from the broadcast-order number
-            ...(relWanted != null && relWanted !== wanted ? [`${title} ${relWanted}`] : []),
-            ...(originalTitle ? [`${originalTitle} ${wanted}`] : []),
-            `${title} s${pad(season)}e${pad(episode)}`,
-          ]
+        : isAnime
+          ? [
+              // bare season tag ("…Blood War S02") — the weekly singles of the
+              // whole season carry exactly this tag; proven largest yield
+              `${title} S${pad(season)}`,
+              `${title} s${pad(season)}e${pad(episode)}`,
+              `${title} ${wanted}`,
+              // merged sequel seasons are numbered CONTINUOUSLY from the
+              // sequel series start by many groups ("Sennen Kessen-hen
+              // S01E14" = the 14th TYBW episode = TMDB S02E01) — a different
+              // number space from the per-season one
+              ...(relWanted != null && relWanted !== wanted ? [`${title} ${relWanted}`] : []),
+              ...(originalTitle ? [`${originalTitle} ${wanted}`] : []),
+            ]
         : // western shows on Nyaa use standard SxxEyy naming — bare episode
           // numbers ("Friends 8") would just return noise
           [`${title} s${pad(season)}e${pad(episode)}`, title];
   const seen = new Map<string, TorrentSource>();
+  // the matcher, not the fetch, is the filter — collect a real pool (each
+  // query is a single RSS call) and let validation drop the wrong episodes
   for (const q of queries) {
-    if (seen.size >= 6) break;
+    if (seen.size >= 40) break;
     const rows = await nyaaSearch(q);
     for (const r of rows) {
       if (seen.has(r.infoHash)) continue;
@@ -943,7 +784,6 @@ const PROVIDER_TRUST: Record<string, number> = {
   EZTV: 2,
   YTS: 2,
   SolidTorrents: 1,
-  ThePirateBay: 0,
   TorrentsCSV: 0,
   BitSearch: -3,
 };
@@ -1014,12 +854,19 @@ export async function searchTorrentSources(
       ? title.replace(new RegExp(`\\s+${showLang}$`, "i"), "").trim() || title
       : title;
 
-  // Japanese titles are anime: fansub indexers (Nyaa) get queried and the
-  // broadcast-order episode number is offered to the matchers. Sequel seasons
-  // folded into the base show ("Bleach" S02 = TYBW) additionally carry the
-  // fansub-relative episode number.
-  const isAnime = (meta.originalLanguage ?? "") === "ja";
-  const absEpisode = type === "tv" && isAnime ? await getAbsoluteEpisode(tmdbId, season, episode) : null;
+  // Anime detection. TMDB's original_language flag is the trusted signal,
+  // but several anime entries are stubs with wrong data — "Bleach:
+  // Thousand-Year Blood War" (340620) is flagged "en" and ships a single
+  // 1-episode season. When the entry cannot even describe the requested
+  // season, its metadata is unusable and fansub indexers are the only
+  // source that can identify the episodes — treat it as anime, minus the
+  // absolute-episode math, which would compute garbage from the stub.
+  const langJa = (meta.originalLanguage ?? "") === "ja";
+  const seasonsCoverSeason =
+    type !== "tv" ||
+    (meta.seasons ?? []).some((s) => s.season_number === season && s.episode_count >= episode);
+  const isAnime = type === "tv" && (langJa || !seasonsCoverSeason);
+  const absEpisode = type === "tv" && langJa ? await getAbsoluteEpisode(tmdbId, season, episode) : null;
   const relEpisode = type === "tv" && isAnime && season >= 2 ? episode : null;
 
   const jobs: { name: string; run: () => Promise<TorrentSource[]> }[] = [];
@@ -1037,7 +884,6 @@ export async function searchTorrentSources(
     isAnime,
   };
   if (matchTitle) {
-    jobs.push({ name: "ThePirateBay", run: () => providerPirateBay(type, bayCtx) });
     jobs.push({ name: "BitSearch", run: () => providerBitSearch(type, bayCtx) });
     jobs.push({ name: "TorrentsCSV", run: () => providerTorrentsCsv(type, bayCtx) });
     jobs.push({ name: "SolidTorrents", run: () => providerSolidTorrents(type, bayCtx) });
@@ -1052,7 +898,6 @@ export async function searchTorrentSources(
       run: () => providerTorrentio(type, imdbId, bayCtx, year, airDate),
     });
     jobs.push({ name: "YTS", run: () => providerYts(type, imdbId, bayCtx) });
-    if (type === "tv") jobs.push({ name: "EZTV", run: () => providerEztv(imdbId, bayCtx, airDate) });
   }
 
   // every provider is independent: one being down (CF wall, DNS block, rate
@@ -1089,6 +934,12 @@ export async function searchTorrentSources(
     }
   });
   const all: TorrentSource[] = settled.flat();
+  // the broadcast-order episode is a property of the REQUEST, not of a
+  // provider — stamp it on every anime candidate so the stream route can
+  // steer inside merged-sequel packs ("S17E14" files for a S02E01 request)
+  if (type === "tv" && isAnime && absEpisode != null) {
+    for (const t of all) t.absEpisode = absEpisode;
+  }
   return merge(all);
 }
 

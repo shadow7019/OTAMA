@@ -35,6 +35,10 @@ export async function GET(req: NextRequest) {
       ? { season: Math.floor(seasonNum), episode: Math.floor(episodeNum) }
       : null;
   const yearHint = Number.isFinite(yearNum) && yearNum >= 1900 ? Math.floor(yearNum) : null;
+  // broadcast-order episode for merged-sequel anime packs: a S02E01 request
+  // must pick "S17E14" inside a pack that numbers files that way
+  const absParam = Number(sp.get("abs"));
+  const absHint = Number.isFinite(absParam) && absParam > 0 ? Math.floor(absParam) : null;
 
   const fileIdx = fileParam !== null && fileParam !== "" ? Number(fileParam) : null;
   if (fileParam !== null && (fileIdx === null || !Number.isFinite(fileIdx) || fileIdx < 0)) {
@@ -56,7 +60,7 @@ export async function GET(req: NextRequest) {
   const { file } = pickVideoFile(
     torrent,
     fileIdx !== null ? Math.floor(fileIdx) : null,
-    episodeHint,
+    episodeHint ? { season: episodeHint.season, episode: episodeHint.episode, abs: absHint } : null,
     yearHint
   );
 

@@ -535,6 +535,19 @@ export function matchTv(
   // re-seeded "Bleach - 45" or "BLEACH Kai S01E45" of the ORIGINAL series is
   // years old or carries no sequel subtitle, so it can never slip through.
   if (ctx.relEpisode != null) {
+    // groups also number the sequel series CONTINUOUSLY from its start
+    // ("Sennen Kessen-hen S01E14" = the 14th TYBW episode = TMDB S02E01).
+    // The sequel subtitle (>= 2 unconsumed title words) is what makes an
+    // S01E<abs> tag trustworthy — no freshness requirement, or every
+    // finished season would become unplayable the week after it airs.
+    if (
+      ctx.absEpisode != null &&
+      p.season === 1 &&
+      p.episode === ctx.absEpisode &&
+      subtitleWords(p, [title, originalTitle]).length >= 2
+    ) {
+      return "verified";
+    }
     const fresh = uploadNearAir(ctx.pubDate, air);
     if (fresh && subtitleWords(p, [title, originalTitle]).length >= 2) {
       // "BLEACH: Sennen Kessen-hen - 45 [1080p]" — bare episode number
