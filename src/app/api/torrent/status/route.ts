@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { engineFailure, findTorrent, peersEverConnected } from "@/lib/torrent-engine";
+import { diskHeadroom, engineFailure, findTorrent, peersEverConnected } from "@/lib/torrent-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
       id,
       engineOk: !engineError,
       everConnectedPeers: peersEverConnected(),
+      diskFree: diskHeadroom(),
       ...(engineError ? { engineError } : {}),
     });
   }
@@ -39,5 +40,6 @@ export async function GET(req: NextRequest) {
     files: torrent.files?.length ?? 0,
     engineOk: true,
     everConnectedPeers: true,
+    diskFree: diskHeadroom(),
   });
 }

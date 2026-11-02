@@ -6,7 +6,7 @@
  * the browser as ordinary progressive HTTP video with Range support.
  * The browser never touches an ad-serving third party — zero iframes.
  */
-import fs from "node:fs";
+import fs, { statfsSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -102,6 +102,70 @@ try {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 } catch {
   /* tmp dir may already exist */
+}
+
+/* ---------- disk headroom ----------
+ * Downloaded pieces land on the host disk. When that disk fills up, piece
+ * writes start failing SILENTLY: streams stall mid-play, metadata never
+ * resolves, and the player reads it as dead servers and switches forever.
+ * This was observed in production (8+ GB of orphaned piece caches). The
+ * guards below keep the cache bounded no matter what happens upstream. */
+/** target headroom — evict idle torrents once free space drops below this */
+const MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
+/** below this even NEW torrents are refused until space is reclaimed */
+const CRITICAL_FREE_BYTES = 750 * 1024 * 1024;
+
+function freeDiskBytes(): number | null {
+  try {
+    const s = statfsSync(DOWNLOAD_DIR);
+    return s.bavail * s.bsize;
+  } catch {
+    return null; // statfs unavailable on this platform — guards disabled
+  }
+}
+
+/** A fresh server process owns no torrents, so anything left in the piece
+ *  cache is an orphan from a previous process or deploy. Wiping it at engine
+ *  boot guarantees the process never starts against a disk already filled by
+ *  old data. Only called right before a NEW client is created (no torrent of
+ *  this process can be in use at that point). */
+function wipeOrphanCache(): void {
+  try {
+    for (const entry of fs.readdirSync(DOWNLOAD_DIR)) {
+      fs.rmSync(path.join(DOWNLOAD_DIR, entry), { recursive: true, force: true });
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Reclaim disk by destroying torrents without an open browser stream —
+ *  oldest-access first — until headroom is restored. An open stream is never
+ *  touched: under disk pressure the active stream is the thing to protect. */
+function evictForDisk(): void {
+  const st = state();
+  const client = st.client;
+  if (!client) return;
+  let free = freeDiskBytes();
+  if (free === null || free >= MIN_FREE_BYTES) return;
+  const victims = client.torrents
+    .filter((t) => !st.active.has(t.infoHash.toLowerCase()))
+    .sort(
+      (a, b) =>
+        (st.meta.get(a.infoHash)?.lastAccess ?? 0) -
+        (st.meta.get(b.infoHash)?.lastAccess ?? 0)
+    );
+  for (const t of victims) {
+    free = freeDiskBytes();
+    if (free === null || free >= MIN_FREE_BYTES) break;
+    try {
+      t.destroy({ destroyStore: true });
+    } catch {
+      /* already gone */
+    }
+    st.meta.delete(t.infoHash);
+    st.recentStreams.delete(t.infoHash.toLowerCase());
+  }
 }
 
 /* ---------- engine state (survives Next.js hot reloads) ---------- */
@@ -262,6 +326,9 @@ function kickEngineLoad(): void {
         st.engineError = `webtorrent could not be loaded — ${lastLoadErrors.join(" | ").slice(0, 300)}`;
         return;
       }
+      // no client existed in this process — every cached piece file is an
+      // orphan from an earlier process/deploy and only wastes disk
+      wipeOrphanCache();
       const client = new (Ctor as new (opts: { maxConns: number }) => TorrentClient)({
         maxConns: 120,
       });
@@ -483,6 +550,17 @@ export async function ensureTorrent(infoHash: string, displayName: string): Prom
     }
     return existing;
   }
+  // disk pressure: reclaim headroom before taking on another download —
+  // a full disk breaks piece writes for EVERY stream, so refusing one new
+  // add beats wedging the active ones
+  let free = freeDiskBytes();
+  if (free !== null && free < MIN_FREE_BYTES) {
+    evictForDisk();
+    free = freeDiskBytes();
+    if (free !== null && free < CRITICAL_FREE_BYTES) {
+      throw new Error("Server storage is full — the piece cache is being cleared, try again in a minute");
+    }
+  }
   evictIfNeeded(client, infoHash);
   return waitForMetadata(client, buildMagnet(infoHash, displayName));
 }
@@ -666,12 +744,18 @@ function sweep() {
   const st = state();
   const client = st.client;
   if (!client) return;
+  evictForDisk();
   const now = Date.now();
   for (const t of [...client.torrents]) {
     if (streamProtected(st, t.infoHash)) continue; // open or recently played stream is never idle
     const last = st.meta.get(t.infoHash)?.lastAccess ?? now;
     if (now - last > IDLE_DESTROY_MS) stopTorrent(t.infoHash);
   }
+}
+
+/** Free disk bytes for the piece cache (null = unknown) — surfaced by /status */
+export function diskHeadroom(): number | null {
+  return freeDiskBytes();
 }
 
 export function engineStats(): { torrents: number; cacheDir: string } {

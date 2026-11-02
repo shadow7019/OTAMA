@@ -45,9 +45,9 @@ interface PlayerModalProps {
 
 /**
  * A torrent "server" = one ranked source returned by /api/torrent/search
- * (ThePirateBay, Torrentio/1337x, YTS, EZTV …). We download it on our own
- * backend and stream it to the native <video> element — no third-party
- * iframe, therefore no pop-ups, no tab redirects, no injected ads.
+ * (ThePirateBay, Torrentio, YTS, EZTV …). We download it on our own backend
+ * and stream it to the native <video> element — no third-party iframe,
+ * therefore no pop-ups, no tab redirects, no injected ads.
  */
 interface TorrentServer {
   id: string;
@@ -58,7 +58,7 @@ interface TorrentServer {
   provider: string;
   quality: string;
   fileIdx: number | null;
-  /** verified = exact title/episode match · pack = season pack (right file auto-picked) · weak = title-only match */
+  /** verified = exact title/episode match · pack = season pack · weak = title-only */
   match: "verified" | "pack" | "weak";
   /** audio/language tags parsed from the release name (sub / eng / hindi / dual…) */
   audioTags?: string[];
@@ -71,12 +71,11 @@ interface TorrentStatus {
   progress?: number;
   peers?: number;
   speed?: number;
-  /** false = the host's streaming engine itself is broken (native module
-   *  load failure) — an environment problem, not a dead swarm */
+  /** false = the host's streaming engine itself is broken — environment, not swarm */
   engineOk?: boolean;
   engineError?: string;
-  /** false = not a single peer has connected since server start: the host's
-   *  network blocks torrent peer traffic and every source will fail */
+  /** false = not a single peer has connected since server start: the network
+   *  blocks torrent peer traffic and every source will fail */
   everConnectedPeers?: boolean;
 }
 
@@ -93,36 +92,45 @@ interface ArchiveMatchClient {
 }
 
 const ARCHIVE_ID = "otama-direct";
-/* Failover philosophy: a torrent swarm routinely needs 30-60s just to resolve
- * metadata and announce to trackers — "slow" is NORMAL, only DEATH is a reason
- * to switch. The 2s status poll checks the server continuously; as long as it
- * shows any life (peers, speed, creeping progress) the player stays on it.
- * A threshold below fires only on evidence the server cannot work. */
-/** Nothing at all after 45s — no peers, no data: dead or poisoned swarm. */
-const NO_DATA_SWITCH_MS = 45_000;
-/** Data crawling at a trickle and the video still can't start after 75s. */
-const TRICKLE_SWITCH_MS = 75_000;
-/** Swarm alive and downloading but the video element parsed zero media —
- *  it is fetching pieces this video never plays. */
-const FIRST_DATA_SWITCH_MS = 90_000;
-/** The download went completely quiet (no progress) for this long. */
-const STALL_SWITCH_MS = 60_000;
-/** Metadata never resolved at all — belt-and-braces behind the engine's own
- *  90s metadata timeout, which reports not-found first. */
-const RESOLVE_SWITCH_MS = 100_000;
-/** Content lock: once this share of the file has buffered (or playback is
- *  actually running), the stream is ENGAGED — timing-based failover rules
- *  (stall, hard-start) stop firing. A server that delivered real content has
- *  done the hard part; the browser will start it and keep up. From here only
- *  TRUE death may switch: status not-found, a media error, or a stream that
- *  still delivers zero bytes to the element after a reconnect remount. */
-const STREAM_LOCK_BUFFER = 0.02; // 2% of the file
-/** Absolute start ceiling — 4 minutes on one server before moving on. */
-const HARD_START_MS = 240_000;
-/** Anti-spam floor between watchdog-driven switches: once the player moves to
- *  a server it stays at least this long before another automatic move.
- *  Manual server picks bypass failover entirely. */
-const MIN_FAILOVER_GAP_MS = 30_000;
+
+/**
+ * REBUILT PLAYER — one deterministic state machine, three rules:
+ *
+ *  1. START AT 2%: the <video> plays as soon as the browser has the first
+ *     playable data (canplay fires at roughly the 2% mark). No artificial
+ *     waiting for "enough" buffer.
+ *  2. STICKY SERVER: once content is on screen (the element reported
+ *     "playing") or 2% of the file has buffered, the server is LOCKED.
+ *     Automatic switching is disabled — not for stalls, not for slow speeds,
+ *     not for engine blips. The ONLY legal automatic switch is a CONFIRMED
+ *     hard death: the engine reports the torrent gone after a reconnect
+ *     attempt, the video errors out after the reconnect budget is spent, or
+ *     playback is frozen 60s+ while unpaused after a reconnect attempt.
+ *     Everything else reconnects the SAME warm stream (its pieces are
+ *     already on this server) and explains itself in the banner.
+ *  3. SEQUENTIAL, SLOW-FRIENDLY: one server at a time, generous windows —
+ *     torrent swarms routinely need 30-60s to resolve metadata before the
+ *     first byte flows. No parallel server spam, no rapid cycling; a switch
+ *     needs evidence the server cannot work, and switches are spaced out.
+ */
+/** metadata never resolved after this long (engine's own timeout is 90s) */
+const RESOLVE_MS = 105_000;
+/** zero progress AND zero speed for this long after metadata resolved */
+const NO_DATA_MS = 60_000;
+/** data trickling below 25 KB/s and still zero progress after this long */
+const SLOW_MS = 90_000;
+/** swarm downloads but the video element parsed zero media — wrong pieces */
+const WRONG_PIECES_MS = 120_000;
+/** torrent never even registered with the engine (dead swarm) */
+const NOT_FOUND_GRACE_MS = 25_000;
+/** playing but frames frozen this long while unpaused (after a reconnect) */
+const HARD_STALL_MS = 60_000;
+/** anti-spam floor between automatic switches */
+const MIN_SWITCH_GAP_MS = 25_000;
+/** reconnect budget for the SAME stream (media errors, pipe flakes) */
+const REMOUNT_BUDGET = 3;
+/** content lock engages at this share of the file buffered (user rule: 2%) */
+const LOCK_BUFFER = 0.02;
 
 const fmtSize = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
@@ -162,10 +170,8 @@ const LANG_LABEL: Record<string, string> = {
 /** one selectable subtitle language from /api/subtitles */
 interface SubtitleRow {
   id: string;
-  /** ISO code ("eng", "por"…) — doubles as the <track> language */
   lang: string;
   langName: string;
-  /** same-origin /api/subtitles/file VTT proxy URL */
   src: string;
   fileName?: string;
 }
@@ -201,7 +207,6 @@ function SubMenuItem({
 /**
  * CC button + subtitle-language dropdown, overlaid directly on the video —
  * reachable without scrolling, on both torrent and direct streams.
- * Mirrors the Subs chip row below the player ("Off / Auto / languages").
  */
 function SubtitleMenu({
   subs, subState, subtitleLang, setSubtitleLang, activeSub, emptyText,
@@ -296,18 +301,14 @@ function SubtitleMenu({
 export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // remounted per target via key — initial state is safe to derive from props
   const type = target ? getMediaType(target.item) : "movie";
-  const itemId = target?.item.id ?? null;
 
   /* ---------------- servers (torrent sources) ---------------- */
   const [servers, setServers] = useState<TorrentServer[]>([]);
   const [serversState, setServersState] = useState<"loading" | "ready" | "error">("loading");
-  const [searchNonce, setSearchNonce] = useState(0); // bump = manual re-search
+  const [searchNonce, setSearchNonce] = useState(0);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
-  const [manualIdx, setManualIdx] = useState<
-    number | "archive" | "trailer" | "web" | null
-  >(null);
+  const [manualIdx, setManualIdx] = useState<number | "archive" | "trailer" | "web" | null>(null);
   // web embed servers (restored by request): user-picked third-party players.
-  // They are ad-supported — that lives on their page inside their iframe.
   const [webSourceId, setWebSourceId] = useState<string | null>(null);
   const [webReloadNonce, setWebReloadNonce] = useState(0);
   const [webFrame, setWebFrame] = useState<"loading" | "ready" | "timeout">("loading");
@@ -319,14 +320,16 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [status, setStatus] = useState<TorrentStatus | null>(null);
   const [videoNonce, setVideoNonce] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
-  /** automatic re-searches done for the CURRENT episode (reset on ep change) */
+  /** automatic re-searches done for the CURRENT episode */
   const [autoRetries, setAutoRetries] = useState(0);
+  /** automatic retry waves after "every server was tried" */
+  const [autoWaves, setAutoWaves] = useState(0);
 
-  /* ---------------- subtitles (OpenSubtitles → our VTT proxy) ---------------- */
+  /* ---------------- subtitles ---------------- */
   const [subs, setSubs] = useState<SubtitleRow[]>([]);
   const [subState, setSubState] = useState<"loading" | "ready" | "error">("loading");
 
-  /* ---------------- archive.org direct fallback (movies) ---------------- */
+  /* ---------------- archive.org direct fallback ---------------- */
   const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
   const [archiveState, setArchiveState] = useState<"loading" | "found" | "none">("loading");
 
@@ -351,69 +354,45 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const reviveServer = useMediaStore((s) => s.reviveServer);
   const sweepDeadServers = useMediaStore((s) => s.sweepDeadServers);
 
-  // refs so callbacks/effects always read the latest values
+  /* ---------------- refs (latest values for callbacks/intervals) ---------------- */
   const serversRef = useRef(servers);
   serversRef.current = servers;
   const activeIdxRef = useRef(activeIdx);
   activeIdxRef.current = activeIdx;
   const exhaustedRef = useRef(exhausted);
   exhaustedRef.current = exhausted;
-  // timestamp of the last watchdog-driven switch — enforces the anti-spam
-  // floor between automatic server changes
-  const lastFailoverAtRef = useRef(0);
-  // consecutive ticks that failed at the network level — while set, the
-  // backend itself is unreachable and failover must not burn the server list
-  const backendDownRef = useRef(0);
-  // remounts issued to recover a flaked streaming pipe (edge proxy cutting
-  // the long video response / status route while the origin itself is up).
-  // One remount gets a fresh range request; a second failure means this
-  // server's pipe is the problem — fail over instead of reconnect-looping.
-  const pipeRemountsRef = useRef(0);
-  // "stuck on loading" recovery: torrent downloads but the video element
-  // never starts (buffering proxy / cut long responses). One fresh video
-  // request after 120 s; if it is still loading 60 s later, say so.
-  const loadingRemountsRef = useRef(0);
-  const loadingBannerShownRef = useRef(false);
-  // HARD content lock — the user-facing guarantee: once content is on screen
-  // (the element reported "playing") or the torrent buffered 2%+ of the file,
-  // the server is NOT switched automatically. Recovery reconnects the same
-  // warm stream (its pieces are already on this server); leaving is allowed
-  // only when the engine itself reports the torrent gone on 3 consecutive
-  // polls, or the user picks a server manually.
-  const streamLockedRef = useRef(false);
-  // id of the server the lock was earned on — lets the auto-pick effect
-  // restore THIS server instead of choosing a different one after a re-scan
-  const lockedServerIdRef = useRef<string | null>(null);
-  // same-stream remount budget while locked (media errors, pipe flakes) —
-  // every successful resume refills it
-  const lockedRemountsRef = useRef(0);
-  const lockedFailNoteRef = useRef(false);
-  // one-time notice: this host's network blocks torrent peer traffic entirely
-  const connectivityNoteShownRef = useRef(false);
-  // web ids the automatic passes have already opened — manual re-taps are
-  // always allowed, the auto chain just never re-opens a dead one
-  const autoWebTriedRef = useRef<Set<string>>(new Set());
-  // the watchdog tick must go idle while a web embed is on screen — the
-  // torrent was stopped on purpose and status polling would just fail over
-  const manualIdxRef = useRef(manualIdx);
-  manualIdxRef.current = manualIdx;
   const triedRef = useRef(tried);
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
   videoStateRef.current = videoState;
+  const manualIdxRef = useRef(manualIdx);
+  manualIdxRef.current = manualIdx;
+  /** STICKY LOCK: server id whose content is on screen (or ≥2% buffered).
+   *  While set for the active server, automatic server switching is OFF —
+   *  only confirmed hard death may advance (see advance()). */
+  const lockedIdRef = useRef<string | null>(null);
+  /** reconnect budget for the CURRENT stream — refilled on every onPlaying */
+  const remountsRef = useRef(0);
+  /** one "staying on this server" note per lock episode */
+  const stickyNoteRef = useRef(false);
+  /** timestamp of the last automatic switch — enforces the anti-spam floor */
+  const lastFailoverAtRef = useRef(0);
+  /** consecutive network-failed status polls — while set, failover is frozen */
+  const backendDownRef = useRef(0);
+  const connNoteRef = useRef(false);
   const streamStartRef = useRef(0);
   const currentIdRef = useRef<string | null>(null);
-  /** server ids already sent to /api/torrent/warm (dedupe, and stop on close) */
+  /** server ids already sent to /api/torrent/warm */
   const warmedRef = useRef<Set<string>>(new Set());
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const serverLangRef = useRef(serverLang);
   serverLangRef.current = serverLang;
-  /* scan key (type:id:se:ep) of the last torrent scan — lets a language
-     re-scan of the same title keep the current swarm instead of wiping it */
+  /** scan key of the last torrent scan — keeps the swarm on re-scans */
   const lastScanKeyRef = useRef<string | null>(null);
+  /** web ids the automatic chain already opened */
+  const autoWebTriedRef = useRef<Set<string>>(new Set());
 
-  /* servers hidden because they already failed playback (auto-revive after
-     DEAD_SERVER_TTL) */
+  /* ---------------- derived: dead marks, language order, chips ---------------- */
   const deadIdxs = useMemo(() => {
     const s = new Set<number>();
     if (!mounted) return s;
@@ -423,33 +402,27 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     return s;
   }, [servers, deadServers, mounted]);
 
-  /* play order: live servers first, matching the picked audio language;
-     falls back to every live server when the filter would empty the list */
+  /** play order: live servers first, matching the picked audio language;
+   *  falls back to every live server when the filter would empty the list —
+   *  the language filter can NEVER blank the server row. */
   const orderedIdxs = useMemo(() => {
     const all = servers.map((_, i) => i);
     const pick = (pool: number[]) => {
       if (serverLang === "auto") return pool;
       const matching = pool.filter((i) => {
         const tags = servers[i].audioTags ?? [];
-        // dual/multi-audio releases may carry the chosen language (track lists
-        // aren't in the release name) — they stay visible under any language
-        return (
-          tags.includes(serverLang) || tags.includes("dual") || tags.includes("multi")
-        );
+        return tags.includes(serverLang) || tags.includes("dual") || tags.includes("multi");
       });
       return matching.length ? matching : pool;
     };
     const alive = all.filter((i) => !deadIdxs.has(i));
     const chosen = pick(alive);
-    // every server of this scan is dead-marked: swarms recover (that is why
-    // the dead-mark TTL is short), so retry them instead of showing a dead
-    // player with no way forward
+    // every server dead-marked: swarms recover, so retry instead of a dead row
     return chosen.length ? chosen : pick(all);
   }, [servers, serverLang, deadIdxs]);
   const orderedIdxsRef = useRef(orderedIdxs);
   orderedIdxsRef.current = orderedIdxs;
 
-  /* language chips present in the current scan results */
   const langChips = useMemo(() => {
     const order = [
       "sub", "eng", "hindi", "tamil", "telugu", "malayalam", "kannada",
@@ -461,24 +434,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     return order.filter((t) => present.has(t));
   }, [servers]);
 
-  // When the browser blocks autoplay we surface a tap-to-play overlay instead
-  // of a stuck black frame (video data is already buffered at that point).
-  const handleCanPlay = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    setVideoState((s) => (s === "loading" ? "playing" : s));
-    const v = e.currentTarget;
-    if (v.paused) {
-      v.play().then(() => setNeedsTap(false)).catch(() => setNeedsTap(true));
-    }
-  };
-
   const activeServer = activeIdx !== null ? servers[activeIdx] ?? null : null;
   const isArchive = manualIdx === "archive" && archiveState === "found" && !!archive;
   const showTrailer = manualIdx === "trailer";
   const isWeb = manualIdx === "web" && !!webSourceId;
 
-  /* ---------------- subtitle selection ----------------
-   * "auto" turns English subs on only while a Japanese-audio server plays
-   * (the default anime shape); a pinned language wins whenever it exists. */
+  /* ---------------- subtitle selection ---------------- */
   const japaneseAudio =
     !!activeServer &&
     (activeServer.audioTags ?? []).includes("jap") &&
@@ -494,6 +455,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   const trailer: Video | null = useMemo(() => (details ? trailerOf(details) : null), [details]);
 
+  /* ---------------- core actions ---------------- */
   const stopId = useCallback((id: string | null, mode: "stop" | "idle" = "stop") => {
     if (!id) return;
     fetch("/api/torrent/stop", {
@@ -506,33 +468,39 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   const serverLabel = useCallback((s: TorrentServer) => `${s.quality} · ${s.provider}`, []);
 
-  /* ---------------- failover ---------------- */
-  const failover = useCallback(
-    (reason: string, opts?: { manual?: boolean }) => {
-      // FINAL RULE — the user has asked for this repeatedly: once content is
-      // on screen, the player NEVER changes servers on its own. Not for
-      // stalls, not for errors, not for engine blips. Automatic failover
-      // exists only BEFORE content arrives; mid-content the user decides
-      // (server chips below). We say what happened instead of acting on it.
-      if (!opts?.manual && streamLockedRef.current) {
-        if (!lockedFailNoteRef.current) {
-          lockedFailNoteRef.current = true;
+  /** Reconnect the CURRENT server's warm stream — a fresh range request picks
+   *  up from the pieces already downloaded. Used for every recovery; never
+   *  switches servers. Returns false when the reconnect budget is spent. */
+  const recoverSameStream = useCallback((why: string): boolean => {
+    if (remountsRef.current >= REMOUNT_BUDGET) return false;
+    remountsRef.current += 1;
+    setVideoState("loading");
+    setVideoNonce((n) => n + 1);
+    streamStartRef.current = Date.now();
+    return true;
+  }, []);
+
+  /**
+   * The ONLY path an automatic server change can take. While the sticky lock
+   * is engaged, every call without `hard: true` just shows a banner — the
+   * user decides via the server chips. Hard death (confirmed by a failed
+   * reconnect attempt) is the single exception.
+   */
+  const advance = useCallback(
+    (reason: string, opts?: { hard?: boolean }) => {
+      if (lockedIdRef.current !== null && !opts?.hard) {
+        if (!stickyNoteRef.current) {
+          stickyNoteRef.current = true;
           setBanner(
-            `${reason} — staying on this server. Tap another server below to switch manually.`
+            `${reason} — staying on this server. Auto-switch is off while content is playing; pick another server below to switch.`
           );
         }
         return;
       }
-      // backend unreachable: every request fails, so "every server failed"
-      // is an illusion. Hold position — the watchdog reconnects and resumes.
+      // backend unreachable: "every server failed" would be an illusion
       if (backendDownRef.current) return;
-      // everything already tried: the banner is up; the watchdog must not
-      // re-run the bookkeeping (and re-set the banner) on every 2s tick
       if (exhaustedRef.current) return;
-      // anti-spam floor: an automatic switch just happened — hold the new
-      // server before the watchdog may switch again (rapid cycling through
-      // the row reads as the player fighting itself)
-      if (Date.now() - lastFailoverAtRef.current < MIN_FAILOVER_GAP_MS) return;
+      if (Date.now() - lastFailoverAtRef.current < MIN_SWITCH_GAP_MS) return;
       const cur = activeIdxRef.current;
       const list = serversRef.current;
       const failed = cur !== null ? list[cur] : null;
@@ -541,20 +509,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       triedRef.current = [...triedNext];
       setTried([...triedNext]);
       if (failed) {
-        // idle (not destroy): metadata, peers and already-downloaded pieces
-        // stay — if this server is revived later, or the title is reopened,
-        // playback resumes without paying the bytes again
+        // idle (not destroy): pieces stay — a revived server resumes instantly
         stopId(failed.id, "idle");
-        // a server that failed playback stays out of rotation for
-        // DEAD_SERVER_TTL — then it re-enters automatically
         markDeadServers([failed.id]);
       }
       const next = orderedIdxsRef.current.find((i) => i !== cur && !triedNext.has(i));
       if (next !== undefined) {
-        // new server, new pipe — the flake counter describes the old one
-        pipeRemountsRef.current = 0;
-        loadingRemountsRef.current = 0;
-        loadingBannerShownRef.current = false;
+        remountsRef.current = 0;
+        stickyNoteRef.current = false;
         lastFailoverAtRef.current = Date.now();
         setActiveIdx(next);
         setVideoState("loading");
@@ -568,28 +530,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     },
     [stopId, serverLabel, markDeadServers]
   );
-
-  /* ---- locked-stream recovery: reconnect, never switch ---- */
-  // Remount the video against the CURRENT server's warm torrent. Used for
-  // every recovery once the content lock is engaged — a fresh range request
-  // resumes from the engine's cache instead of restarting on another server.
-  const lockedRecover = useCallback(() => {
-    if (lockedRemountsRef.current >= 3) return false;
-    lockedRemountsRef.current += 1;
-    setVideoState("loading");
-    setVideoNonce((n) => n + 1);
-    streamStartRef.current = Date.now();
-    return true;
-  }, []);
-  // recovery budget spent: say plainly that nothing was switched and hand
-  // control to the user (server chips) instead of auto-rotating
-  const lockedExhaustedNote = useCallback(() => {
-    if (lockedFailNoteRef.current) return;
-    lockedFailNoteRef.current = true;
-    setBanner(
-      "This stream keeps failing on this server — automatic switching is off while content has been playing. Pick another server below; it may also resume on its own."
-    );
-  }, []);
 
   /* ---------------- load servers for this title/episode ---------------- */
   useEffect(() => {
@@ -626,8 +566,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       params.set("season", String(season));
       params.set("episode", String(episode));
     }
-    // a picked audio language steers the scan itself: indexers get an extra
-    // dub-targeted query ("english dub", "hindi dubbed"…) for that language
     if (langAtScan !== "auto") params.set("lang", langAtScan);
     fetch(`/api/torrent/search?${params.toString()}`)
       .then((r) => r.json())
@@ -637,10 +575,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           providerStatus?: { name: string; ms: number; count: number; ok: boolean; error?: string }[];
         }) => {
           if (cancelled) return;
-          const results = Array.isArray(j.results) ? j.results : [];
+          let results = Array.isArray(j.results) ? j.results : [];
           if (!results.length && prevCount > 0) {
             // keep the previous swarm and the stream that is already playing —
-            // picking a language that no indexer serves must not empty the row
+            // a language no indexer serves must not empty the row
             setServersState("ready");
             setBanner(
               langAtScan !== "auto"
@@ -650,9 +588,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             return;
           }
           if (!results.length) {
-            // zero servers AND zero previous: the difference between "this
-            // title has no seeds" and "this host cannot reach the indexers"
-            // is exactly what providerStatus records — say it out loud
             const stats = Array.isArray(j.providerStatus) ? j.providerStatus : [];
             const dead = stats.filter((s) => !s.ok);
             if (stats.length && dead.length > 0 && dead.length >= stats.length - dead.length) {
@@ -663,56 +598,47 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
               );
             }
           }
-        // anti-spam: a re-scan must never yank a stream that works. Keep the
-        // current server playing unless the user explicitly switched to a
-        // language this server doesn't serve.
-        let next = results;
-        let keepIdx: number | null = null;
-        const cur = activeIdxRef.current;
-        const curSv = cur !== null ? serversRef.current[cur] : null;
-        const stillWatching =
-          videoStateRef.current === "playing" || videoStateRef.current === "loading";
-        if (rescan && curSv && stillWatching) {
-          const tags = curSv.audioTags ?? [];
-          const langOk =
-            langAtScan === "auto" ||
-            tags.includes(langAtScan) ||
-            tags.includes("dual") ||
-            tags.includes("multi");
-          const idx = langOk ? next.findIndex((r) => r.id === curSv.id) : -1;
-          if (idx >= 0) {
-            keepIdx = idx;
-          } else if (langOk) {
-            // the re-scan dropped our server (indexer flake) but it is
-            // mid-watch — keep it at the end of the row instead of killing it
-            next = [...results, curSv];
-            keepIdx = next.length - 1;
+          // a re-scan must never yank a stream that works: keep the current
+          // server unless it vanished AND the user explicitly changed language
+          const cur = activeIdxRef.current;
+          const curSv = cur !== null ? serversRef.current[cur] : null;
+          let keepIdx: number | null = null;
+          const stillWatching =
+            videoStateRef.current === "playing" || videoStateRef.current === "loading";
+          if (rescan && curSv && stillWatching) {
+            const tags = curSv.audioTags ?? [];
+            const langOk =
+              langAtScan === "auto" ||
+              tags.includes(langAtScan) ||
+              tags.includes("dual") ||
+              tags.includes("multi");
+            const idx = langOk ? results.findIndex((r) => r.id === curSv.id) : -1;
+            if (idx >= 0) {
+              keepIdx = idx;
+            } else if (langOk) {
+              // re-scan dropped our server (indexer flake) but it is mid-watch
+              // — keep it at the end of the row instead of killing it
+              results = [...results, curSv];
+              keepIdx = results.length - 1;
+            }
           }
-        }
-        // identical swarm: keep the chip order the user already sees — paced
-        // indexers answer in a slightly different order every scan, and a
-        // reshuffled row reads as churn
-        if (rescan) {
-          const prev = serversRef.current;
-          const nextById = new Map(next.map((s) => [s.id, s]));
-          if (
-            prev.length > 0 &&
-            prev.length === next.length &&
-            prev.every((s) => nextById.has(s.id))
-          ) {
-            next = prev.map((old) => nextById.get(old.id) ?? old);
-            if (curSv && keepIdx !== null) keepIdx = next.findIndex((s) => s.id === curSv.id);
+          // identical swarm: keep the chip order the user already sees
+          if (rescan) {
+            const prev = serversRef.current;
+            const nextById = new Map(results.map((s) => [s.id, s]));
+            if (
+              prev.length > 0 &&
+              prev.length === results.length &&
+              prev.every((s) => nextById.has(s.id))
+            ) {
+              results = prev.map((old) => nextById.get(old.id) ?? old);
+              if (curSv && keepIdx !== null) keepIdx = results.findIndex((s) => s.id === curSv.id);
+            }
           }
+          setServers(results);
+          setServersState("ready");
+          if (rescan) setActiveIdx(keepIdx);
         }
-        setServers(next);
-        setServersState("ready");
-        if (rescan) {
-          // same torrent still watchable → stay on it; only when nothing is
-          // playing (or the language changed) does the auto-pick effect
-          // choose the best untried server again
-          setActiveIdx(keepIdx);
-        }
-      }
       )
       .catch(() => {
         if (cancelled) return;
@@ -725,8 +651,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       });
 
     // Otama Direct: movies → public-domain copy; TV episodes → episode lookup
-    // (Indian daily shows surface on archive.org hours after broadcast, long
-    // before the public trackers list them)
     setArchiveState("loading");
     const archiveUrl =
       type === "movie"
@@ -747,10 +671,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     };
   }, [target, type, season, episode, searchNonce]);
 
-  /* ---------------- web embed health probes ----------------
-   * one lightweight probe per provider per title: the strip shows live dots
-   * (green = reachable + embeddable, amber = reachable but blocking iframes,
-   * grey = down) so a dead embed never wastes a click */
+  /* ---------------- web embed health probes ---------------- */
   useEffect(() => {
     if (!target) return;
     let cancelled = false;
@@ -773,7 +694,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       cancelled = true;
     };
   }, [target, type]);
-  // automatic retries are per-episode: a manual "Search again" must not reset them
+
+  /* per-episode reset for the automatic retry counters */
   useEffect(() => {
     setAutoRetries(0);
     setAutoWaves(0);
@@ -810,60 +732,54 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     if (mounted) sweepDeadServers();
   }, [mounted, sweepDeadServers]);
 
-  /* ---------------- auto-pick the best untried server ---------------- */
+  /* ---------------- auto-pick the best untried server (BEFORE playback) ---
+   * This is the only automatic chooser, and it only runs while nothing is
+   * connected yet. Once a stream is locked, restoration — never re-choice. */
   useEffect(() => {
     if (serversState !== "ready") return;
     if (manualIdx !== null || activeIdx !== null || exhausted) return;
-    // content lock: if activeIdx was nulled while a stream was playing (the
-    // re-scan landing on a transient error state), restore THAT server —
-    // picking a different one here is exactly the "random switch" the user
-    // keeps reporting. Only a server genuinely gone from the row re-opens
-    // the choice.
-    if (streamLockedRef.current) {
-      const id = lockedServerIdRef.current;
-      const idx = id != null ? serversRef.current.findIndex((s) => s.id === id) : -1;
+    if (lockedIdRef.current) {
+      // content lock engaged but activeIdx was nulled by a re-scan landing on
+      // a transient state: restore THAT server — picking a different one here
+      // is exactly the "random switch" this player must never do
+      const id = lockedIdRef.current;
+      const idx = serversRef.current.findIndex((s) => s.id === id);
       if (idx >= 0) {
         setActiveIdx(idx);
         return;
       }
-      streamLockedRef.current = false;
+      lockedIdRef.current = null;
     }
     const idx = orderedIdxs.find((i) => !tried.includes(i));
     if (idx !== undefined) {
       setActiveIdx(idx);
       setVideoState("loading");
-      loadingRemountsRef.current = 0;
-      loadingBannerShownRef.current = false;
+      remountsRef.current = 0;
       streamStartRef.current = Date.now();
     } else {
       setExhausted(true);
     }
   }, [serversState, orderedIdxs, tried, activeIdx, manualIdx, exhausted]);
 
-  /* ---------------- pre-warm the next server candidates ----------------
-   * Metadata resolution (15–25 s) is the entire startup cost. Resolving the
-   * next candidates in parallel while the current server tries means every
-   * failover lands on an already-resolved torrent and starts in seconds. */
+  /* ---------------- pre-warm exactly ONE next candidate ----------------
+   * Metadata resolution (15–25 s) is the whole startup cost. Warming the
+   * single next-in-line (idled — pulls no data) keeps failover fast without
+   * the parallel server spam the player used to do. Frozen while locked. */
   useEffect(() => {
     if (serversState !== "ready" || !servers.length) return;
-    const cands = orderedIdxs
-      .filter((i) => i !== activeIdx && !tried.includes(i))
-      .slice(0, 2)
-      .map((i) => servers[i])
-      .filter((s) => s && !warmedRef.current.has(s.id));
-    if (!cands.length) return;
-    for (const s of cands) warmedRef.current.add(s.id);
+    if (lockedIdRef.current) return;
+    const cand = orderedIdxs.find((i) => i !== activeIdx && !tried.includes(i));
+    const s = cand !== undefined ? servers[cand] : undefined;
+    if (!s || warmedRef.current.has(s.id)) return;
+    warmedRef.current.add(s.id);
     fetch("/api/torrent/warm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: cands.map((s) => ({ id: s.id, dn: s.releaseName })) }),
+      body: JSON.stringify({ ids: [{ id: s.id, dn: s.releaseName }] }),
     }).catch(() => {});
   }, [serversState, servers, orderedIdxs, activeIdx, tried]);
 
-  /* ---------------- Otama Direct for episodes with no torrent sources ----------------
-   * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
-   * trackers but uploaded to archive.org within hours of broadcast. When the
-   * torrent scan comes up empty and a direct episode stream exists, play it. */
+  /* ---------------- Otama Direct for episodes with no torrent sources ---- */
   useEffect(() => {
     if (type !== "tv" || serversState !== "ready") return;
     if (servers.length > 0 || manualIdx !== null || exhausted) return;
@@ -876,15 +792,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const streamUrl = useMemo(() => {
     if (!activeServer || !target) return null;
     const file = activeServer.fileIdx != null ? `&file=${activeServer.fileIdx}` : "";
-    // season/episode steer file selection inside season packs and year
-    // steers multi-year movie collections — so the exact requested content
-    // plays instead of the pack's biggest file
     const hints =
       type === "tv"
         ? `&season=${season}&episode=${episode}`
         : `&year=${getYear(target.item)}`;
     return `/api/torrent/stream?id=${activeServer.id}&dn=${encodeURIComponent(activeServer.releaseName)}${file}${hints}`;
-  }, [activeServer, type, season, episode, target?.item]);
+  }, [activeServer, type, season, episode, target]);
 
   useEffect(() => {
     streamStartRef.current = Date.now();
@@ -892,8 +805,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setNeedsTap(false);
   }, [streamUrl, videoNonce]);
 
-  /* seconds counter while connecting — makes the patient server check visible
-   * instead of looking frozen */
+  /* seconds counter while connecting — makes the patient check visible */
   const [checkTick, setCheckTick] = useState(0);
   useEffect(() => {
     setCheckTick(0);
@@ -902,10 +814,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     return () => clearInterval(iv);
   }, [videoState, streamUrl, videoNonce]);
 
-  /* ---------------- keep the chosen subtitle track showing ----------------
-   * `default` covers a freshly mounted <video>; after switching languages
-   * mid-playback (or an auto language flip on server change) the mode must
-   * be forced, since browsers keep the previous track's mode. */
+  /* ---------------- keep the chosen subtitle track showing ---------------- */
   useEffect(() => {
     if (!activeSub) return;
     const apply = () => {
@@ -921,277 +830,166 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     return () => clearTimeout(timer);
   }, [activeSub, streamUrl, videoNonce]);
 
-  /* ---------------- live status + watchdog failover ---------------- */
-  // NB: videoNonce is a dependency on purpose — a remount (retry / revive /
-  // backend-recovery) must reset the momentum state below, or a revived
-  // server inherits the previous attempt's stale progress snapshot and is
-  // failed over before it can start.
+  /* ---------------- live status + watchdog (THE RULES) ----------------
+   * 2s poll. One effect, two clearly separated phases:
+   *  · LOCKED (content on screen / ≥2% buffered): UI updates + same-stream
+   *    recovery. Automatic switching is off; only CONFIRMED hard death
+   *    (reconnect already tried and failed) may advance.
+   *  · CONNECTING: patient sequential checks — every threshold only fires on
+   *    evidence the server cannot work. Slow is normal; only death switches. */
   useEffect(() => {
     if (!streamUrl || !activeServer || manualIdxRef.current === "web") {
       setStatus(null);
       return;
     }
     let cancelled = false;
-    // the torrent registers in the engine only once the video's first request
-    // lands — the first ticks can legitimately report found:false, so fail
-    // over for a "dropped" stream only after we saw it alive at least once
     let seenAlive = false;
-    // progress momentum: a server that keeps downloading — even slowly — is
-    // alive and gets as long as it needs to deliver the first pieces. Failing
-    // over on total elapsed time instead killed healthy-but-slow swarms mid-
-    // download and every switch restarted the bytes from zero, so the player
-    // cycled servers forever without ever starting.
+    let notFoundPolls = 0;
+    let remountedOnNotFound = false;
     let lastProgress = -1;
-    let lastProgressAt = Date.now();
-    // playback momentum for the mid-stream stall detector (playing state)
+    let readyAt: number | null = null;
     let lastCt = -1;
     let lastCtAt = Date.now();
-    // content lock (STREAM_LOCK_BUFFER): once true, the stream has real
-    // content buffered and timing-based failover stops — only true death
-    // (status not-found, media error) may still switch. Resets per server:
-    // this closure re-runs on every switch/remount.
-    let contentLocked = false;
-    // consecutive polls reporting found:false on a locked stream (see the
-    // not-found handler) — a blip must not abandon half a buffered show
-    let lostPolls = 0;
-    // data-phase clock: the no-data / trickle / first-byte windows start when
-    // the torrent's metadata actually RESOLVED, not at stream start. A slow
-    // resolve (30-60s is normal on thin swarms) must not pre-spend the budget
-    // the server needs to fetch its first pieces — otherwise every slow swarm
-    // was killed seconds after resolving and the player cycled forever.
-    let readyAt: number | null = null;
-    // When the whole backend is unreachable (dev server restart, machine
-    // sleep) EVERY request fails at the network level. That is not 14 bad
-    // servers — failing over would burn the whole strip and dead-mark it.
-    // Instead: hold, show a reconnecting banner, and when the backend is
-    // back remount the same stream (its torrent may even still be warm).
+    let ctStallHandled = false;
+
     const tick = async () => {
       if (cancelled) return;
       let j: TorrentStatus | null = null;
       try {
         const r = await fetch(`/api/torrent/status?id=${activeServer.id}`, {
-          // a hung backend must register as down within a tick or two, not
-          // hang the poller for the browser's default ~5 minute timeout
           signal: AbortSignal.timeout(8000),
         });
         j = await r.json();
       } catch {
         if (cancelled) return;
-        // status failed — is the whole origin gone, or just this long-lived
-        // route through the edge? Deployed behind proxies that cut idle
-        // streaming responses, the video request can die while the server
-        // itself is perfectly fine (the same cut briefly 502s the poll).
+        // status failed — is the whole origin gone, or just this response?
         let originAlive = false;
         try {
           await fetch("/", { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(4000) });
           originAlive = true;
         } catch {
-          /* origin unreachable — treat as a real outage below */
+          /* origin unreachable — real outage below */
         }
         if (originAlive) {
-          // stream pipe flaked: remount the video once for a fresh range
-          // request; if the pipe keeps dropping, hand playback to the next
-          // server instead of reconnect-looping into the same dead pipe
-          if (videoStateRef.current === "error" || videoStateRef.current === "loading") {
-            if (streamLockedRef.current) {
-              // content lock: reconnect the warm stream, never rotate servers
-              if (!lockedRecover()) lockedExhaustedNote();
-            } else if (pipeRemountsRef.current >= 1) {
-              pipeRemountsRef.current = 0;
-              backendDownRef.current = 0;
-              failover("Streaming connection kept dropping");
-            } else {
-              pipeRemountsRef.current += 1;
-              setVideoState("loading");
-              setVideoNonce((n) => n + 1);
-              streamStartRef.current = Date.now();
-            }
-          }
+          // pipe flake: reconnect the SAME stream, never switch servers
+          if (videoStateRef.current !== "playing") recoverSameStream("pipe");
           return;
         }
-        backendDownRef.current = Math.min((backendDownRef.current ?? 0) + 1, 3);
+        backendDownRef.current = Math.min(backendDownRef.current + 1, 3);
         if (backendDownRef.current >= 2) {
           setBanner("Connection to the streaming server was lost — reconnecting…");
         }
-        return; // transient — no failover, no dead marks while offline
+        return; // transient outage — no failover, no dead marks
       }
       if (cancelled || !j) return;
-      // the host's streaming engine itself is broken: every server would
-      // report not-found and the watchdog would burn the whole strip and
-      // call it "13 dead swarms". Hold position and say what is actually
-      // wrong — this never resolves by switching servers.
+      // engine broken on this host: every server would report not-found and
+      // switching would burn the strip. Say what is wrong; hold position.
       if (j.engineOk === false) {
         setBanner(
           j.engineError
             ? `Streaming engine unavailable on this host — ${j.engineError}`
             : "Streaming engine unavailable on this host — torrent playback cannot start here",
         );
-        return; // no failover, no dead marks: not the servers' fault
+        return;
       }
       if (backendDownRef.current) {
-        // backend just came back: give the current stream another chance —
-        // remount the video (the torrent may still be resolved and buffered).
-        // But a server whose stream dies with every outage must not absorb
-        // endless remounts either: after one, switch.
         backendDownRef.current = 0;
         setBanner(null);
-        if (videoStateRef.current === "error") {
-          if (streamLockedRef.current) {
-            // content lock: reconnect the warm stream, never rotate servers
-            if (!lockedRecover()) lockedExhaustedNote();
-            return;
-          }
-          if (pipeRemountsRef.current >= 1) {
-            pipeRemountsRef.current = 0;
-            failover("Streaming connection kept dropping");
-            return;
-          }
-          pipeRemountsRef.current += 1;
-          setVideoState("loading");
-          setVideoNonce((n) => n + 1);
-          streamStartRef.current = Date.now();
-          return;
-        }
       }
       setStatus(j);
-      // "stuck on loading" recovery: the torrent downloads (progress grows)
-      // but the video element never starts — bytes are not reaching the
-      // browser (buffering proxy, edge cutting long responses). One fresh
-      // video request after 120 s; if it is still loading 60 s later, say
-      // what is happening instead of spinning forever.
-      if (videoStateRef.current === "loading" && j.found && (j.progress ?? 0) > 0) {
-        const elapsed = Date.now() - streamStartRef.current;
-        if (elapsed > 120_000 && loadingRemountsRef.current < 1) {
-          loadingRemountsRef.current += 1;
-          setVideoNonce((n) => n + 1);
-          streamStartRef.current = Date.now();
-          return;
-        }
-        if (
-          loadingRemountsRef.current >= 1 &&
-          elapsed > 60_000 &&
-          !loadingBannerShownRef.current
-        ) {
-          loadingBannerShownRef.current = true;
-          setBanner(
-            `Still buffering — the download is progressing (${Math.round((j.progress ?? 0) * 100)}%, ${j.peers ?? 0} peers), but the video is not starting. The network in between may be buffering or blocking the stream; switching servers will not change that.`,
-          );
-        }
+
+      /* lock engagement: content on screen, or ≥2% of the file buffered */
+      if (
+        lockedIdRef.current === null &&
+        ((j.progress ?? 0) >= LOCK_BUFFER || videoStateRef.current === "playing")
+      ) {
+        lockedIdRef.current = activeServer.id;
       }
-      // mid-stream stall recovery: the element claims "playing" but frames
-      // stopped arriving (backend restart without a media error, swarm
-      // evaporated, range request died silently). Remount the same stream
-      // once — a fresh video re-requests the range and playback resumes.
-      if (videoStateRef.current === "playing" && videoRef.current) {
+      const locked = lockedIdRef.current === activeServer.id;
+
+      if (locked && videoStateRef.current === "playing") {
+        /* ================= PLAYING: sticky phase ================= */
         const v = videoRef.current;
-        if (v.currentTime !== lastCt) {
-          lastCt = v.currentTime;
-          lastCtAt = Date.now();
-        } else if (!v.paused && !v.error && v.readyState < 3 && Date.now() - lastCtAt > 20000) {
-          lastCtAt = Date.now();
-          setVideoState("loading");
-          setVideoNonce((n) => n + 1);
-          streamStartRef.current = Date.now();
-          return;
+        if (v && !v.paused && !v.error) {
+          if (v.currentTime !== lastCt) {
+            lastCt = v.currentTime;
+            lastCtAt = Date.now();
+            ctStallHandled = false;
+          } else if (v.readyState < 3 && Date.now() - lastCtAt > HARD_STALL_MS && !ctStallHandled) {
+            // frozen 60s+ unpaused: reconnect the same warm stream first —
+            // switching only if the reconnect budget is spent (hard death)
+            ctStallHandled = true;
+            if (!recoverSameStream("stall")) {
+              advance("Stream stalled and could not recover", { hard: true });
+            }
+            return;
+          }
         }
+        if (j.found === false) {
+          // engine lost the torrent (restart): 3 polls ≈ 6s, then ONE reconnect
+          // — the stream request re-creates the torrent. Still gone after that:
+          // confirmed death, the single legal mid-content switch.
+          notFoundPolls += 1;
+          if (notFoundPolls >= 3) {
+            if (!remountedOnNotFound) {
+              remountedOnNotFound = true;
+              recoverSameStream("stream lost");
+              return;
+            }
+            advance("This server lost the stream", { hard: true });
+          }
+        } else {
+          notFoundPolls = 0;
+          remountedOnNotFound = false;
+        }
+        return;
       }
+
+      /* ================= CONNECTING: patient phase ================= */
       if (j.found === false) {
-        // a server that never registers happens on dead swarms — but if NO
-        // server has ever connected a peer on this host, the network itself
-        // blocks torrent traffic. Name it once instead of cycling silently.
         if (
           j.everConnectedPeers === false &&
-          !connectivityNoteShownRef.current &&
+          !connNoteRef.current &&
           Date.now() - streamStartRef.current > 60_000
         ) {
-          connectivityNoteShownRef.current = true;
+          connNoteRef.current = true;
           setBanner(
             "Torrent peers cannot be reached from this server's network (no peer connection since startup) — every source will fail here. Playback needs a host or network that allows peer connections.",
           );
         }
         if (seenAlive) {
-          if (streamLockedRef.current) {
-            // content lock: a single not-found poll can be an engine hiccup
-            // while the torrent is mid-stream — require 3 consecutive misses
-            // (≈6s) before leaving a server that already delivered content
-            lostPolls += 1;
-            if (lostPolls >= 3) failover("This server dropped the stream");
-          } else {
-            failover("This server dropped the stream");
-          }
-        } else if (Date.now() - streamStartRef.current > NO_DATA_SWITCH_MS) {
-          // the torrent never even registered (metadata timeout ahead) —
-          // don't wait for the stream request's own timeout, move on now
-          failover("This server is not responding");
+          notFoundPolls += 1;
+          if (notFoundPolls >= 2) advance("This server dropped the stream");
+        } else if (Date.now() - streamStartRef.current > NOT_FOUND_GRACE_MS) {
+          // never registered at all — the swarm is dead, not slow
+          advance("This server is not responding");
         }
         return;
       }
       seenAlive = true;
-      lostPolls = 0;
-      // metadata still resolving: pieces cannot flow yet, so the no-data and
-      // trickle rules below would kill slow-to-resolve swarms (anime fansubs
-      // routinely take 20-40 s, thin DHT swarms longer) long before they had
-      // a chance. Hold until past the engine's own 90s metadata timeout —
-      // the engine reports not-found first when the torrent is truly dead.
+      notFoundPolls = 0;
+      // metadata still resolving: pieces cannot flow yet. Thin swarms take
+      // 30-60s+ — killing slow-to-resolve torrents just cycled the player.
       if (j.ready === false) {
-        if (Date.now() - streamStartRef.current > RESOLVE_SWITCH_MS)
-          failover("This server is taking too long to resolve");
+        if (Date.now() - streamStartRef.current > RESOLVE_MS) {
+          advance("This server is taking too long to resolve");
+        }
         return;
       }
-      const p = j.progress ?? 0;
       if (readyAt === null) readyAt = Date.now();
-      if (p > lastProgress + 5e-6) {
-        lastProgress = p;
-        lastProgressAt = Date.now();
-      }
-      if (
-        !contentLocked &&
-        (p >= STREAM_LOCK_BUFFER || videoStateRef.current === "playing")
-      ) {
-        contentLocked = true;
-        // cross-handler lock: onError / pipe-flake paths read this ref to
-        // reconnect the same stream instead of switching servers
-        streamLockedRef.current = true;
-        lockedServerIdRef.current = activeServer.id;
-      }
-      if (videoStateRef.current === "playing") return;
+      const p = j.progress ?? 0;
+      if (p > lastProgress + 5e-6) lastProgress = p;
+      if (videoStateRef.current === "playing") return; // lock branch next tick
       const dataElapsed = Date.now() - (readyAt ?? streamStartRef.current);
-      if (dataElapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
-        failover("No data from this server");
-      } else if (
-        videoStateRef.current === "loading" &&
-        dataElapsed > TRICKLE_SWITCH_MS &&
-        (j.progress ?? 0) === 0 &&
-        (j.speed ?? 0) < 25_000
-      ) {
-        // data flows but a few KB/s will not produce playable pieces in time
-        failover("This server is too slow");
-      } else if (
-        videoStateRef.current === "loading" &&
-        dataElapsed > FIRST_DATA_SWITCH_MS &&
-        (videoRef.current?.readyState ?? 0) === 0
-      ) {
-        // the swarm looks alive (speed > 0, pack progress creeping) but zero
-        // media reached the element in 30s — it is downloading the wrong
-        // pieces; this video will not start no matter how long we wait
-        failover("This server is not delivering video data");
-      } else if (
-        videoStateRef.current === "loading" &&
-        !contentLocked &&
-        Date.now() - lastProgressAt > STALL_SWITCH_MS
-      ) {
-        // download has gone quiet for 40s and the video still can't start —
-        // only checked BEFORE the content lock: a server that already buffered
-        // 2%+ is left alone to start (piece batches pause between bursts)
-        failover("This server has stopped making progress");
-      } else if (
-        Date.now() - streamStartRef.current > HARD_START_MS &&
-        videoStateRef.current === "loading" &&
-        !contentLocked
-      ) {
-        // absolute ceiling — for servers with no content buffered yet; a
-        // locked stream (2%+ buffered) is never abandoned on a timer
-        failover("This server can't start in time");
+      if (p === 0 && (j.speed ?? 0) === 0 && dataElapsed > NO_DATA_MS) {
+        advance("No data from this server");
+      } else if (p === 0 && (j.speed ?? 0) > 0 && (j.speed ?? 0) < 25_000 && dataElapsed > SLOW_MS) {
+        advance("This server is too slow");
+      } else if (p > 0 && (videoRef.current?.readyState ?? 0) === 0 && dataElapsed > WRONG_PIECES_MS) {
+        // downloading but zero media parsed — reconnect once for a fresh range
+        if (!recoverSameStream("wrong pieces")) {
+          advance("This server is not delivering video data");
+        }
       }
     };
     tick();
@@ -1200,7 +998,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       cancelled = true;
       clearInterval(iv);
     };
-  }, [streamUrl, activeServer, failover, videoNonce]);
+  }, [streamUrl, activeServer, advance, recoverSameStream, videoNonce]);
 
   /* ---------------- stop torrents on switch / unmount ---------------- */
   useEffect(() => {
@@ -1208,17 +1006,16 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     if (currentIdRef.current && currentIdRef.current !== id) stopId(currentIdRef.current);
     currentIdRef.current = id;
   }, [activeServer?.id, stopId]);
-  // the content lock describes the CURRENT stream: a new server (manual pick
-  // or auto failover) starts unlocked, with a fresh recovery budget
+  // the lock describes the CURRENT stream: a new server starts unlocked with
+  // a fresh recovery budget
   useEffect(() => {
-    streamLockedRef.current = false;
-    lockedRemountsRef.current = 0;
-    lockedFailNoteRef.current = false;
+    lockedIdRef.current = null;
+    remountsRef.current = 0;
+    stickyNoteRef.current = false;
   }, [activeServer?.id]);
   useEffect(() => {
     return () => {
       if (currentIdRef.current) stopId(currentIdRef.current);
-      // pre-warmed fallbacks have no player attached — free them too
       for (const id of warmedRef.current) {
         if (id !== currentIdRef.current) stopId(id);
       }
@@ -1265,15 +1062,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     };
   }, [target, type, season]);
 
-  /* ---------------- auto-refresh episodes while open ----------------
-   * Daily shows (Bigg Boss…) publish a new episode every day: re-pull the
-   * season when the tab regains focus and every few minutes, so the latest
-   * episode appears on its own — no reload needed. */
+  /* ---------------- auto-refresh episodes while open ---------------- */
   const epRefreshRef = useRef(0);
   useEffect(() => {
     if (!target || type !== "tv") return;
     const refresh = () => {
-      if (Date.now() - epRefreshRef.current < 90_000) return; // throttle
+      if (Date.now() - epRefreshRef.current < 90_000) return;
       epRefreshRef.current = Date.now();
       tmdb<{ episodes: Episode[] }>(`tv/${target.item.id}/season/${season}`, { _fresh: 1 })
         .then((res) => setEpisodes(res.episodes ?? []))
@@ -1312,6 +1106,25 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     };
   }, [target, onClose]);
 
+  /* ---------------- web embed frame bookkeeping ----------------
+   * key change → overlay back to "loading"; 20s without onLoad → timeout */
+  const webKey = useMemo(
+    () =>
+      target
+        ? `${target.item.id}-${webSourceId ?? "none"}-${type === "tv" ? `${season}-${episode}` : "m"}-${webReloadNonce}`
+        : "none",
+    [target, webSourceId, type, season, episode, webReloadNonce]
+  );
+  useEffect(() => {
+    setWebFrame("loading");
+  }, [webKey]);
+  useEffect(() => {
+    if (!isWeb || webFrame !== "loading") return;
+    const t = setTimeout(() => setWebFrame((s) => (s === "loading" ? "timeout" : s)), 20_000);
+    return () => clearTimeout(t);
+  }, [isWeb, webKey, webFrame]);
+
+  /* ---------------- auto-research when an episode has no sources yet ------ */
   const seasonsList = (details?.seasons ?? []).filter(
     (s) => s.season_number > 0 && s.episode_count > 0
   );
@@ -1319,8 +1132,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     episodes.length ||
     details?.seasons?.find((s) => s.season_number === season)?.episode_count ||
     1;
-
-  /* -------- episode freshness (daily shows like Bigg Boss) -------- */
   const now = new Date();
   const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
     now.getDate()
@@ -1333,34 +1144,61 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     return null;
   }, [episodes]);
   const currentEpisode = episodes.find((ep) => ep.episode_number === episode);
-
-  /* ---------------- auto-research when an episode has no sources yet ----------------
-   * Brand-new daily-show episodes (Bigg Boss…) are often indexed only hours
-   * after broadcast. When the first scan comes up empty and the episode has
-   * already aired, re-scan automatically every 90s (max 5 tries) so the
-   * torrent appears the moment indexers list it — no manual refresh needed. */
   const noSourcesYet = serversState === "ready" && servers.length === 0;
   const episodeAired =
     type !== "tv" || !currentEpisode?.air_date || currentEpisode.air_date <= todayYmd;
   useEffect(() => {
     if (!noSourcesYet || !episodeAired || autoRetries >= 5) return;
-    // a direct episode stream that is already playing must not be interrupted
     if (manualIdx === "archive" && archiveState === "found") return;
-    // same for a web embed: rescans must not yank the user off a playing source
     if (manualIdx === "web") return;
     const t = setTimeout(() => {
       setAutoRetries((n) => n + 1);
       setSearchNonce((n) => n + 1);
     }, 90_000);
     return () => clearTimeout(t);
-  }, [noSourcesYet, episodeAired, autoRetries, searchNonce, manualIdx, archiveState]);
+  }, [noSourcesYet, episodeAired, autoRetries, manualIdx, archiveState]);
 
-  /* ---------------- exhausted → automatic retry waves ----------------
-   * "Every source was tried" usually means thin swarms at that minute, not
-   * 13 dead servers — the banner itself says swarms change by the minute.
-   * So do what it advises: after a cooldown, clear the tried list and go
-   * again (max 2 extra rounds per episode; manual choices stop it). */
-  const [autoWaves, setAutoWaves] = useState(0);
+  /* ---------------- derived: no-sources flag ---------------- */
+  const noSources =
+    (serversState === "ready" && servers.length === 0) || serversState === "error";
+  /** name of the active web embed (null when none) — for the timeout chain */
+  const webSourceName = webSourceId
+    ? WEB_SOURCES.find((s) => s.id === webSourceId)?.name ?? null
+    : null;
+
+  /* ---------------- auto-open the best web embed (only before playback) ---
+   * Fires when every torrent server was tried or none were found, and ONLY
+   * while nothing is locked/playing — a playing torrent is never yanked. */
+  const autoOpenNextWeb = (reason: string) => {
+    if (lockedIdRef.current) return false;
+    const rank = (h?: "up" | "popup" | "down") =>
+      h === "up" ? 0 : h === "popup" ? 1 : h === "down" ? 2 : 1.5;
+    const candidates = WEB_SOURCES.map((s, i) => ({ s, i, r: rank(webHealth[s.id]) }))
+      .filter((c) => !autoWebTriedRef.current.has(c.s.id) && c.r < 2)
+      .sort((a, b) => a.r - b.r || a.i - b.i);
+    const next = candidates[0];
+    if (!next) return false;
+    autoWebTriedRef.current.add(next.s.id);
+    if (activeServer) stopId(activeServer.id);
+    setManualIdx("web");
+    setWebSourceId(next.s.id);
+    setExhausted(false);
+    setWebFrame("loading");
+    setBanner(`${reason} — auto-opened ${next.s.name} (web). Ads play on their page.`);
+    return true;
+  };
+  useEffect(() => {
+    if (serversState === "loading" || isWeb || isArchive || showTrailer) return;
+    if (exhausted) autoOpenNextWeb("Every torrent server was tried");
+    else if (noSources && mounted) autoOpenNextWeb("No torrent server found for this title");
+  }, [exhausted, noSources, serversState, isWeb, isArchive, showTrailer, mounted]);
+  // chain within web servers: an embed that never loaded hands playback on
+  useEffect(() => {
+    if (webFrame !== "timeout" || !isWeb) return;
+    autoOpenNextWeb(`${webSourceName ?? "This web server"} did not load`);
+  }, [webFrame, isWeb, webHealth]);
+
+  /* ---------------- exhausted → one patient retry wave ---------------- */
   useEffect(() => {
     if (!exhausted || !target || manualIdx !== null || autoWaves >= 2) return;
     setBanner(
@@ -1382,34 +1220,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   if (!target) return null;
 
+  /* ---------------- user actions ---------------- */
   const item = target.item;
-  // web embed URL/identity — kept after `item` (which lives behind the
-  // null-target guard); the render-time key reset re-arms the frame overlay
+  const title = getTitle(item);
   const webSource = WEB_SOURCES.find((s) => s.id === webSourceId) ?? null;
   const webSrc = webSource
     ? type === "tv"
       ? webSource.tv(item.id, season, episode)
       : webSource.movie(item.id)
     : null;
-  const webKey = `${item.id}-${webSourceId ?? "none"}-${
-    type === "tv" ? `${season}-${episode}` : "m"
-  }-${webReloadNonce}`;
-  const [prevWebKey, setPrevWebKey] = useState(webKey);
-  if (prevWebKey !== webKey) {
-    setPrevWebKey(webKey);
-    setWebFrame("loading");
-  }
-  // cross-origin frames give no error events: if nothing fired onLoad in 20s,
-  // treat the embed as failed (the auto chain then moves to the next server)
-  useEffect(() => {
-    if (!isWeb || webFrame !== "loading") return;
-    const t = setTimeout(
-      () => setWebFrame((s) => (s === "loading" ? "timeout" : s)),
-      20_000,
-    );
-    return () => clearTimeout(t);
-  }, [isWeb, webKey, webFrame]);
-  const title = getTitle(item);
 
   const goEpisode = (s: number, e: number) => {
     setSeason(s);
@@ -1417,8 +1236,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setShowEpisodes(false);
   };
   const nextEpisode = () => {
-    // never step into episodes that haven't aired yet (TMDB publishes
-    // placeholders days ahead for daily shows)
     const cap = latestAired?.episode_number ?? maxEpisode;
     if (episode < cap) goEpisode(season, episode + 1);
     else if (seasonsList.some((s) => s.season_number === season + 1)) goEpisode(season + 1, 1);
@@ -1432,23 +1249,21 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     ? watchlist.some((w) => w.id === item.id && w.media_type === type)
     : false;
 
-  /* ---------------- user actions ---------------- */
   const selectTorrent = (idx: number) => {
     const sv = servers[idx];
-    // clicking a server the user marked dead revives it explicitly
     if (sv && deadIdxs.has(idx)) reviveServer(sv.id);
     if (idx === activeIdx) {
-      // re-selecting the active server = manual retry
       setVideoState("loading");
       setVideoNonce((n) => n + 1);
+      remountsRef.current = 0;
+      streamStartRef.current = Date.now();
       return;
     }
     setManualIdx(idx);
     setExhausted(false);
     setVideoState("loading");
     setActiveIdx(idx);
-    loadingRemountsRef.current = 0;
-    loadingBannerShownRef.current = false;
+    remountsRef.current = 0;
     streamStartRef.current = Date.now();
   };
 
@@ -1472,9 +1287,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setVideoState("loading");
   };
 
-  // re-clicking the active web chip reloads its iframe (fresh attempt)
   const selectWeb = (id: string) => {
-    autoWebTriedRef.current.add(id); // the auto chain never re-opens this one
+    autoWebTriedRef.current.add(id);
     if (manualIdx === "web" && webSourceId === id) {
       setWebReloadNonce((n) => n + 1);
       return;
@@ -1507,14 +1321,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setExhausted(false);
     setVideoState("loading");
     setVideoNonce((n) => n + 1);
+    remountsRef.current = 0;
+    streamStartRef.current = Date.now();
   };
 
   /* ---------------- derived render state ---------------- */
-  const noSources =
-    (serversState === "ready" && servers.length === 0) || serversState === "error";
-  // exhausted also becomes true when zero servers exist — in that case only
-  // the no-source panel may show, never the "servers failed" panel too.
-  // A web embed on screen owns the stage: never cover it with panels.
   const showFailPanel =
     !noSources &&
     !isWeb &&
@@ -1523,52 +1334,18 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const showNoSourcePanel =
     noSources && !isWeb && !isArchive && !showTrailer && archiveState !== "found";
 
-  /* ---------------- auto-open the best available server ----------------
-   * Torrent sources are preferred (ad-free) and tried first. When they are
-   * exhausted — or the indexers found nothing at all — the player
-   * automatically opens the healthiest web embed (health dots from the
-   * probes: up > popup > unknown > down) instead of leaving a dead panel.
-   * If that embed fails to load too, the chain advances to the next best
-   * one. Every auto-opened id is remembered so a dead source is never
-   * re-opened; manual chips always work. */
-  const autoOpenNextWeb = (reason: string) => {
-    // content lock: never swap a torrent that was playing for a web embed on
-    // our own — that reads as exactly the uninvited switch this must not do
-    if (streamLockedRef.current) return false;
-    const rank = (h?: "up" | "popup" | "down") =>
-      h === "up" ? 0 : h === "popup" ? 1 : h === "down" ? 2 : 1.5;
-    const candidates = WEB_SOURCES.map((s, i) => ({ s, i, r: rank(webHealth[s.id]) }))
-      .filter((c) => !autoWebTriedRef.current.has(c.s.id) && c.r < 2)
-      .sort((a, b) => a.r - b.r || a.i - b.i);
-    const next = candidates[0];
-    if (!next) return false;
-    autoWebTriedRef.current.add(next.s.id);
-    if (activeServer) stopId(activeServer.id);
-    setManualIdx("web");
-    setWebSourceId(next.s.id);
-    setExhausted(false);
-    setWebFrame("loading");
-    setBanner(`${reason} — auto-opened ${next.s.name} (web). Ads play on their page.`);
-    return true;
-  };
-  useEffect(() => {
-    if (serversState === "loading" || isWeb || isArchive || showTrailer) return;
-    if (exhausted)
-      autoOpenNextWeb("Every torrent server was tried");
-    else if (noSources && mounted)
-      autoOpenNextWeb("No torrent server found for this title");
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the exhaustion/no-source transition; webHealth read via closure is current at that moment
-  }, [exhausted, noSources, serversState, isWeb, isArchive, showTrailer, mounted]);
-  // chain within web servers: an embed that never loaded hands playback to
-  // the next best untried one; when all are consumed the timeout panel stays
-  useEffect(() => {
-    if (webFrame !== "timeout" || !isWeb) return;
-    autoOpenNextWeb(`${webSource?.name ?? "This web server"} did not load`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- webHealth re-runs the chain decision with fresh probe data
-  }, [webFrame, isWeb, webHealth]);
-
-  const downloading = status && (status.progress ?? 0) < 0.999;
+  const downloading = !!status && (status.progress ?? 0) < 0.999;
   const videoKey = `${streamUrl ?? "none"}-${videoNonce}`;
+
+  /* 2% START: canplay = the browser has the first playable chunk (≈2%).
+     Fire play() immediately — no artificial waiting for a bigger buffer. */
+  const handleCanPlay = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    setVideoState((s) => (s === "loading" ? "playing" : s));
+    const v = e.currentTarget;
+    if (v.paused) {
+      v.play().then(() => setNeedsTap(false)).catch(() => setNeedsTap(true));
+    }
+  };
 
   return (
     <div
@@ -1630,8 +1407,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         </div>
       </div>
 
-      {/* Server strip — group 1: AD-FREE sources. Auto, Direct and every
-          S-chip play through our own player: no third-party iframe, no ads. */}
+      {/* Server strip — group 1: AD-FREE sources */}
       <div
         className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
         role="group"
@@ -1644,7 +1420,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         <button
           type="button"
           onClick={selectAuto}
-          title="Automatically picks the best-seeded source and fails over if it stalls"
+          title="Automatically picks the best-seeded source; once content plays it stays on that server"
           className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
             manualIdx === null
               ? "bg-red-600 text-white"
@@ -1730,10 +1506,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         )}
       </div>
 
-      {/* Server strip — group 2: AD-SUPPORTED web embeds, restored on request.
-          Everything here is a third-party page inside an iframe: pop-ups,
-          redirects and ads belong to the provider. User opt-in per click, and
-          the auto pass only reaches this row after the ad-free group fails. */}
+      {/* Server strip — group 2: AD-SUPPORTED web embeds (opt-in) */}
       <div
         className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
         role="group"
@@ -1783,10 +1556,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         })}
       </div>
 
-      {/* Server audio language — picking one re-scans the indexers for dubs of
-          that language and ranks matching servers first. Stays mounted while a
-          language is pinned so "All" is always reachable, even after a scan
-          that found nothing for it. */}
+      {/* Server audio language — re-scans for dubs of that language and ranks
+          matching servers first. NEVER yanks a playing stream and can never
+          empty the server row. */}
       {mounted && (langChips.length > 0 || serverLang !== "auto") && (
         <div
           className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
@@ -1828,11 +1600,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                 aria-pressed={active}
                 onClick={() => {
                   setServerLang(tag);
-                  // picking a language re-scans the indexers for dubs of it —
-                  // "All" simply clears the filter over the current results
                   if (tag !== serverLang) setSearchNonce((n) => n + 1);
                 }}
-                title={`Only ${LANG_LABEL[tag] ?? tag} servers (${count} found)`}
+                title={`Prefer ${LANG_LABEL[tag] ?? tag} servers (${count} found) — the stream keeps playing while servers re-rank`}
                 className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
                   active
                     ? "bg-sky-600 text-white"
@@ -1847,9 +1617,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         </div>
       )}
 
-      {/* Subtitle language — rendered natively by the player (<track>) on both
-          torrent and direct streams. "Auto" = English subs on Japanese audio.
-          The CC button over the video opens the same menu. */}
+      {/* Subtitle language row */}
       <div
         className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
         role="group"
@@ -1889,10 +1657,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           Auto
           {subtitleLang === "auto" && activeSub && <span className="text-[9px]">● on</span>}
         </button>
-        {/* pinned language is always visible — when this episode has no such
-            track the chip dims and says so, instead of vanishing (anime fansub
-            episodes rarely have OpenSubtitles community tracks for every
-            language, which read as a broken selector) */}
         {subtitleLang !== "auto" && subtitleLang !== "off" && !subs.some((r) => r.lang === subtitleLang) && (
           <button
             type="button"
@@ -1953,7 +1717,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         </div>
       )}
 
-      {/* failover banner */}
+      {/* banner */}
       {banner && (
         <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -1966,7 +1730,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="relative w-full bg-black lg:flex-1">
             <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
-              {/* ---------- web embed servers (restored, ad-supported) ---------- */}
+              {/* ---------- web embed servers ---------- */}
               {isWeb && webSrc && webSource ? (
                 <div className="absolute inset-0">
                   <iframe
@@ -1976,33 +1740,26 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                     allowFullScreen
                     className="h-full w-full border-0 bg-black"
-                    onLoad={() =>
-                      setWebFrame((s) => (s === "loading" ? "ready" : s))
-                    }
+                    onLoad={() => setWebFrame((s) => (s === "loading" ? "ready" : s))}
                   />
                   {webFrame === "loading" && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90">
                       <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
-                      <p className="text-xs text-zinc-400">
-                        Loading {webSource.name}…
-                      </p>
+                      <p className="text-xs text-zinc-400">Loading {webSource.name}…</p>
                     </div>
                   )}
                   {webFrame === "timeout" && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/95 px-6 text-center">
                       <AlertTriangle className="h-8 w-8 text-amber-400" />
-                      <p className="text-sm font-bold text-white">
-                        {webSource.name} did not load
-                      </p>
+                      <p className="text-sm font-bold text-white">{webSource.name} did not load</p>
                       <p className="max-w-sm text-xs text-zinc-400">
-                        The provider may be down or blocking embedding. Pick another
-                        server below, or re-tap the same chip to reload it.
+                        The provider may be down or blocking embedding. Pick another server
+                        below, or re-tap the same chip to reload it.
                       </p>
                     </div>
                   )}
                   <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-amber-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
-                    <Globe className="h-3 w-3" /> Web · {webSource.name} · ads play on
-                    their page
+                    <Globe className="h-3 w-3" /> Web · {webSource.name} · ads play on their page
                   </div>
                 </div>
               ) : showTrailer && trailer ? (
@@ -2015,7 +1772,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   className="h-full w-full border-0"
                 />
               ) : isArchive && archive ? (
-                /* ---------- Otama Direct: public-domain native stream ---------- */
+                /* ---------- Otama Direct ---------- */
                 <>
                   <video
                     key={`${archive.identifier}-${videoNonce}`}
@@ -2068,7 +1825,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   </p>
                 </>
               ) : streamUrl ? (
-                /* ---------- torrent stream: native video, HTTP Range, no iframe ---------- */
+                /* ---------- torrent stream ---------- */
                 <>
                   <video
                     ref={videoRef}
@@ -2081,30 +1838,25 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     preload="auto"
                     onCanPlay={handleCanPlay}
                     onPlaying={() => {
-                      // playback actually started — any pipe-flake recovery
-                      // that got us here succeeded; start counting fresh
-                      pipeRemountsRef.current = 0;
-                      // content is on screen: the hard lock engages and the
-                      // same-stream recovery budget refills
-                      streamLockedRef.current = true;
-                      lockedServerIdRef.current = activeServer?.id ?? null;
-                      lockedRemountsRef.current = 0;
-                      lockedFailNoteRef.current = false;
+                      // content is on screen: the sticky lock engages, the
+                      // reconnect budget refills — no automatic switching now
+                      lockedIdRef.current = activeServer?.id ?? null;
+                      remountsRef.current = 0;
+                      stickyNoteRef.current = false;
                       setVideoState("playing");
                       setNeedsTap(false);
                     }}
                     onError={() => {
                       // a dead backend produces this on every remount — the
-                      // watchdog reconnects, only treat it as a bad server
-                      // when the backend answered recently
-                      if (backendDownRef.current) setVideoState("error");
-                      else if (streamLockedRef.current) {
-                        // content was on screen — the torrent is warm and
-                        // partially buffered on THIS server: reconnect it
-                        // instead of switching (one dropped range request
-                        // must not throw away half a buffered show)
-                        if (!lockedRecover()) lockedExhaustedNote();
-                      } else failover("Stream failed on this server");
+                      // watchdog reconnects; treat as a bad server only when
+                      // the backend answered recently
+                      if (backendDownRef.current) {
+                        setVideoState("error");
+                      } else if (!recoverSameStream("media error")) {
+                        // reconnect budget spent with content on screen:
+                        // confirmed hard death — the one legal switch
+                        advance("Stream failed on this server", { hard: true });
+                      }
                     }}
                     className="h-full w-full bg-black"
                   >
@@ -2142,7 +1894,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                 </>
               ) : null}
 
-              {/* ---------- tap to play (browser blocked autoplay) ---------- */}
+              {/* ---------- tap to play (autoplay blocked) ---------- */}
               {needsTap && !showTrailer && (
                 <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
                   <button
@@ -2174,7 +1926,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     <p className="text-[11px] text-zinc-500">
                       {status && status.found && status.ready === false
                         ? `Resolving this torrent's swarm — ${checkTick}s (quiet swarms can take up to 90s; it only switches if this one is truly dead)`
-                        : `Checking this server — ${checkTick}s · it only switches if this one is truly dead`}
+                        : `Checking this server — ${checkTick}s · playback starts at ~2% buffer and the server will not be switched while you watch`}
                     </p>
                   )}
                   {activeServer && (
@@ -2204,7 +1956,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => failover("Skipped", { manual: true })}
+                      onClick={() => advance("Skipped", { hard: true })}
                       className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
                     >
                       Next server
@@ -2229,10 +1981,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       No playable source found for this episode yet
                     </p>
                     <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
-                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch, EZTV and
-                      archive.org — no healthy source for it right now. Brand-new episodes of
-                      daily shows usually surface within hours to a few days. The episode list
-                      and servers refresh automatically, so simply retry later.
+                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch, SolidTorrents, EZTV,
+                      YTS and archive.org — no healthy source for it right now. Brand-new episodes of
+                      daily shows usually surface within hours to a few days. The episode list and
+                      servers refresh automatically, so simply retry later.
                     </p>
                     {type === "tv" && noSourcesYet && autoRetries < 5 && episodeAired && (
                       <p
@@ -2253,8 +2005,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                         className="mx-auto mt-2 block text-[11px] font-semibold text-zinc-400 underline decoration-dotted transition hover:text-zinc-200"
                       >
                         Episode {latestAired.episode_number} (aired{" "}
-                        {formatDate(latestAired.air_date) || "recently"}) — try it, older
-                        episodes are usually seeded first
+                        {formatDate(latestAired.air_date) || "recently"}) — try it, older episodes
+                        are usually seeded first
                       </button>
                     )}
                   </div>
@@ -2346,9 +2098,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
               <p className="flex items-center gap-2 text-center text-xs text-zinc-600">
                 <Info className="h-3.5 w-3.5 shrink-0" />
                 <span>
-                  <span className="font-semibold text-zinc-400">Auto</span> picks the best-seeded
-                  source and fails over automatically. Playback is a direct P2P stream on our own
-                  player — <span className="text-emerald-400">no ad networks, ever</span>.
+                  Playback starts at ~2% buffer and <span className="font-semibold text-zinc-400">stays on the
+                  server that delivered it</span> — no automatic switching while you watch. Direct P2P
+                  stream on our own player —{" "}
+                  <span className="text-emerald-400">no ad networks, ever</span>.
                 </span>
               </p>
             )}
@@ -2422,9 +2175,6 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                 episodes.map((ep) => {
                   const active = ep.episode_number === episode;
                   const aired = epAired(ep);
-                  // TMDB fills brand-new daily-show episodes with "TBD"
-                  // (Bigg Boss S20E55 airs with no title yet) — show a real
-                  // label and the broadcast date instead
                   const name =
                     ep.name && ep.name !== "TBD" ? ep.name : `Episode ${ep.episode_number}`;
                   const isNew =
