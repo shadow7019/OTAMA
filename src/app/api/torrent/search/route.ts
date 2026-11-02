@@ -34,11 +34,7 @@ export async function GET(req: NextRequest) {
   }
 
   const cacheKey = `${type}:${id}:${type === "tv" ? `${season}:${episode}` : "m"}`;
-  // a language-targeted scan is a different result set — never serve the
-  // unfiltered one from cache (and vice versa)
-  const langParam = (sp.get("lang") ?? "").trim().toLowerCase();
-  const cacheKeyWithLang = langParam ? `${cacheKey}:${langParam}` : cacheKey;
-  const cached = cache.get(cacheKeyWithLang);
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < cached.ttl) {
     return NextResponse.json(cached.data, { headers: { "X-Cache": "HIT" } });
   }
@@ -56,20 +52,19 @@ export async function GET(req: NextRequest) {
         year,
         season,
         episode,
-        audioLang: langParam || null,
       },
       (s) => providerStatus.push(s)
     );
     const payload = {
       results,
       providerStatus,
-      searchedWith: { title, year, season, episode, lang: langParam },
+      searchedWith: { title, year, season, episode },
     };
     if (cache.size > MAX_CACHE) {
       const oldest = cache.keys().next().value;
       if (oldest) cache.delete(oldest);
     }
-    cache.set(cacheKeyWithLang, {
+    cache.set(cacheKey, {
       data: payload,
       ts: Date.now(),
       ttl: results.length ? TTL : EMPTY_TTL,

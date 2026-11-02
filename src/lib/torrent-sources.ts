@@ -36,125 +36,8 @@ export interface TorrentSource {
   match: MatchClass;
   /** negative when the release is tagged with a country the show isn't from */
   countryPenalty?: number;
-  /** audio/language tags parsed from the release name — drives the player's
-   *  server-language filter ("sub", "eng", "hindi", "dual"…). Filled in
-   *  centrally after the scan (see searchTorrentSources). */
-  audioTags?: string[];
   score: number;
 }
-
-/**
- * Audio-language / dub tags parsed from a release name. These power the
- * player's server categorisation so users can pick Subbed / English / Hindi /
- * Tamil… servers instead of digging through release names.
- */
-const AUDIO_TAG_PATTERNS: [string, RegExp][] = [
-  ["dual", /\bdual[\s._-]*(?:audio|aac|ac3)?\b|\bdualaudio\b|\bdual-audio\b/],
-  ["multi", /\bmulti(?:ple)?[\s._-]*(?:audio|subs?|dubs?)?\b(?!.*\bsingle\b)/],
-  ["hindi", /\bhindi\b|\bhin\b/],
-  ["tamil", /\btamil\b|\btam\b/],
-  ["telugu", /\btelugu\b|\btel\b/],
-  ["malayalam", /\bmalayalam\b|\bmal\b/],
-  ["kannada", /\bkannada\b|\bkan\b/],
-  ["bengali", /\bbengali\b|\bbangla\b|\bben\b/],
-  ["marathi", /\bmarathi\b/],
-  ["punjabi", /\bpunjabi\b|\bpa\b/],
-  ["chi", /\bmandarin\b|\bcantonese\b|\bchinese\b|\bchi\b|\bzho\b/],
-  ["kor", /\bkorean\b|\bkor\b/],
-  ["rus", /\brus(sian)?\b|lostfilm|hdrezka/],
-  ["ukr", /\bukr(ainian)?\b/],
-  ["ita", /\bita(lian)?\b|\bitaliano\b/],
-  ["fre", /\bfrench\b|\btruefrench\b|\bfre\b/],
-  ["ger", /\bgerman\b|\bdeutsch\b|\bger[\s._-]*dub\b/],
-  ["eng", /\b(?:eng|english)[\s._-]*(?:dub|audio|aac|ac3|eac3|ddp?5?|2\.0|5\.1)\b|\bdubbed\b(?!.*\bjapanese?\b)|\bfandub\b|\beng?\b(?=.*\bdubs?\b)/],
-  ["eng", /\bdublado\b|\benglish[\s._-]*dubs?\b/],
-  ["spa", /\b(?:latino|espanol|spanish|castellano)\b/],
-  ["por", /\b(?:portugues|portuguesa|pt[\s._-]*br)\b/],
-  ["jap", /\bjapanese?\b|\bjpn?\b(?![^.]*\bsub)/],
-  ["raw", /\braw\b/],
-];
-
-/** real language tags (everything except track-layout tags) */
-const LANG_TAGS = [
-  "eng", "jap", "chi", "kor", "rus", "ukr", "ita", "fre", "ger", "spa", "por",
-  "hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi", "punjabi",
-];
-
-/** languages whose "… Dubbed" uploads mean THAT language, not English */
-const INDIAN_REGION_TAGS = [
-  "hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi", "punjabi",
-  "spa", "por", "chi", "kor", "rus", "ukr", "ita", "fre", "ger",
-];
-
-/**
- * Tags for one release. Japanese-audio-with-subs (the default anime shape:
- * fansub groups, "Eng-Subs", "MultiSub") lands on "sub"; anything with a
- * dub/audio tag lands on its language; "dual"/"multi" are additive so a
- * "Dual-Audio Eng/Jap" release matches both language filters.
- */
-export function detectAudioTags(releaseName: string, isAnime: boolean): string[] {
-  const n = releaseName.toLowerCase();
-  const tags = new Set<string>();
-  for (const [tag, re] of AUDIO_TAG_PATTERNS) {
-    if (re.test(n)) tags.add(tag);
-  }
-  // "Eng-Subs" / "MultiSub" mean subtitles, not a dub — remove the dub tag
-  // the generic \beng\b pattern may have picked up from them
-  const subsOnly = /\b(?:eng|english)[\s._-]*subs?\b|\bmultisubs?\b|\bvost(?:fr|en)?\b|\bsub ?(?:eng|es|indo)?\b/.test(n);
-  if (subsOnly && !/\b(?:dub|dubbed|dublado|dual)\b/.test(n)) tags.delete("eng");
-  // "Hindi Dubbed" dubs INTO Hindi — the generic \bdubbed\b tag must not add
-  // English unless the name actually mentions it
-  const indianTag = INDIAN_REGION_TAGS.find((t) => tags.has(t));
-  if (tags.has("eng") && indianTag && !/\b(?:eng|english)\b/.test(n)) tags.delete("eng");
-  if (tags.has("dual") || tags.has("multi")) {
-    // a dual/multi-audio release carries both the original and a dub
-    if (isAnime) tags.add("jap");
-    if (/\b(?:eng|english)\b/.test(n) || tags.has("eng")) tags.add("eng");
-  }
-  // "[Multi-Dub]" on anime = several dubs, English always among them
-  if (isAnime && /\bmulti[\s._-]*dubs?\b/.test(n)) tags.add("eng");
-  if (tags.size === 0) {
-    // anime fansub defaults to subbed japanese; western releases unknown
-    if (isAnime) return ["sub", "jap"];
-    return ["unknown"];
-  }
-  // anime fansub default = subbed japanese — but only when the name carries
-  // NO real language at all ("rus.LostFilm" is a Russian dub, not a sub)
-  const hasLangTag = LANG_TAGS.some((t) => tags.has(t));
-  if (isAnime && !hasLangTag && !tags.has("dual") && !tags.has("multi") && !tags.has("raw")) {
-    tags.add("sub"); // japanese audio + subs is the anime default
-    tags.add("jap");
-  }
-  return [...tags];
-}
-
-/**
- * Search phrase a dub in this language is tagged with on indexers. When the
- * user picks an audio language in the player, providers run one extra
- * dub-targeted query so English/Hindi/Tamil… servers actually get found
- * instead of only filtering whatever the default scan returned.
- */
-const DUB_QUERY: Record<string, string> = {
-  eng: "english dub",
-  hindi: "hindi dubbed",
-  tamil: "tamil dubbed",
-  telugu: "telugu dubbed",
-  malayalam: "malayalam dubbed",
-  kannada: "kannada dubbed",
-  bengali: "bengali dubbed",
-  marathi: "marathi dubbed",
-  punjabi: "punjabi dubbed",
-  spa: "spanish",
-  por: "dublado",
-  chi: "chinese dub",
-  jap: "japanese",
-  kor: "korean",
-  rus: "russian",
-  ukr: "ukrainian",
-  ita: "italian",
-  fre: "french",
-  ger: "german",
-};
 
 /* ---------- parsing helpers ---------- */
 
@@ -358,8 +241,6 @@ interface BayContext {
   relEpisode?: number | null;
   /** Japanese-language title → fansub indexers (Nyaa) get queried too */
   isAnime?: boolean;
-  /** user's audio-language pick ("eng", "hindi"…) — adds a dub-targeted query */
-  audioLang?: string | null;
 }
 
 /**
@@ -383,10 +264,6 @@ async function providerPirateBay(
           `${title} ${season}x${pad(episode)}`,
           title, // dated daily-show names carry no SxxExx — match by name + air date
         ];
-  // language picked in the player → also scan for dubs of that language
-  const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
-  if (dub) queries.push(`${title} ${dub}`);
-
   const seen = new Map<string, TorrentSource>();
   const collect = (rows: ApibayResult[]) => {
     for (const r of rows) {
@@ -475,8 +352,6 @@ async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise
           `${title} season ${season}`, // dated daily shows + season packs
         ];
   // language picked in the player → also scan for dubs of that language
-  const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
-  if (dub) queries.push(`${title} ${dub}`);
 
   const cards = new Map<string, BitsearchCard>();
   const scrape = async (q: string) => {
@@ -576,10 +451,6 @@ async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promi
           `${title} season ${season}`,
           title,
         ];
-  // language picked in the player → also scan for dubs of that language
-  const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
-  if (dub) queries.push(`${title} ${dub}`);
-
   const seen = new Map<string, TorrentSource>();
   for (const q of queries) {
     if (seen.size >= 5) break;
@@ -652,9 +523,6 @@ async function providerSolidTorrents(
           `${title} ${ctx.showLang ?? ""}`.trim(),
           title,
         ];
-  const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
-  if (dub) queries.push(`${title} ${dub}`);
-
   const seen = new Map<string, TorrentSource>();
   for (const q of queries) {
     if (seen.size >= 5) break;
@@ -959,10 +827,6 @@ async function providerNyaa(type: "movie" | "tv", ctx: BayContext): Promise<Torr
         : // western shows on Nyaa use standard SxxEyy naming — bare episode
           // numbers ("Friends 8") would just return noise
           [`${title} s${pad(season)}e${pad(episode)}`, title];
-  // "english dub" etc — Nyaa carries tagged dub uploads for popular anime
-  const dub = ctx.audioLang ? DUB_QUERY[ctx.audioLang] : undefined;
-  if (dub) queries.push(`${title} ${dub}`);
-
   const seen = new Map<string, TorrentSource>();
   for (const q of queries) {
     if (seen.size >= 6) break;
@@ -1084,7 +948,7 @@ const PROVIDER_TRUST: Record<string, number> = {
   BitSearch: -3,
 };
 
-function merge(sources: TorrentSource[], audioLang?: string | null): TorrentSource[] {
+function merge(sources: TorrentSource[]): TorrentSource[] {
   const best = new Map<string, TorrentSource>();
   for (const t of sources) {
     const prev = best.get(t.id);
@@ -1094,16 +958,6 @@ function merge(sources: TorrentSource[], audioLang?: string | null): TorrentSour
   for (const t of list) {
     let s =
       scoreTorrent(t) + MATCH_RANK[t.match] + (t.countryPenalty ?? 0) + (PROVIDER_TRUST[t.provider] ?? 0);
-    // an explicitly picked audio language ranks matching releases up, so the
-    // player's auto-pick starts with a server that speaks the chosen language.
-    // dual/multi releases may carry it (their track lists aren't in the name)
-    // — they stay neutral instead of being sunk.
-    if (audioLang) {
-      const tags = t.audioTags ?? [];
-      if (tags.includes(audioLang)) s += 5;
-      else if (tags.includes("dual") || tags.includes("multi")) s += 0;
-      else s -= 3;
-    }
     t.score = Math.round(s * 10) / 10;
   }
   // only fall back to unverified (no-year) releases when nothing better exists
@@ -1121,9 +975,6 @@ export interface SearchArgs {
   year: string;
   season: number;
   episode: number;
-  /** user's audio-language pick ("eng", "hindi"…) — providers run extra
-   *  dub-targeted queries for it; layout tags ("sub"/"dual") are ignored */
-  audioLang?: string | null;
 }
 
 /** Per-provider outcome of a scan — surfaced in the search payload so an
@@ -1170,9 +1021,6 @@ export async function searchTorrentSources(
   const isAnime = (meta.originalLanguage ?? "") === "ja";
   const absEpisode = type === "tv" && isAnime ? await getAbsoluteEpisode(tmdbId, season, episode) : null;
   const relEpisode = type === "tv" && isAnime && season >= 2 ? episode : null;
-  // only real languages get dub queries — "sub"/"dual"/"multi" are track
-  // layouts, not languages to search for
-  const audioLang = args.audioLang && DUB_QUERY[args.audioLang] ? args.audioLang : null;
 
   const jobs: { name: string; run: () => Promise<TorrentSource[]> }[] = [];
   const bayCtx: BayContext = {
@@ -1187,7 +1035,6 @@ export async function searchTorrentSources(
     absEpisode,
     relEpisode,
     isAnime,
-    audioLang,
   };
   if (matchTitle) {
     jobs.push({ name: "ThePirateBay", run: () => providerPirateBay(type, bayCtx) });
@@ -1242,9 +1089,7 @@ export async function searchTorrentSources(
     }
   });
   const all: TorrentSource[] = settled.flat();
-  // audio/language tags are parsed once, centrally, for every provider result
-  for (const t of all) t.audioTags = detectAudioTags(t.releaseName, isAnime);
-  return merge(all, audioLang);
+  return merge(all);
 }
 
 /** Cheap availability probe for the auto-content pipeline (Torrentio only). */
