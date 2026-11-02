@@ -81,10 +81,14 @@ interface ArchiveMatchClient {
 }
 
 const ARCHIVE_ID = "otama-direct";
-/** Switch servers when the swarm gives us nothing at all. */
-const NO_PEER_SWITCH_MS = 18000;
-/** Switch when peers exist but data never arrives. */
-const STALL_SWITCH_MS = 40000;
+/** Switch servers when the swarm gives us nothing at all. Trackers usually
+ * announce within 10-30 s — a healthy server still looks peer-less at 18 s,
+ * so the window must outlast the announce cycle before calling a server dead. */
+const NO_PEER_SWITCH_MS = 45000;
+/** Switch only when progress has not moved ONE BIT for this long. A slow
+ * server that is still delivering data is working — torrent sites are slow,
+ * and switching away from a buffering server is what breaks playback. */
+const STALL_SWITCH_MS = 60000;
 
 const fmtSize = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
@@ -140,6 +144,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const videoStateRef = useRef(videoState);
   videoStateRef.current = videoState;
   const streamStartRef = useRef(0);
+  /** last progress seen from the status poll — drives the stall clock */
+  const lastProgressRef = useRef(0);
+  /** when progress last moved — a server that moves data is never "too slow" */
+  const lastProgressAtRef = useRef(0);
   const currentIdRef = useRef<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -226,8 +234,23 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       .then((r) => r.json())
       .then((j: { results?: TorrentServer[] }) => {
         if (cancelled) return;
-        setServers(Array.isArray(j.results) ? j.results : []);
+        const found = Array.isArray(j.results) ? j.results : [];
+        setServers(found);
         setServersState("ready");
+        // Pre-resolve metadata for the first candidates right now
+        // (fire-and-forget). Metadata alone costs 15-90 s on a cold torrent,
+        // and paying that while the video element is already waiting is what
+        // looks like "stuck on buffering". Warmed, the stream starts
+        // delivering the instant it opens — direct-player startup speed.
+        const warmables = found.slice(0, 3).map((s) => ({ id: s.id, dn: s.releaseName }));
+        if (warmables.length) {
+          fetch("/api/torrent/warm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: warmables }),
+            keepalive: true,
+          }).catch(() => {});
+        }
       })
       .catch(() => {
         if (!cancelled) setServersState("error");
@@ -302,6 +325,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
 
   useEffect(() => {
     streamStartRef.current = Date.now();
+    lastProgressRef.current = 0;
+    lastProgressAtRef.current = Date.now();
     setStatus(null);
     setNeedsTap(false);
   }, [streamUrl, videoNonce]);
@@ -321,15 +346,28 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         if (cancelled) return;
         setStatus(j);
         if (j.found === false) {
-          failover("This server dropped the stream");
+          // a freshly opened stream can poll before the backend registers the
+          // torrent — that is transient, never a reason to switch. Trust it
+          // only once the stream has been open long enough to mean a real drop.
+          if (Date.now() - streamStartRef.current > 8000) {
+            failover("This server dropped the stream");
+          }
           return;
         }
         if (videoStateRef.current === "playing") return;
+        const progress = j.progress ?? 0;
+        // ANY forward movement proves the server is delivering and resets the
+        // stall clock — buffering patiently beats switching into another
+        // server that would start its download from zero
+        if (progress > lastProgressRef.current) {
+          lastProgressRef.current = progress;
+          lastProgressAtRef.current = Date.now();
+        }
         const elapsed = Date.now() - streamStartRef.current;
-        if (elapsed > NO_PEER_SWITCH_MS && (j.peers ?? 0) === 0 && (j.progress ?? 0) === 0) {
+        if (elapsed > NO_PEER_SWITCH_MS && (j.peers ?? 0) === 0 && progress === 0) {
           failover("No peers on this server");
-        } else if (elapsed > STALL_SWITCH_MS && videoStateRef.current === "loading") {
-          // data may be flowing but the wrong pieces — this server can't start in time
+        } else if (Date.now() - lastProgressAtRef.current > STALL_SWITCH_MS) {
+          // not one new piece for the whole window — the swarm is truly dead
           failover("This server is too slow to start");
         }
       } catch {

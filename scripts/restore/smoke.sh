@@ -55,6 +55,15 @@ assert code == 206 and total > 0, "stream did not produce data"
 st = json.load(get(f"{BASE}/api/torrent/status?id={s['id']}", timeout=15))
 print(f"[status] found={st.get('found')} progress={st.get('progress')} peers={st.get('peers')}")
 assert st.get("found") is True
+
+# 4) warm endpoint the restored player now fires after every search
+wreq = urllib.request.Request(
+    f"{BASE}/api/torrent/warm",
+    data=json.dumps({"ids": [{"id": s["id"], "dn": s["releaseName"]}]}).encode(),
+    headers={"Content-Type": "application/json"}, method="POST")
+w = json.load(urllib.request.urlopen(wreq, timeout=90))
+print(f"[warm] {w}")
+assert w.get("warmed", [{}])[0].get("ok") is True
 print("[PASS] restored player wire path verified end to end")
 PY
 rc=$?
