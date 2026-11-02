@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://otama.antideploy.app"),
   title: "Popcorn Time — Stream Movies & TV Shows",
   description:
     "Browse trending movies and TV shows, watch trailers and stream instantly. Powered by TMDB.",
@@ -37,6 +38,13 @@ export const metadata: Metadata = {
     title: "Popcorn Time — Stream Movies & TV Shows",
     description: "Browse trending movies and TV shows, watch trailers and stream instantly.",
     type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Popcorn Time" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Popcorn Time — Stream Movies & TV Shows",
+    description: "Browse trending movies and TV shows, watch trailers and stream instantly.",
+    images: ["/og.png"],
   },
 };
 

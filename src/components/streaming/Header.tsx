@@ -73,9 +73,11 @@ export function Header({ active, query, onNavigate, onSearch }: HeaderProps) {
             alt=""
             className="h-8 w-8 rounded-lg shadow-lg shadow-red-600/20"
           />
-          <span className="text-xl font-black tracking-tight text-white">
-            Popcorn<span className="text-red-500">Time</span>
-          </span>
+          <img
+            src="/wordmark.png"
+            alt="Popcorn Time"
+            className="h-6 w-auto md:h-7"
+          />
         </button>
 
         {/* Desktop nav */}
