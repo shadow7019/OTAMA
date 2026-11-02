@@ -954,6 +954,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // consecutive polls reporting found:false on a locked stream (see the
     // not-found handler) — a blip must not abandon half a buffered show
     let lostPolls = 0;
+    // data-phase clock: the no-data / trickle / first-byte windows start when
+    // the torrent's metadata actually RESOLVED, not at stream start. A slow
+    // resolve (30-60s is normal on thin swarms) must not pre-spend the budget
+    // the server needs to fetch its first pieces — otherwise every slow swarm
+    // was killed seconds after resolving and the player cycled forever.
+    let readyAt: number | null = null;
     // When the whole backend is unreachable (dev server restart, machine
     // sleep) EVERY request fails at the network level. That is not 14 bad
     // servers — failing over would burn the whole strip and dead-mark it.
@@ -1133,6 +1139,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         return;
       }
       const p = j.progress ?? 0;
+      if (readyAt === null) readyAt = Date.now();
       if (p > lastProgress + 5e-6) {
         lastProgress = p;
         lastProgressAt = Date.now();
@@ -1148,12 +1155,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         lockedServerIdRef.current = activeServer.id;
       }
       if (videoStateRef.current === "playing") return;
-      const elapsed = Date.now() - streamStartRef.current;
-      if (elapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
+      const dataElapsed = Date.now() - (readyAt ?? streamStartRef.current);
+      if (dataElapsed > NO_DATA_SWITCH_MS && (j.progress ?? 0) === 0 && (j.speed ?? 0) === 0) {
         failover("No data from this server");
       } else if (
         videoStateRef.current === "loading" &&
-        elapsed > TRICKLE_SWITCH_MS &&
+        dataElapsed > TRICKLE_SWITCH_MS &&
         (j.progress ?? 0) === 0 &&
         (j.speed ?? 0) < 25_000
       ) {
@@ -1161,7 +1168,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         failover("This server is too slow");
       } else if (
         videoStateRef.current === "loading" &&
-        elapsed > FIRST_DATA_SWITCH_MS &&
+        dataElapsed > FIRST_DATA_SWITCH_MS &&
         (videoRef.current?.readyState ?? 0) === 0
       ) {
         // the swarm looks alive (speed > 0, pack progress creeping) but zero
@@ -1178,7 +1185,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         // 2%+ is left alone to start (piece batches pause between bursts)
         failover("This server has stopped making progress");
       } else if (
-        elapsed > HARD_START_MS &&
+        Date.now() - streamStartRef.current > HARD_START_MS &&
         videoStateRef.current === "loading" &&
         !contentLocked
       ) {
@@ -2165,7 +2172,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   </p>
                   {checkTick > 0 && (
                     <p className="text-[11px] text-zinc-500">
-                      Checking this server — {checkTick}s · it only switches if this one is truly dead
+                      {status && status.found && status.ready === false
+                        ? `Resolving this torrent's swarm — ${checkTick}s (quiet swarms can take up to 90s; it only switches if this one is truly dead)`
+                        : `Checking this server — ${checkTick}s · it only switches if this one is truly dead`}
                     </p>
                   )}
                   {activeServer && (
