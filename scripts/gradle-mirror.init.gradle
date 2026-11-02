@@ -1,0 +1,32 @@
+/**
+ * Local-build Gradle mirror: point dependency resolution at the Aliyun
+ * CDN mirror of Maven Central (this sandbox sits on Alibaba infra, where
+ * repo.maven.apache.org rate-limits with HTTP 429).
+ * Usage: ./gradlew assembleDebug --init-script gradle-mirror.init.gradle
+ * The committed project keeps standard repos; CI (GitHub runners) needs
+ * no mirror.
+ */
+allprojects {
+    buildscript {
+        repositories.clear()
+        repositories {
+            google()
+            maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+            maven { url 'https://maven.aliyun.com/repository/public' }
+        }
+    }
+    repositories.clear()
+    repositories {
+        google()
+        maven { url 'https://maven.aliyun.com/repository/public' }
+    }
+}
+settingsEvaluated { settings ->
+    settings.pluginManagement {
+        repositories.clear()
+        repositories {
+            gradlePluginPortal()
+            maven { url 'https://maven.aliyun.com/repository/public' }
+        }
+    }
+}

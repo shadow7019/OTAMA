@@ -1,8 +1,9 @@
 # Otama Apps — macOS · Windows · Android · iOS
 
 Three ways to get Otama as an app on every platform. All of them load the same
-hosted app (`https://otama2.space-z.ai`), so playback, search, subtitles and
-continue-watching stay identical everywhere.
+hosted app (`https://otama.antideploy.app` — the deployment that runs the fixed
+streaming engine), so playback, search, subtitles and continue-watching stay
+identical everywhere.
 
 ## 0. PWA — install right now, no build step
 
@@ -17,6 +18,20 @@ The web app is a full PWA (offline shell + `beforeinstallprompt` chip).
 
 For most users this is all they need.
 
+## 0.5 CI — build all three binaries without any local toolchain
+
+`.github/workflows/build-apps.yml` builds every artifact on its native runner
+(manual trigger, or push a `v*` tag):
+
+| Job | Runner | Artifacts |
+| --- | --- | --- |
+| Android | `ubuntu-latest` | `Otama-debug.apk` (sideload-ready) |
+| Windows x64 | `windows-latest` | `*.msi` + `*-setup.exe` (NSIS installer) |
+| macOS Apple Silicon | `macos-14` (M1) | `*.dmg` + `*.app`, aarch64 → M1/M2/M3/M4 |
+
+Download them from the run's **Artifacts** section. A debug APK is also built
+inside this repo's sandbox — see `mobile-capacitor/README.md`.
+
 ## 1. Desktop — `desktop-tauri/` (Tauri, Rust)
 
 Real `.dmg` (macOS), `.exe` installer (Windows), `.AppImage` (Linux) with a
@@ -26,19 +41,38 @@ tiny system-webview shell (~5 MB). Build on the target OS — see its README.
 cd native/desktop-tauri && cargo tauri build
 ```
 
+For **M-chip Macs** specifically:
+
+```bash
+cd native/desktop-tauri
+cargo tauri build --target aarch64-apple-darwin
+# → src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Otama_1.0.0_aarch64.dmg
+```
+
+For **Windows x64**:
+
+```powershell
+cd native\desktop-tauri
+cargo tauri build
+# → src-tauri\target\release\bundle\msi\Otama_1.0.0_x64_en-US.msi  (+ NSIS -setup.exe)
+```
+
 ## 2. Mobile — `mobile-capacitor/` (Capacitor, Android/iOS)
 
-Store-grade APK/AAB (Android) and IPA (iOS). Android builds anywhere with
-Android Studio; iOS requires a Mac with Xcode — see its README.
+Store-grade APK/AAB (Android) and IPA (iOS). The `android/` platform is
+already committed, so building needs no scaffolding step — see its README.
 
 ```bash
 cd native/mobile-capacitor
-npx cap add android && npm run open:android   # Android
-npx cap add ios    && npm run open:ios        # iOS (Mac only)
+npm install
+cd android && ./gradlew assembleDebug    # → app/build/outputs/apk/debug/app-debug.apk
+npm run open:android                     # or open Android Studio
 ```
+
+iOS requires a Mac with Xcode: `npx cap add ios && npm run open:ios`.
 
 ## Updating
 
-Because every shell just wraps `https://otama2.space-z.ai`, site fixes ship to
-all four platforms instantly — rebuild a shell only for icon/name/config
+Because every shell just wraps `https://otama.antideploy.app`, site fixes ship
+to all four platforms instantly — rebuild a shell only for icon/name/config
 changes.

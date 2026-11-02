@@ -1,7 +1,7 @@
 # Otama Mobile (Capacitor)
 
 Native **Android** and **iOS** app shells around the hosted Otama web app
-(`https://otama2.space-z.ai`). Website updates ship to the installed apps
+(`https://otama.antideploy.app`). Website updates ship to the installed apps
 automatically; the store binary only changes when the shell config changes.
 
 ## One-time setup
@@ -9,23 +9,26 @@ automatically; the store binary only changes when the shell config changes.
 ```bash
 cd native/mobile-capacitor
 npm install
-npm run assets          # generates app icons + splash from assets/icon.png
+npm run assets          # regenerates icons + splash from assets/icon.png
 ```
 
 ## Android
 
-Prereq: Android Studio (or Android SDK + Gradle), JDK 17.
+The `android/` platform is committed (Capacitor 7 · Gradle 8.11 · AGP 8.7 ·
+compileSdk 35), so no scaffolding step is needed.
+
+Prereq: JDK 17+ and the Android SDK (or Android Studio, which bundles both).
 
 ```bash
-npx cap add android     # first time only (creates android/)
-npm run sync            # after any config change
-npm run open:android    # opens Android Studio
+npm run sync            # after any capacitor.config.ts change
+cd android && ./gradlew assembleDebug   # → app/build/outputs/apk/debug/app-debug.apk
+npm run open:android    # or build in Android Studio: Build → Build APK(s)
 ```
 
-Then in Android Studio: **Build → Build Bundle(s)/APK(s)** —
-`android/app/build/outputs/`:
-- `apk/release/app-release.apk` (sideload)
-- `bundle/release/app-release.aab` (Play Store — needs signing config)
+The debug APK installs on any Android 6+ device (Settings → allow
+"Install unknown apps"). Play Store release needs a signing config →
+`bundle/release/app-release.aab`. CI builds the same APK on every `v*` tag —
+see `.github/workflows/build-apps.yml`.
 
 ## iOS
 
@@ -46,5 +49,6 @@ target, and **Product → Archive** for App Store / TestFlight.
 - App name / id: `capacitor.config.ts` → `appName` / `appId`
 - Icons & splash: `assets/icon.png` → rerun `npm run assets`
 
-`android/` and `ios/` are generated and gitignored — never hand-edit them
-except through Xcode/Android Studio project settings.
+`android/` is committed (CI builds from it); `ios/` is generated on a Mac
+and gitignored. Hand-edit `android/` only through Android Studio project
+settings.

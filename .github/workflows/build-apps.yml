@@ -1,0 +1,89 @@
+# Builds the Otama native shells for all three targets on their proper
+# runners. Trigger manually (workflow_dispatch) or by pushing a v* tag.
+#
+#   android  → Otama-debug.apk            (Capacitor, any Android 6+ device)
+#   windows  → .msi / -setup.exe x64      (Tauri, Windows 10/11)
+#   macos    → .dmg / .app aarch64        (Tauri, Apple Silicon M1/M2/M3/M4)
+#
+# All shells wrap https://otama.antideploy.app, so site fixes ship without
+# rebuilding these binaries.
+name: build-apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: build-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/mobile-capacitor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: native/mobile-capacitor/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - run: npx cap sync android
+      - run: cd android && bash gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Otama-android-debug-apk
+          path: native/mobile-capacitor/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 (MSI + NSIS)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: native/desktop-tauri
+          args: --target x86_64-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Otama-windows-x64
+          path: |
+            native/desktop-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            native/desktop-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS Apple Silicon (DMG)
+    runs-on: macos-14 # M1 — native aarch64 build for M-chip Macs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: native/desktop-tauri
+          args: --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Otama-macos-apple-silicon
+          path: |
+            native/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            native/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: error

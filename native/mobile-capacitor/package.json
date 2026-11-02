@@ -2,7 +2,7 @@
   "name": "otama-mobile",
   "version": "1.0.0",
   "private": true,
-  "description": "Otama Android/iOS shell (Capacitor) around https://otama2.space-z.ai",
+  "description": "Otama Android/iOS shell (Capacitor) around https://otama.antideploy.app",
   "scripts": {
     "sync": "cap sync",
     "android": "cap run android",
@@ -12,10 +12,10 @@
     "assets": "npx @capacitor/assets generate --iconBackgroundColor '#0b0b10' --splashBackgroundColor '#0b0b10' --splashBackgroundColorDark '#0b0b10'"
   },
   "devDependencies": {
-    "@capacitor/android": "^6",
-    "@capacitor/app": "^6",
-    "@capacitor/cli": "^6",
-    "@capacitor/core": "^6",
-    "@capacitor/ios": "^6"
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/cli": "^7.6.10",
+    "@capacitor/core": "^7.6.10",
+    "@capacitor/ios": "^7.6.10"
   }
 }

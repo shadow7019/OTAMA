@@ -5,17 +5,22 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * shipping an update is just redeploying the website — the store binary only
  * changes when the shell itself changes.
  *
- * NOTE: server.url and androidScheme must stay in sync with the deployment.
+ * CANONICAL_URL is the deployment that actually runs the fixed streaming
+ * engine (Antideploy). otama2.space-z.ai still serves an older build until
+ * the platform republishes it; switch server.url/allowNavigation back only
+ * if that domain catches up.
  */
+const CANONICAL_URL = "https://otama.antideploy.app";
+
 const config: CapacitorConfig = {
   appId: "space.otama.app",
   appName: "Otama",
   webDir: "www",
   server: {
-    url: "https://otama2.space-z.ai",
+    url: CANONICAL_URL,
     androidScheme: "https",
     // navigation stays inside the app; anything else opens the browser
-    allowNavigation: ["otama2.space-z.ai"],
+    allowNavigation: ["otama.antideploy.app", "otama2.space-z.ai"],
   },
   ios: {
     contentInset: "always",
