@@ -168,99 +168,13 @@ export default function Home() {
                 archive.org. The <span className="font-semibold text-amber-400">Ads</span> group
                 lists third-party web servers as an opt-in fallback — those pages carry the
                 providers&apos; own advertising. The player always tries the best ad-free source
-                first and only falls back to a web server if none of them can play, so there is
-                always something on screen.
+                first; the amber Ads chips sit in the same server row with a live health dot, one
+                click away whenever the ad-free sources come up empty.
               </p>
               <p>
                 There is nothing to install and nothing to pay. Pick up where you left off with
-                Continue Watching, build a watchlist in My List, filter servers by audio language
-                and switch subtitles — your list and progress are stored in your own browser, not
-                on our servers.
-              </p>
-            </div>
-          </section>
-
-          {/* Legal Disclaimer — layout follows the user-supplied reference screenshot */}
-          <section
-            className="mt-10 border-t border-white/5 pt-8"
-            aria-labelledby="legal-disclaimer-heading"
-          >
-            <h2
-              id="legal-disclaimer-heading"
-              className="text-lg font-bold tracking-tight text-white"
-            >
-              Legal Disclaimer
-            </h2>
-            <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-              Effective date: November 1, 2026
-            </p>
-            <div className="mt-4 border-t border-white/5" />
-            <div className="mt-5 max-w-3xl space-y-4 text-xs leading-relaxed text-zinc-500">
-              <p>
-                The following Legal Disclaimer governs your use of the Otama website and its
-                associated services. By accessing our website, you acknowledge that you have read,
-                understood, and agree to be bound by this disclaimer.
-              </p>
-
-              <p className="font-semibold text-zinc-300">
-                1. Content Hosting &amp; Third-Party Indexing
-              </p>
-              <p>
-                <span className="font-semibold text-zinc-300">
-                  Otama does NOT host, upload, store, or transmit any video, audio, media, or other
-                  copyrighted materials as part of a hosted library on our servers.
-                </span>{" "}
-                We operate strictly as an indexing service and player interface, aggregating
-                publicly available metadata and publicly listed links to content hosted on
-                third-party, non-affiliated platforms, peer-to-peer networks and cyberlockers. All
-                media displayed, streamed, or embedded on this website is provided by external
-                domains. Torrent data flows through the service only for the duration of an active
-                playback session and is never stored, catalogued or redistributed as a hosted
-                copy. We do not exercise any editorial or technical control over the content
-                hosted on these external servers, and we do not monitor them for copyright
-                infringement.
-              </p>
-
-              <p className="font-semibold text-zinc-300">
-                2. DMCA &amp; Copyright Infringement (Safe Harbor)
-              </p>
-              <p>
-                We strongly respect the intellectual property rights of others. However, because
-                Otama does not host any media files,{" "}
-                <span className="font-semibold text-zinc-300">
-                  we cannot remove any content from the internet
-                </span>
-                . If you believe your copyrighted material is being distributed, you must issue a
-                Digital Millennium Copyright Act (DMCA) takedown notice directly to the third-party
-                video host or network (the server actually storing or serving the file). Removing a
-                link or source from our website will not remove the infringing file from the
-                underlying server. If you are a copyright owner and wish to have links to your
-                content excluded from our results, please submit a notice with official
-                verification of your copyright claim, and we will blacklist the source from our
-                search results.
-              </p>
-
-              <p className="font-semibold text-zinc-300">
-                3. Advertisements &amp; Intrusive Media
-              </p>
-              <p>
-                Because we embed media players provided by third-party hosts, you may encounter
-                advertisements, pop-ups, or redirects embedded within those external players.{" "}
-                <span className="font-semibold text-zinc-300">
-                  Otama has zero control over these third-party advertisements.
-                </span>{" "}
-                We highly recommend utilizing a robust adblocker (such as uBlock Origin) when
-                browsing the internet to ensure a safe, uninterrupted viewing experience. We hold
-                no liability for any malicious software, intrusive ads, or damages resulting from
-                interaction with third-party video players.
-              </p>
-
-              <p className="font-semibold text-zinc-300">4. Limitation of Liability</p>
-              <p>
-                Under no circumstances shall Otama, its administrators, or its operators be held
-                liable for any direct, indirect, incidental, consequential, or punitive damages
-                arising from your use of the website. You access and use this service entirely at
-                your own risk.
+                Continue Watching and build a watchlist in My List — your list and progress are
+                stored in your own browser, not on our servers.
               </p>
             </div>
           </section>

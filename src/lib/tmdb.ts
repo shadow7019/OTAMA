@@ -229,6 +229,9 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
  *    HTTP Range requests. No third-party iframe is ever embedded, so no
  *    pop-ups, tab redirects or injected ad scripts.
  *  - Otama Direct: public-domain direct streams (archive.org) as fallback.
+ *  - Web embed servers (Ads group): opt-in third-party players, ad-supported
+ *    by the providers themselves. Never opened automatically — the user picks
+ *    them from the amber Ads chips.
  */
 
 /**
@@ -343,5 +346,19 @@ export const WEB_SOURCES: WebSource[] = [
     name: "VidSrc VIP",
     movie: (id) => `https://vidsrc.vip/embed/movie?tmdb=${id}`,
     tv: (id, s, e) => `https://vidsrc.vip/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+  },
+  // verified live from the app host (movie + tv endpoints answer 200, no
+  // X-Frame-Options) — added for the user's "more ads server choices" ask
+  {
+    id: "vidsrc-pm",
+    name: "VidSrc.pm",
+    movie: (id) => `https://vidsrc.pm/embed/movie/${id}`,
+    tv: (id, s, e) => `https://vidsrc.pm/embed/tv/${id}/${s}/${e}`,
+  },
+  {
+    id: "uembed",
+    name: "UEmbed",
+    movie: (id) => `https://uembed.site/embed/movie/${id}`,
+    tv: (id, s, e) => `https://uembed.site/embed/tv/${id}/${s}/${e}`,
   },
 ];

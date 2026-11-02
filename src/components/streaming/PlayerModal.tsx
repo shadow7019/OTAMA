@@ -17,6 +17,7 @@ import {
   Magnet,
   Play,
   FastForward,
+  Globe,
 } from "lucide-react";
 import {
   MediaDetails,
@@ -30,6 +31,8 @@ import {
   tmdb,
   trailerOf,
   formatDate,
+  WEB_SOURCES,
+  WebSource,
 } from "@/lib/tmdb";
 import { useMediaStore, useMounted } from "@/hooks/use-media-store";
 import { MediaActions } from "./types";
@@ -83,6 +86,13 @@ interface ArchiveMatchClient {
   kind: "movie" | "tv";
 }
 
+/** live result of probing one web embed server via /api/embed-check */
+interface EmbedHealth {
+  ok: boolean;
+  frameable: boolean;
+  status: number;
+}
+
 const ARCHIVE_ID = "otama-direct";
 /** Switch servers when the swarm gives us nothing at all. Trackers usually
  * announce within 10-30 s — a healthy server still looks peer-less at 18 s,
@@ -109,7 +119,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [serversState, setServersState] = useState<"loading" | "ready" | "error">("loading");
   const [searchNonce, setSearchNonce] = useState(0); // bump = manual re-search
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
-  const [manualIdx, setManualIdx] = useState<number | "archive" | "trailer" | null>(null);
+  /** what the user picked by hand: torrent index · "archive" · "trailer" ·
+   *  `web-${i}` = one of the opt-in third-party Ads web servers */
+  const [manualIdx, setManualIdx] = useState<
+    number | "archive" | "trailer" | `web-${number}` | null
+  >(null);
   const [tried, setTried] = useState<number[]>([]);
   const [exhausted, setExhausted] = useState(false);
   const [videoState, setVideoState] = useState<"loading" | "playing" | "error">("loading");
@@ -123,6 +137,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   /* ---------------- archive.org direct fallback (movies) ---------------- */
   const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
   const [archiveState, setArchiveState] = useState<"loading" | "found" | "none">("loading");
+
+  /* ---------------- ads web servers (opt-in third-party embeds) ---------------- */
+  const [webHealth, setWebHealth] = useState<Record<string, EmbedHealth>>({});
 
   /* ---------------- TV navigation ---------------- */
   const [season, setSeason] = useState(() => target?.season ?? 1);
@@ -167,6 +184,19 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const activeServer = activeIdx !== null ? servers[activeIdx] ?? null : null;
   const isArchive = manualIdx === "archive" && archiveState === "found" && !!archive;
   const showTrailer = manualIdx === "trailer";
+
+  /** manually selected Ads web server (`web-${i}`) → the provider + iframe url */
+  const webSel =
+    typeof manualIdx === "string" && manualIdx.startsWith("web-")
+      ? Number(manualIdx.slice(4))
+      : null;
+  const activeWeb = webSel !== null ? WEB_SOURCES[webSel] ?? null : null;
+  const webUrl =
+    activeWeb && target
+      ? type === "movie"
+        ? activeWeb.movie(target.item.id)
+        : activeWeb.tv(target.item.id, season, episode)
+      : null;
 
   const trailer: Video | null = useMemo(() => (details ? trailerOf(details) : null), [details]);
 
@@ -285,6 +315,32 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   useEffect(() => {
     setAutoRetries(0);
   }, [target, type, season, episode]);
+
+  /* ---------------- ads server health (probe once per open) ----------------
+   * Each Ads chip gets a live dot: green = answers + allows embedding, red =
+   * unreachable or framing-restricted. Probed once per open with a fixed
+   * episode — the result reflects host reachability, not per-episode supply. */
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    setWebHealth({});
+    WEB_SOURCES.forEach((w) => {
+      const probe =
+        type === "movie" ? w.movie(target.item.id) : w.tv(target.item.id, 1, 1);
+      fetch(`/api/embed-check?url=${encodeURIComponent(probe)}`, {
+        signal: AbortSignal.timeout(15000),
+      })
+        .then((r) => r.json())
+        .then((j: EmbedHealth) => {
+          if (!cancelled && typeof j?.ok === "boolean")
+            setWebHealth((m) => ({ ...m, [w.id]: j }));
+        })
+        .catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [target, type]);
 
   /* ---------------- auto-pick the best untried server ---------------- */
   useEffect(() => {
@@ -596,6 +652,17 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setExhausted(false);
   };
 
+  /** opt-in only: an Ads web server is never opened automatically */
+  const selectWeb = (i: number) => {
+    if (manualIdx === `web-${i}`) return;
+    if (activeServer) stopId(activeServer.id);
+    setManualIdx(`web-${i}`);
+    setActiveIdx(null); // stops the torrent stream, status poll and failover clocks
+    setExhausted(false);
+    setNeedsTap(false);
+    setBanner(null);
+  };
+
   const retryAll = () => {
     setTried([]);
     triedRef.current = [];
@@ -612,6 +679,40 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setVideoNonce((n) => n + 1);
   };
 
+  /** amber chip for one Ads web server — used in the strip and the panels */
+  const adsChip = (w: WebSource, i: number) => {
+    const h = webHealth[w.id];
+    const dot = !h
+      ? "bg-zinc-600 animate-pulse"
+      : h.ok && h.frameable
+        ? "bg-emerald-400"
+        : "bg-red-500";
+    const active = manualIdx === `web-${i}`;
+    return (
+      <button
+        key={w.id}
+        type="button"
+        onClick={() => selectWeb(i)}
+        title={`${w.name} — third-party web server · carries the provider's own ads\n${
+          h
+            ? h.ok
+              ? `Reachable${h.frameable ? " · embeddable" : " · blocks embedding"}`
+              : "Not responding right now"
+            : "checking…"
+        }`}
+        className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+          active
+            ? "bg-amber-500 text-black"
+            : "bg-amber-500/10 text-amber-200 ring-1 ring-amber-500/30 hover:bg-amber-500/20"
+        }`}
+      >
+        <Globe className="h-3 w-3" />
+        {w.name}
+        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      </button>
+    );
+  };
+
   /* ---------------- derived render state ---------------- */
   const noSources =
     (serversState === "ready" && servers.length === 0) || serversState === "error";
@@ -619,10 +720,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // the no-source panel may show, never the "servers failed" panel too
   const showFailPanel =
     !noSources &&
+    !activeWeb &&
     ((exhausted && !isArchive && !showTrailer) ||
       (videoState === "error" && exhausted && !isArchive && !showTrailer));
   const showNoSourcePanel =
-    noSources && !isArchive && !showTrailer && archiveState !== "found";
+    noSources && !isArchive && !showTrailer && !activeWeb && archiveState !== "found";
 
   const downloading = status && (status.progress ?? 0) < 0.999;
   const videoKey = `${streamUrl ?? "none"}-${videoNonce}`;
@@ -687,10 +789,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         </div>
       </div>
 
-      {/* Server strip — every chip is an ad-free torrent source */}
+      {/* Server strip — ad-free sources first, opt-in Ads web servers after */}
       <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5">
         <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
-          Server
+          Ad-free
         </span>
 
         <button
@@ -780,6 +882,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
             <Loader2 className="h-3 w-3 animate-spin" /> Scanning torrent networks…
           </span>
         )}
+
+        {/* Ads group — opt-in third-party web servers, never opened automatically.
+            The dot is a live /api/embed-check probe (green = reachable + embeddable). */}
+        <span className="ml-1 shrink-0 border-l border-white/10 pl-2.5 text-[10px] font-bold uppercase tracking-wider text-amber-500/90">
+          Ads
+        </span>
+        {WEB_SOURCES.map((w, i) => adsChip(w, i))}
       </div>
 
       {/* every source found is dead — set expectations before playback stalls */}
@@ -805,8 +914,24 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="relative w-full bg-black lg:flex-1">
             <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
-              {/* ---------- trailer fallback ---------- */}
-              {showTrailer && trailer ? (
+              {/* ---------- Ads web server: opt-in third-party iframe ---------- */}
+              {activeWeb && webUrl ? (
+                <>
+                  <iframe
+                    key={`${activeWeb.id}-${itemId}-${
+                      type === "tv" ? `${season}-${episode}` : "movie"
+                    }`}
+                    src={webUrl}
+                    title={`${title} — ${activeWeb.name}`}
+                    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                    className="h-full w-full border-0"
+                  />
+                  <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-black">
+                    <Globe className="h-3 w-3" /> Ads · {activeWeb.name}
+                  </div>
+                </>
+              ) : showTrailer && trailer ? (
                 <iframe
                   key={trailer.key}
                   src={`https://www.youtube-nocookie.com/embed/${trailer.key}?autoplay=1`}
@@ -881,7 +1006,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
               ) : null}
 
               {/* ---------- tap to play (browser blocked autoplay) ---------- */}
-              {needsTap && !showTrailer && (
+              {needsTap && !showTrailer && !activeWeb && (
                 <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
                   <button
                     type="button"
@@ -1002,6 +1127,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       </button>
                     )}
                   </div>
+                  <div className="flex max-w-xl flex-col items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500/90">
+                      or open an Ads server — third-party page, carries its own ads
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {WEB_SOURCES.map((w, i) => adsChip(w, i))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1035,6 +1168,14 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                         <Play className="h-3.5 w-3.5" /> Play trailer
                       </button>
                     )}
+                  </div>
+                  <div className="flex max-w-xl flex-col items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500/90">
+                      or open an Ads server — third-party page, carries its own ads
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {WEB_SOURCES.map((w, i) => adsChip(w, i))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1073,8 +1214,10 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                 <Info className="h-3.5 w-3.5 shrink-0" />
                 <span>
                   <span className="font-semibold text-zinc-400">Auto</span> picks the best-seeded
-                  source and fails over automatically. Playback is a direct P2P stream on our own
-                  player — <span className="text-emerald-400">no ad networks, ever</span>.
+                  source and fails over automatically. P2P playback runs on our own player —{" "}
+                  <span className="text-emerald-400">ad-free</span>. The amber{" "}
+                  <span className="text-amber-400">Ads</span> servers are opt-in third-party pages
+                  that carry the providers&apos; own advertising.
                 </span>
               </p>
             )}
