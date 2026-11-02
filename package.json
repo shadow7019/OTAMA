@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bun scripts/patch-native-webrtc.mjs || node scripts/patch-native-webrtc.mjs; PORT=3000 next dev -p 3000 2>&1 | tee dev.log",
-    "build": "bun scripts/patch-native-webrtc.mjs && next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
+    "build": "node scripts/patch-native-webrtc.mjs && next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "postinstall": "bun scripts/patch-native-webrtc.mjs || node scripts/patch-native-webrtc.mjs",
     "start": "bun --version >/dev/null 2>&1 && NODE_ENV=production HOSTNAME=0.0.0.0 bun .next/standalone/server.js 2>&1 | tee server.log || NODE_ENV=production HOSTNAME=0.0.0.0 node .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
