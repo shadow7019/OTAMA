@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { Readable } from "node:stream";
 import {
   contentTypeFor,
+  criticalFreeBytes,
   ensureTorrent,
+  freeDiskBytes,
   markStreamActive,
   markStreamDone,
   pickVideoFile,
@@ -65,6 +67,26 @@ export async function GET(req: NextRequest) {
     episodeHint ? { season: episodeHint.season, episode: episodeHint.episode, abs: absHint } : null,
     yearHint
   );
+
+  // the file must fit in the remaining headroom: pieces are written to disk
+  // as the browser requests them, and a file bigger than the free space hits
+  // a full volume mid-play (silent piece-write failures, endless stall). Say
+  // so up front — the player reads this and moves to a smaller release
+  // instead of burning minutes on a download that cannot finish.
+  const free = freeDiskBytes();
+  if (free !== null && file.length > free - criticalFreeBytes()) {
+    const gb = (n: number) => `${(n / 1024 ** 3).toFixed(2)} GB`;
+    return NextResponse.json(
+      {
+        error: "Release too large for server storage",
+        detail: `Needs ${gb(file.length)} free, server has ${gb(free)}`,
+        sizeBytes: file.length,
+        freeBytes: free,
+        fatal: "storage",
+      },
+      { status: 507 }
+    );
+  }
 
   // ---- Range parsing (bytes=start-end | bytes=start- | bytes=-suffix) ----
   const rangeHeader = req.headers.get("range");

@@ -86,7 +86,6 @@ const TRACKERS = [
   "wss://tracker.openwebtorrent.com",
 ];
 
-const DOWNLOAD_DIR = path.join(os.tmpdir(), "otama-torrents");
 // active stream + 2 pre-warmed fallbacks + idled leftovers + headroom
 const MAX_TORRENTS = 8;
 // 60 min: a viewer pausing for half an hour must come back to the pieces
@@ -107,7 +106,7 @@ const STREAM_GRACE_MS = 10 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 90_000;
 
 try {
-  fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+  fs.mkdirSync(downloadDir(), { recursive: true });
 } catch {
   /* tmp dir may already exist */
 }
@@ -117,19 +116,116 @@ try {
  * writes start failing SILENTLY: streams stall mid-play, metadata never
  * resolves, and the player reads it as dead servers and switches forever.
  * This was observed in production (8+ GB of orphaned piece caches). The
- * guards below keep the cache bounded no matter what happens upstream. */
-/** target headroom — evict idle torrents once free space drops below this */
-const MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
-/** below this even NEW torrents are refused until space is reclaimed */
-const CRITICAL_FREE_BYTES = 750 * 1024 * 1024;
+ * guards below keep the cache bounded no matter what happens upstream.
+ *
+ * Thresholds scale to the ACTUAL volume: hosting platforms ship small
+ * ephemeral volumes (a ~500 MB /tmp is common), where fixed multi-GB
+ * thresholds refuse every torrent forever and the player cycles servers
+ * until the end of time — the exact "stuck loading, switching servers,
+ * never plays" outage. Percentages keep big hosts at the old absolute
+ * values (capped) and small hosts playable (floored). */
 
-function freeDiskBytes(): number | null {
+/** where pieces may land — the writable candidate with the most free space
+ *  wins (a tiny tmpfs must not beat a large app volume) */
+const DOWNLOAD_DIR_CANDIDATES = [
+  path.join(os.tmpdir(), "otama-torrents"),
+  "/var/tmp/otama-torrents",
+  path.join(process.cwd(), ".torrent-cache"),
+];
+
+let chosenDownloadDir: string | null = null;
+
+function downloadDir(): string {
+  if (!chosenDownloadDir) {
+    let best: { dir: string; free: number } | null = null;
+    for (const dir of DOWNLOAD_DIR_CANDIDATES) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        const probe = path.join(dir, ".write-test");
+        fs.writeFileSync(probe, "ok");
+        fs.rmSync(probe, { force: true });
+        const st = statfsSync(dir);
+        const free = st.bavail * st.bsize;
+        if (!best || free > best.free) best = { dir, free };
+      } catch {
+        /* not writable / statfs missing — try the next candidate */
+      }
+    }
+    chosenDownloadDir = best?.dir ?? DOWNLOAD_DIR_CANDIDATES[0];
+  }
+  return chosenDownloadDir;
+}
+
+/** eviction target: keep ~20% of the volume free (2 GB cap on big hosts,
+ *  300 MB floor so a small volume still has an eviction trigger) */
+const ABS_MIN_FREE = 2 * 1024 * 1024 * 1024;
+const MIN_FREE_FLOOR = 300 * 1024 * 1024;
+/** below this even NEW torrents are refused until space is reclaimed
+ *  (750 MB cap on big hosts; 12% with a 150 MB floor on small ones — below
+ *  the floor piece writes, logs and the platform itself start failing) */
+const ABS_CRITICAL_FREE = 750 * 1024 * 1024;
+const CRITICAL_FREE_FLOOR = 150 * 1024 * 1024;
+
+interface FsStats {
+  free: number;
+  total: number;
+}
+
+function fsStats(): FsStats | null {
   try {
-    const s = statfsSync(DOWNLOAD_DIR);
-    return s.bavail * s.bsize;
+    const s = statfsSync(downloadDir());
+    return { free: s.bavail * s.bsize, total: s.blocks * s.bsize };
   } catch {
     return null; // statfs unavailable on this platform — guards disabled
   }
+}
+
+export function freeDiskBytes(): number | null {
+  return fsStats()?.free ?? null;
+}
+
+/** eviction target: keep ~20% of the volume free (2 GB cap on big hosts,
+ *  300 MB floor so a small volume still has an eviction trigger) */
+export function minFreeBytes(): number {
+  const total = fsStats()?.total ?? 0;
+  if (!total) return ABS_MIN_FREE;
+  return Math.min(ABS_MIN_FREE, Math.max(Math.floor(total * 0.2), MIN_FREE_FLOOR));
+}
+
+export function criticalFreeBytes(): number {
+  const total = fsStats()?.total ?? 0;
+  if (!total) return ABS_CRITICAL_FREE;
+  return Math.min(ABS_CRITICAL_FREE, Math.max(Math.floor(total * 0.12), CRITICAL_FREE_FLOOR));
+}
+
+/** bytes occupied by the piece cache itself (memoised — walked at most once
+ *  per 15 s no matter how often /status polls) */
+let cacheStatsMemo: { at: number; bytes: number } | null = null;
+
+export function cacheBytes(): number | null {
+  if (cacheStatsMemo && Date.now() - cacheStatsMemo.at < 15_000) return cacheStatsMemo.bytes;
+  let bytes = 0;
+  const walk = (dir: string, depth: number) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === ".write-test") continue;
+      try {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory() && depth < 4) walk(full, depth + 1);
+        else if (e.isFile()) bytes += fs.statSync(full).size;
+      } catch {
+        /* raced with a delete — ignore this entry */
+      }
+    }
+  };
+  walk(downloadDir(), 0);
+  cacheStatsMemo = { at: Date.now(), bytes };
+  return bytes;
 }
 
 /** A fresh server process owns no torrents, so anything left in the piece
@@ -139,11 +235,43 @@ function freeDiskBytes(): number | null {
  *  this process can be in use at that point). */
 function wipeOrphanCache(): void {
   try {
-    for (const entry of fs.readdirSync(DOWNLOAD_DIR)) {
-      fs.rmSync(path.join(DOWNLOAD_DIR, entry), { recursive: true, force: true });
+    for (const entry of fs.readdirSync(downloadDir())) {
+      fs.rmSync(path.join(downloadDir(), entry), { recursive: true, force: true });
     }
   } catch {
     /* best effort */
+  }
+}
+
+/** Reclaim cache entries no torrent of the CURRENT client owns — crash /
+ *  deploy leftovers the LRU evictor cannot see (it only tracks live torrent
+ *  objects). Runs under disk pressure, before new work is refused. Entries
+ *  younger than 10 minutes are spared: an add that just started may not be
+ *  visible in client.torrents yet. */
+function wipeOrphanEntries(): void {
+  const client = state().client;
+  const dir = downloadDir();
+  const live = new Set<string>(["otama-torrents"]);
+  for (const t of client?.torrents ?? []) {
+    const tPath = (t as { path?: string }).path;
+    if (tPath) live.add(path.basename(tPath));
+    if (t.name) live.add(t.name);
+  }
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (live.has(entry)) continue;
+    try {
+      const full = path.join(dir, entry);
+      if (Date.now() - fs.statSync(full).mtimeMs < 10 * 60 * 1000) continue;
+      fs.rmSync(full, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
   }
 }
 
@@ -155,7 +283,12 @@ function evictForDisk(): void {
   const client = st.client;
   if (!client) return;
   let free = freeDiskBytes();
-  if (free === null || free >= MIN_FREE_BYTES) return;
+  if (free === null || free >= minFreeBytes()) return;
+  // leftovers from crashed/earlier processes are invisible to the LRU —
+  // clear them before sacrificing any live torrent
+  wipeOrphanEntries();
+  free = freeDiskBytes();
+  if (free === null || free >= minFreeBytes()) return;
   const victims = client.torrents
     .filter((t) => !st.active.has(t.infoHash.toLowerCase()))
     .sort(
@@ -165,7 +298,7 @@ function evictForDisk(): void {
     );
   for (const t of victims) {
     free = freeDiskBytes();
-    if (free === null || free >= MIN_FREE_BYTES) break;
+    if (free === null || free >= minFreeBytes()) break;
     try {
       t.destroy({ destroyStore: true });
     } catch {
@@ -430,7 +563,7 @@ function waitForMetadata(client: TorrentClient, magnet: string): Promise<Torrent
     let added: Torrent | null = null;
     try {
       // webtorrent v3 returns the Torrent synchronously from add()
-      added = (client.add(magnet, { path: DOWNLOAD_DIR, announce: TRACKERS }, (t) => {
+      added = (client.add(magnet, { path: downloadDir(), announce: TRACKERS }, (t) => {
         touchMeta(t.infoHash);
         finish(null, t);
       }) as Torrent | null | undefined) ?? null;
@@ -641,11 +774,15 @@ export async function ensureTorrent(infoHash: string, displayName: string): Prom
   // a full disk breaks piece writes for EVERY stream, so refusing one new
   // add beats wedging the active ones
   let free = freeDiskBytes();
-  if (free !== null && free < MIN_FREE_BYTES) {
+  if (free !== null && free < minFreeBytes()) {
     evictForDisk();
     free = freeDiskBytes();
-    if (free !== null && free < CRITICAL_FREE_BYTES) {
-      throw new Error("Server storage is full — the piece cache is being cleared, try again in a minute");
+    if (free !== null && free < criticalFreeBytes()) {
+      const total = fsStats()?.total ?? 0;
+      const gb = (n: number) => `${(n / 1024 ** 3).toFixed(2)} GB`;
+      throw new Error(
+        `Server storage is full — ${gb(free)} free of ${total ? gb(total) : "?"} on the host volume; the piece cache is being cleared, try again in a minute`
+      );
     }
   }
   evictIfNeeded(client, infoHash);
@@ -869,7 +1006,27 @@ export function diskHeadroom(): number | null {
   return freeDiskBytes();
 }
 
+/** Volume picture for /status: free vs total, the refusal threshold in force,
+ *  where the cache lives. Lets the player (and the operator) tell "host disk
+ *  small but playable" apart from "host disk full — nothing will play". */
+export function diskInfo(): {
+  free: number | null;
+  total: number | null;
+  critical: number;
+  cacheBytes: number | null;
+  dir: string;
+} {
+  const s = fsStats();
+  return {
+    free: s?.free ?? null,
+    total: s?.total ?? null,
+    critical: criticalFreeBytes(),
+    cacheBytes: cacheBytes(),
+    dir: downloadDir(),
+  };
+}
+
 export function engineStats(): { torrents: number; cacheDir: string } {
   const client = state().client;
-  return { torrents: client?.torrents.length ?? 0, cacheDir: DOWNLOAD_DIR };
+  return { torrents: client?.torrents.length ?? 0, cacheDir: downloadDir() };
 }

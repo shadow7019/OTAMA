@@ -75,6 +75,16 @@ interface TorrentStatus {
   fileProgress?: number | null;
   peers?: number;
   speed?: number;
+  /** host-level health: false means NO torrent can play on this server */
+  engineOk?: boolean;
+  engineError?: string;
+  /** false across failed servers = the host's network blocks P2P traffic */
+  everConnectedPeers?: boolean;
+  /** piece-cache volume picture (bytes) — free below diskCritical = refusals */
+  diskFree?: number | null;
+  diskTotal?: number | null;
+  diskCritical?: number | null;
+  cacheBytes?: number | null;
 }
 
 interface ArchiveMatchClient {
@@ -138,6 +148,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [status, setStatus] = useState<TorrentStatus | null>(null);
   const [videoNonce, setVideoNonce] = useState(0);
   const [banner, setBanner] = useState<string | null>(null);
+  /** host-fatal reason (storage full / engine broken / P2P blocked): switching
+   *  torrent servers cannot help, so the cycle stops and the panel explains */
+  const [hostFatal, setHostFatal] = useState<string | null>(null);
   /** automatic re-searches done for the CURRENT episode (reset on ep change) */
   const [autoRetries, setAutoRetries] = useState(0);
   /** re-render ticks while an Ads takeover waits for health probes */
@@ -172,6 +185,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   triedRef.current = tried;
   const videoStateRef = useRef(videoState);
   videoStateRef.current = videoState;
+  const hostFatalRef = useRef(hostFatal);
+  hostFatalRef.current = hostFatal;
   const streamStartRef = useRef(0);
   /** last progress seen from the status poll — drives the stall clock */
   const lastProgressRef = useRef(0);
@@ -227,6 +242,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   /* ---------------- failover ---------------- */
   const failover = useCallback(
     (reason: string) => {
+      // a host-fatal condition makes every further switch pointless — the
+      // fatal panel stays up until the user retries or picks something else
+      if (hostFatalRef.current) return;
       const cur = activeIdxRef.current;
       const list = serversRef.current;
       let next = list.findIndex((_, i) => i !== cur && !triedRef.current.includes(i));
@@ -374,6 +392,37 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     }
   }, [serversState, servers, tried, activeIdx, manualIdx, exhausted]);
 
+  /** <video> onError: the stream request failed. Probe it once — a JSON
+   *  error body (storage full / engine unavailable / release too large) is a
+   *  host-fatal condition that server-switching cannot fix; anything else
+   *  (undecodable media, dead swarm) fails over to the next server. */
+  const handleStreamError = () => {
+    if (!streamUrl || hostFatalRef.current) return;
+    fetch(streamUrl, { headers: { Range: "bytes=0-1" } })
+      .then(async (r) => {
+        const ct = r.headers.get("content-type") ?? "";
+        if (r.ok || !ct.includes("application/json")) {
+          failover("Stream failed on this server");
+          return;
+        }
+        const j = (await r.json().catch(() => null)) as {
+          detail?: string;
+          error?: string;
+          fatal?: string;
+        } | null;
+        const detail = [j?.detail, j?.error].filter((x) => typeof x === "string").join(" — ");
+        if (
+          j?.fatal === "storage" ||
+          /storage is full|engine unavailable|too large for server storage/i.test(detail)
+        ) {
+          setHostFatal(detail || "The streaming backend refused this stream");
+          return;
+        }
+        failover("Stream failed on this server");
+      })
+      .catch(() => failover("Stream failed on this server"));
+  };
+
   /* ---------------- Otama Direct for episodes with no torrent sources ----------------
    * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
    * trackers but uploaded to archive.org within hours of broadcast. When the
@@ -399,6 +448,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     // Otama Direct is ad-free: it always wins over an Ads takeover
     if (archiveState === "found") return;
     const failed =
+      hostFatal !== null ||
       exhausted ||
       (serversState === "ready" && servers.length === 0) ||
       serversState === "error";
@@ -419,6 +469,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       setActiveIdx(null); // stops the torrent stream, status poll and failover clocks
       setExhausted(false);
       setNeedsTap(false);
+      setHostFatal(null); // the takeover banner explains what happened
       setBanner(
         `Ad-free servers couldn't play this — switched to ${w.name} (Ads). Pick any server above to go back.`
       );
@@ -449,6 +500,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     archiveState,
     webHealth,
     adsTick,
+    hostFatal,
   ]);
 
   /* ---------------- stream URL ---------------- */
@@ -474,6 +526,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     lastProgressAtRef.current = Date.now();
     setStatus(null);
     setNeedsTap(false);
+    setHostFatal(null);
   }, [streamUrl, videoNonce]);
 
   /* ---------------- live status + watchdog failover ---------------- */
@@ -484,12 +537,36 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     }
     let cancelled = false;
     const tick = async () => {
-      if (cancelled) return;
+      if (cancelled || hostFatalRef.current) return;
       try {
         const r = await fetch(`/api/torrent/status?id=${activeServer.id}`);
         const j: TorrentStatus = await r.json();
-        if (cancelled) return;
+        if (cancelled || hostFatalRef.current) return;
         setStatus(j);
+        if (j.engineOk === false) {
+          setHostFatal(
+            j.engineError
+              ? `Streaming engine unavailable on this host: ${j.engineError}`
+              : "Streaming engine unavailable on this host"
+          );
+          return;
+        }
+        // storage refusal: the engine reports the volume is below its refusal
+        // threshold — no torrent can be added, so switching servers is noise
+        if (
+          j.found === false &&
+          typeof j.diskFree === "number" &&
+          typeof j.diskCritical === "number" &&
+          j.diskFree < j.diskCritical &&
+          Date.now() - streamStartRef.current > 8000
+        ) {
+          setHostFatal(
+            `Server storage is full — ${(j.diskFree / 1024 ** 3).toFixed(2)} GB free, ` +
+              `${(j.diskCritical / 1024 ** 3).toFixed(2)} GB required. The piece cache is ` +
+              `being cleared; retry in a minute or pick a smaller server.`
+          );
+          return;
+        }
         if (j.found === false) {
           // a freshly opened stream can poll before the backend registers the
           // torrent — that is transient, never a reason to switch. Trust it
@@ -519,6 +596,15 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           serversRef.current.length > 0 && serversRef.current.every((s) => s.seeders === 0);
         const noPeerMs = allDead ? 20000 : NO_PEER_SWITCH_MS;
         if (elapsed > noPeerMs && (j.peers ?? 0) === 0 && progress === 0) {
+          // zero peers across 2+ servers AND this process has never connected
+          // a single peer = the host's egress blocks P2P. Every further
+          // server fails identically — stop cycling and say what's wrong.
+          if (j.everConnectedPeers === false && triedRef.current.length >= 2) {
+            setHostFatal(
+              "The streaming backend cannot reach torrent peers — its network is blocking P2P traffic. Try an Ads server below, or retry later."
+            );
+            return;
+          }
           failover("No peers on this server");
         } else if (Date.now() - lastProgressAtRef.current > STALL_SWITCH_MS) {
           // not one new piece for the whole window — the swarm is truly dead
@@ -713,6 +799,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setManualIdx(idx);
     setExhausted(false);
     setVideoState("loading");
+    setHostFatal(null);
     setActiveIdx(idx);
     streamStartRef.current = Date.now();
   };
@@ -723,6 +810,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setTried([]);
     triedRef.current = [];
     setActiveIdx(null); // auto-pick effect chooses the best server again
+    setHostFatal(null);
     adsTakeoverFiredRef.current = false; // Auto may end in an Ads takeover again
     adsFailedAtRef.current = null;
   };
@@ -766,6 +854,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setActiveIdx(null);
     setVideoState("loading");
     setBanner(null);
+    setHostFatal(null);
     adsTakeoverFiredRef.current = false;
     adsFailedAtRef.current = null;
   };
@@ -773,6 +862,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const retryCurrent = () => {
     setExhausted(false);
     setVideoState("loading");
+    setHostFatal(null);
     setVideoNonce((n) => n + 1);
   };
 
@@ -818,6 +908,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const showFailPanel =
     !noSources &&
     !activeWeb &&
+    !hostFatal &&
     ((exhausted && !isArchive && !showTrailer) ||
       (videoState === "error" && exhausted && !isArchive && !showTrailer));
   const showNoSourcePanel =
@@ -1092,7 +1183,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       setVideoState("playing");
                       setNeedsTap(false);
                     }}
-                    onError={() => failover("Stream failed on this server")}
+                    onError={handleStreamError}
                     className="h-full w-full bg-black"
                   />
                   <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
@@ -1126,7 +1217,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
               )}
 
               {/* ---------- connecting overlay ---------- */}
-              {streamUrl && videoState === "loading" && !showTrailer && !isArchive && (
+              {streamUrl && videoState === "loading" && !showTrailer && !isArchive && !hostFatal && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
                   <Loader2 className="h-10 w-10 animate-spin text-red-600" />
                   <p className="text-sm text-zinc-400">
@@ -1170,6 +1261,49 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                     >
                       Retry
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ---------- host-fatal panel (storage full / engine broken / P2P blocked) ----------
+                   switching torrent servers cannot fix these, so the cycle stops and
+                   the actual reason is shown; Retry re-arms everything. */}
+              {hostFatal && !showTrailer && !activeWeb && (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center">
+                  <AlertTriangle className="h-10 w-10 text-amber-400" />
+                  <div>
+                    <p className="text-base font-bold text-white">
+                      The streaming backend can&apos;t play right now
+                    </p>
+                    <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
+                      {hostFatal}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={retryCurrent}
+                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Retry
+                    </button>
+                    {trailer && (
+                      <button
+                        type="button"
+                        onClick={playTrailer}
+                        className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-500"
+                      >
+                        <Play className="h-3.5 w-3.5" /> Play trailer
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex max-w-xl flex-col items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500/90">
+                      or open an Ads server — third-party page, carries its own ads
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {WEB_SOURCES.map((w, i) => adsChip(w, i))}
+                    </div>
                   </div>
                 </div>
               )}

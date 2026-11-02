@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { diskHeadroom, engineFailure, findTorrent, peersEverConnected, streamFileProgress } from "@/lib/torrent-engine";
+import { diskHeadroom, diskInfo, engineFailure, findTorrent, peersEverConnected, streamFileProgress } from "@/lib/torrent-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,12 +11,15 @@ export const dynamic = "force-dynamic";
  * streaming engine (native module load failure) instead of a blind 500.
  * `everConnectedPeers: false` across failed servers means the host's
  * network blocks torrent peer traffic — the player says so instead of
- * cycling sources forever.
+ * cycling sources forever. `diskFree/diskTotal/diskCritical/cacheBytes`
+ * expose the piece-cache volume so "storage full" is diagnosable from the
+ * outside.
  */
 export async function GET(req: NextRequest) {
   const id = (req.nextUrl.searchParams.get("id") ?? "").toLowerCase();
   const engineError = engineFailure();
   const torrent = id ? findTorrent(id) : null;
+  const disk = diskInfo();
 
   if (!torrent) {
     return NextResponse.json({
@@ -24,7 +27,11 @@ export async function GET(req: NextRequest) {
       id,
       engineOk: !engineError,
       everConnectedPeers: peersEverConnected(),
-      diskFree: diskHeadroom(),
+      diskFree: disk.free,
+      diskTotal: disk.total,
+      diskCritical: disk.critical,
+      cacheBytes: disk.cacheBytes,
+      downloadDir: disk.dir,
       ...(engineError ? { engineError } : {}),
     });
   }
@@ -44,6 +51,10 @@ export async function GET(req: NextRequest) {
     files: torrent.files?.length ?? 0,
     engineOk: true,
     everConnectedPeers: true,
-    diskFree: diskHeadroom(),
+    diskFree: disk.free,
+    diskTotal: disk.total,
+    diskCritical: disk.critical,
+    cacheBytes: disk.cacheBytes,
+    downloadDir: disk.dir,
   });
 }
