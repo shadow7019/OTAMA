@@ -18,5 +18,12 @@ cd "$PROJECT_DIR"
 mapfile -t MEMBERS < <(find . -mindepth 1 -maxdepth 1 \
   ! -name node_modules ! -name .next -printf '%f\n' | sort)
 
-tar -cf "$OUT" -C "$PROJECT_DIR" "${MEMBERS[@]}"
+tar -cf "$OUT" -C "$PROJECT_DIR" \
+  --exclude='native/mobile-capacitor/node_modules' \
+  --exclude='native/mobile-capacitor/android/.gradle' \
+  --exclude='native/mobile-capacitor/android/build' \
+  --exclude='native/mobile-capacitor/android/app/build' \
+  --exclude='native/mobile-capacitor/android/local.properties' \
+  --exclude='native/desktop-tauri/src-tauri/target' \
+  "${MEMBERS[@]}"
 echo "repo.tar refreshed: $(du -h "$OUT" | cut -f1), ${#MEMBERS[@]} top-level members, $(date -u '+%FT%TZ')"
