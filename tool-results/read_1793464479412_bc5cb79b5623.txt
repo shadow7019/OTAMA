@@ -1,0 +1,1413 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  X,
+     6→  ChevronLeft,
+     7→  ChevronRight,
+     8→  Plus,
+     9→  Check,
+    10→  List,
+    11→  Info,
+    12→  Loader2,
+    13→  AlertTriangle,
+    14→  RefreshCw,
+    15→  ShieldCheck,
+    16→  Zap,
+    17→  Magnet,
+    18→  Play,
+    19→  FastForward,
+    20→} from "lucide-react";
+    21→import {
+    22→  MediaDetails,
+    23→  MediaItem,
+    24→  Episode,
+    25→  Video,
+    26→  getTitle,
+    27→  getMediaType,
+    28→  getYear,
+    29→  img,
+    30→  tmdb,
+    31→  trailerOf,
+    32→  formatDate,
+    33→} from "@/lib/tmdb";
+    34→import { useMediaStore, useMounted, isServerDead } from "@/hooks/use-media-store";
+    35→import { MediaActions } from "./types";
+    36→
+    37→interface PlayerModalProps {
+    38→  target: { item: MediaItem; season?: number; episode?: number } | null;
+    39→  actions: MediaActions;
+    40→  onClose: () => void;
+    41→}
+    42→
+    43→/**
+    44→ * A torrent "server" = one ranked source returned by /api/torrent/search
+    45→ * (ThePirateBay, Torrentio/1337x, YTS, EZTV …). We download it on our own
+    46→ * backend and stream it to the native <video> element — no third-party
+    47→ * iframe, therefore no pop-ups, no tab redirects, no injected ads.
+    48→ */
+    49→interface TorrentServer {
+    50→  id: string;
+    51→  releaseName: string;
+    52→  seeders: number;
+    53→  peers: number;
+    54→  sizeBytes: number;
+    55→  provider: string;
+    56→  quality: string;
+    57→  fileIdx: number | null;
+    58→  /** verified = exact title/episode match · pack = season pack (right file auto-picked) · weak = title-only match */
+    59→  match: "verified" | "pack" | "weak";
+    60→  /** audio/language tags parsed from the release name (sub / eng / hindi / dual…) */
+    61→  audioTags: string[];
+    62→  score: number;
+    63→}
+    64→
+    65→interface SearchHints {
+    66→  absEpisode: number | null;
+    67→  relEpisode: number | null;
+    68→}
+    69→
+    70→type HealthStatus = "checking" | "live" | "dead";
+    71→
+    72→/** pretty labels for the language chips */
+    73→const LANG_LABEL: Record<string, string> = {
+    74→  auto: "All languages",
+    75→  sub: "Subbed",
+    76→  eng: "English",
+    77→  hindi: "Hindi",
+    78→  tamil: "Tamil",
+    79→  telugu: "Telugu",
+    80→  malayalam: "Malayalam",
+    81→  kannada: "Kannada",
+    82→  bengali: "Bengali",
+    83→  marathi: "Marathi",
+    84→  punjabi: "Punjabi",
+    85→  dual: "Dual audio",
+    86→  multi: "Multi audio",
+    87→  jap: "Japanese",
+    88→  raw: "Raw",
+    89→  spa: "Spanish",
+    90→  por: "Portuguese",
+    91→  chi: "Chinese",
+    92→  unknown: "Unknown",
+    93→};
+    94→
+    95→interface TorrentStatus {
+    96→  found: boolean;
+    97→  ready?: boolean;
+    98→  progress?: number;
+    99→  peers?: number;
+   100→  speed?: number;
+   101→}
+   102→
+   103→interface ArchiveMatchClient {
+   104→  identifier: string;
+   105→  title: string;
+   106→  year: number | null;
+   107→  creator: string;
+   108→  description: string;
+   109→  license: string;
+   110→  fileUrl: string;
+   111→  fileSize: number;
+   112→  kind: "movie" | "tv";
+   113→}
+   114→
+   115→const ARCHIVE_ID = "otama-direct";
+   116→/** Switch servers when the swarm gives us nothing at all. */
+   117→const NO_PEER_SWITCH_MS = 18000;
+   118→/** Switch when peers exist but data never arrives. */
+   119→const STALL_SWITCH_MS = 40000;
+   120→
+   121→const fmtSize = (b: number) =>
+   122→  b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
+   123→const fmtSpeed = (bps: number) =>
+   124→  bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} MB/s` : `${Math.round(bps / 1e3)} KB/s`;
+   125→const fmtSeeders = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+   126→
+   127→export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
+   128→  // remounted per target via key — initial state is safe to derive from props
+   129→  const type = target ? getMediaType(target.item) : "movie";
+   130→  const itemId = target?.item.id ?? null;
+   131→
+   132→  /* ---------------- servers (torrent sources) ---------------- */
+   133→  const [servers, setServers] = useState<TorrentServer[]>([]);
+   134→  const [serversState, setServersState] = useState<"loading" | "ready" | "error">("loading");
+   135→  const [searchNonce, setSearchNonce] = useState(0); // bump = manual re-search
+   136→  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+   137→  const [manualIdx, setManualIdx] = useState<number | "archive" | "trailer" | null>(null);
+   138→  const [tried, setTried] = useState<number[]>([]);
+   139→  const [exhausted, setExhausted] = useState(false);
+   140→  const [videoState, setVideoState] = useState<"loading" | "playing" | "error">("loading");
+   141→  const [needsTap, setNeedsTap] = useState(false);
+   142→  const [status, setStatus] = useState<TorrentStatus | null>(null);
+   143→  const [videoNonce, setVideoNonce] = useState(0);
+   144→  const [banner, setBanner] = useState<string | null>(null);
+   145→  /** automatic re-searches done for the CURRENT episode (reset on ep change) */
+   146→  const [autoRetries, setAutoRetries] = useState(0);
+   147→  /** anime numbering hints from the search — steer file picking in batches */
+   148→  const [hints, setHints] = useState<SearchHints | null>(null);
+   149→  /** per-server health from the auto-checker (infoHash → status) */
+   150→  const [health, setHealth] = useState<Record<string, HealthStatus>>({});
+   151→  const [healthBusy, setHealthBusy] = useState(false);
+   152→  /** bump → (re)run the health auto-checker */
+   153→  const [healthNonce, setHealthNonce] = useState(0);
+   154→
+   155→  /* ---------------- archive.org direct fallback (movies) ---------------- */
+   156→  const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
+   157→  const [archiveState, setArchiveState] = useState<"loading" | "found" | "none">("loading");
+   158→
+   159→  /* ---------------- TV navigation ---------------- */
+   160→  const [season, setSeason] = useState(() => target?.season ?? 1);
+   161→  const [episode, setEpisode] = useState(() => target?.episode ?? 1);
+   162→  const [episodes, setEpisodes] = useState<Episode[]>([]);
+   163→  const [epLoading, setEpLoading] = useState(() => type === "tv");
+   164→  const [details, setDetails] = useState<MediaDetails | null>(null);
+   165→  const [showEpisodes, setShowEpisodes] = useState(false);
+   166→
+   167→  const mounted = useMounted();
+   168→  const addContinue = useMediaStore((s) => s.addContinue);
+   169→  const toggleWatchlist = useMediaStore((s) => s.toggleWatchlist);
+   170→  const watchlist = useMediaStore((s) => s.watchlist);
+   171→  const serverLang = useMediaStore((s) => s.serverLang);
+   172→  const setServerLang = useMediaStore((s) => s.setServerLang);
+   173→  const deadServers = useMediaStore((s) => s.deadServers);
+   174→  const markDeadServers = useMediaStore((s) => s.markDeadServers);
+   175→  const reviveServer = useMediaStore((s) => s.reviveServer);
+   176→
+   177→  // refs so callbacks/effects always read the latest values
+   178→  const serversRef = useRef(servers);
+   179→  serversRef.current = servers;
+   180→  const activeIdxRef = useRef(activeIdx);
+   181→  activeIdxRef.current = activeIdx;
+   182→  const triedRef = useRef(tried);
+   183→  triedRef.current = tried;
+   184→  const videoStateRef = useRef(videoState);
+   185→  videoStateRef.current = videoState;
+   186→  const streamStartRef = useRef(0);
+   187→  const currentIdRef = useRef<string | null>(null);
+   188→  const videoRef = useRef<HTMLVideoElement | null>(null);
+   189→
+   190→  // When the browser blocks autoplay we surface a tap-to-play overlay instead
+   191→  // of a stuck black frame (video data is already buffered at that point).
+   192→  const handleCanPlay = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+   193→    setVideoState((s) => (s === "loading" ? "playing" : s));
+   194→    const v = e.currentTarget;
+   195→    if (v.paused) {
+   196→      v.play().then(() => setNeedsTap(false)).catch(() => setNeedsTap(true));
+   197→    }
+   198→  };
+   199→
+   200→  const activeServer = activeIdx !== null ? servers[activeIdx] ?? null : null;
+   201→  const isArchive = manualIdx === "archive" && archiveState === "found" && !!archive;
+   202→  const showTrailer = manualIdx === "trailer";
+   203→
+   204→  const trailer: Video | null = useMemo(() => (details ? trailerOf(details) : null), [details]);
+   205→
+   206→  const stopId = useCallback((id: string | null) => {
+   207→    if (!id) return;
+   208→    fetch("/api/torrent/stop", {
+   209→      method: "POST",
+   210→      headers: { "Content-Type": "application/json" },
+   211→      body: JSON.stringify({ id }),
+   212→      keepalive: true,
+   213→    }).catch(() => {});
+   214→  }, []);
+   215→
+   216→  const serverLabel = useCallback((s: TorrentServer) => `${s.quality} · ${s.provider}`, []);
+   217→
+   218→  /* ---------------- server ordering: language filter, dead last ---------------- */
+   219→  const orderedServers = useMemo(() => {
+   220→    const all = servers.map((_, i) => i);
+   221→    const filtered = all.filter((i) => {
+   222→      const tags = servers[i].audioTags ?? [];
+   223→      return serverLang === "auto" || tags.includes(serverLang);
+   224→    });
+   225→    // a stale language preference (from another title) must never empty the list
+   226→    const base = filtered.length ? filtered : all;
+   227→    const alive = base.filter((i) => health[servers[i].id] !== "dead" && !isServerDead(deadServers, servers[i].id));
+   228→    const dead = base.filter((i) => !alive.includes(i));
+   229→    return [...alive, ...dead];
+   230→  }, [servers, serverLang, health, deadServers]);
+   231→  const orderedRef = useRef(orderedServers);
+   232→  orderedRef.current = orderedServers;
+   233→
+   234→  /** language tags present among the current servers, in stable display order */
+   235→  const langChips = useMemo(() => {
+   236→    const order = [
+   237→      "sub", "eng", "hindi", "tamil", "telugu", "malayalam", "kannada",
+   238→      "bengali", "marathi", "punjabi", "dual", "multi", "jap", "raw", "spa", "por", "chi",
+   239→    ];
+   240→    const present = new Set<string>();
+   241→    for (const s of servers) for (const t of s.audioTags ?? []) present.add(t);
+   242→    return order.filter((t) => present.has(t));
+   243→  }, [servers]);
+   244→
+   245→  /* ---------------- failover ---------------- */
+   246→  const failover = useCallback(
+   247→    (reason: string) => {
+   248→      const cur = activeIdxRef.current;
+   249→      const list = serversRef.current;
+   250→      const pool = orderedRef.current.filter((i) => i !== cur && !triedRef.current.includes(i));
+   251→      // healthy servers first; a health-marked dead one is a last resort
+   252→      const next = pool.find((i) => health[serversRef.current[i]?.id] !== "dead") ?? pool[0];
+   253→      const triedNext = new Set(triedRef.current);
+   254→      if (cur !== null) triedNext.add(cur);
+   255→      triedRef.current = [...triedNext];
+   256→      setTried([...triedNext]);
+   257→      const failed = cur !== null ? serversRef.current[cur] : null;
+   258→      if (failed) stopId(failed.id);
+   259→      if (next !== undefined && next >= 0) {
+   260→        setActiveIdx(next);
+   261→        setVideoState("loading");
+   262→        setStatus(null);
+   263→        streamStartRef.current = Date.now();
+   264→        setBanner(`${reason} — switching to server ${next + 1} (${serverLabel(list[next])})`);
+   265→      } else {
+   266→        setExhausted(true);
+   267→        setBanner(reason);
+   268→      }
+   269→    },
+   270→    [stopId, serverLabel, health]
+   271→  );
+   272→
+   273→  /* ---------------- load servers for this title/episode ---------------- */
+   274→  useEffect(() => {
+   275→    if (!target) return;
+   276→    let cancelled = false;
+   277→    setServers([]);
+   278→    setServersState("loading");
+   279→    setTried([]);
+   280→    triedRef.current = [];
+   281→    setActiveIdx(null);
+   282→    setManualIdx(null);
+   283→    setExhausted(false);
+   284→    setVideoState("loading");
+   285→    setStatus(null);
+   286→    setBanner(null);
+   287→
+   288→    const params = new URLSearchParams({
+   289→      type,
+   290→      id: String(target.item.id),
+   291→      title: getTitle(target.item),
+   292→      year: getYear(target.item),
+   293→    });
+   294→    if (type === "tv") {
+   295→      params.set("season", String(season));
+   296→      params.set("episode", String(episode));
+   297→    }
+   298→    fetch(`/api/torrent/search?${params.toString()}`)
+   299→      .then((r) => r.json())
+   300→      .then((j: { results?: TorrentServer[]; hints?: SearchHints }) => {
+   301→        if (cancelled) return;
+   302→        setServers(Array.isArray(j.results) ? j.results : []);
+   303→        setHints(j.hints ?? null);
+   304→        setHealth({});
+   305→        setHealthNonce((n) => n + 1); // kick off the health auto-checker
+   306→        setServersState("ready");
+   307→      })
+   308→      .catch(() => {
+   309→        if (!cancelled) setServersState("error");
+   310→      });
+   311→
+   312→    // Otama Direct: movies → public-domain copy; TV episodes → episode lookup
+   313→    // (Indian daily shows surface on archive.org hours after broadcast, long
+   314→    // before the public trackers list them)
+   315→    setArchiveState("loading");
+   316→    const archiveUrl =
+   317→      type === "movie"
+   318→        ? `/api/archive?title=${encodeURIComponent(getTitle(target.item))}&year=${encodeURIComponent(getYear(target.item))}`
+   319→        : `/api/archive?type=tv&id=${target.item.id}&season=${season}&episode=${episode}&title=${encodeURIComponent(getTitle(target.item))}`;
+   320→    fetch(archiveUrl)
+   321→      .then((r) => r.json())
+   322→      .then((j: { match: ArchiveMatchClient | null }) => {
+   323→        if (cancelled) return;
+   324→        setArchive(j.match);
+   325→        setArchiveState(j.match ? "found" : "none");
+   326→      })
+   327→      .catch(() => {
+   328→        if (!cancelled) setArchiveState("none");
+   329→      });
+   330→    return () => {
+   331→      cancelled = true;
+   332→    };
+   333→  }, [target, type, season, episode, searchNonce]);
+   334→  // automatic retries are per-episode: a manual "Search again" must not reset them
+   335→  useEffect(() => {
+   336→    setAutoRetries(0);
+   337→  }, [target, type, season, episode]);
+   338→
+   339→  /* ---------------- auto-pick the best untried server ----------------
+   340→   * Walks the ordered list (language filter applied, dead servers last) so
+   341→   * the user's language choice and the health checker steer auto-play. */
+   342→  useEffect(() => {
+   343→    if (serversState !== "ready") return;
+   344→    if (manualIdx !== null || activeIdx !== null || exhausted) return;
+   345→    const idx = orderedServers.find((i) => !tried.includes(i));
+   346→    if (idx !== undefined) {
+   347→      setActiveIdx(idx);
+   348→      setVideoState("loading");
+   349→      streamStartRef.current = Date.now();
+   350→    } else {
+   351→      setExhausted(true);
+   352→    }
+   353→  }, [serversState, orderedServers, tried, activeIdx, manualIdx, exhausted]);
+   354→
+   355→  /* ---------------- server health auto-checker ----------------
+   356→   * Probes every found server against the swarm (DHT + trackers) so live
+   357→   * servers get a ✓ badge and dead ones drop to the bottom (and out of
+   358→   * future sessions, via the persisted dead list). Re-verifies every 10 min
+   359→   * while the player stays open — good servers come back automatically. */
+   360→  useEffect(() => {
+   361→    if (serversState !== "ready" || servers.length === 0 || healthNonce === 0) return;
+   362→    let cancelled = false;
+   363→    const batch = servers.slice(0, 10).map((s) => ({ id: s.id, name: s.releaseName }));
+   364→    setHealthBusy(true);
+   365→    setHealth(() => Object.fromEntries(batch.map((s) => [s.id, "checking" as HealthStatus])));
+   366→    fetch("/api/torrent/health", {
+   367→      method: "POST",
+   368→      headers: { "Content-Type": "application/json" },
+   369→      body: JSON.stringify({ servers: batch }),
+   370→    })
+   371→      .then((r) => r.json())
+   372→      .then((j: { results?: { id: string; status: "live" | "dead" }[] }) => {
+   373→        if (cancelled) return;
+   374→        const rows = j.results ?? [];
+   375→        setHealth(() => Object.fromEntries(rows.map((r) => [r.id, r.status as HealthStatus])));
+   376→        const deadIds = rows.filter((r) => r.status === "dead").map((r) => r.id);
+   377→        if (deadIds.length) markDeadServers(deadIds);
+   378→        for (const r of rows) if (r.status === "live") reviveServer(r.id);
+   379→      })
+   380→      .catch(() => {
+   381→        if (!cancelled) setHealth({});
+   382→      })
+   383→      .finally(() => {
+   384→        if (!cancelled) setHealthBusy(false);
+   385→      });
+   386→    return () => {
+   387→      cancelled = true;
+   388→    };
+   389→  }, [serversState, servers, healthNonce, markDeadServers, reviveServer]);
+   390→
+   391→  // periodic re-verification while the player stays open (auto-updater)
+   392→  useEffect(() => {
+   393→    if (serversState !== "ready" || servers.length === 0) return;
+   394→    const iv = setInterval(() => {
+   395→      if (document.visibilityState !== "visible") return;
+   396→      setHealthNonce((n) => n + 1);
+   397→    }, 10 * 60_000);
+   398→    return () => clearInterval(iv);
+   399→  }, [serversState, servers.length]);
+   400→
+   401→  /* ---------------- Otama Direct for episodes with no torrent sources ----------------
+   402→   * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
+   403→   * trackers but uploaded to archive.org within hours of broadcast. When the
+   404→   * torrent scan comes up empty and a direct episode stream exists, play it. */
+   405→  useEffect(() => {
+   406→    if (type !== "tv" || serversState !== "ready") return;
+   407→    if (servers.length > 0 || manualIdx !== null || exhausted) return;
+   408→    if (archiveState !== "found" || !archive) return;
+   409→    setManualIdx("archive");
+   410→    setVideoState("loading");
+   411→  }, [type, serversState, servers.length, manualIdx, exhausted, archiveState, archive]);
+   412→
+   413→  /* ---------------- stream URL ---------------- */
+   414→  const streamUrl = useMemo(() => {
+   415→    if (!activeServer || !target) return null;
+   416→    const file = activeServer.fileIdx != null ? `&file=${activeServer.fileIdx}` : "";
+   417→    // season/episode steer file selection inside season packs and year
+   418→    // steers multi-year movie collections — so the exact requested content
+   419→    // plays instead of the pack's biggest file. For anime the broadcast-order
+   420→    // / fansub-relative numbers steer file picking inside fansub batches
+   421→    // ("Bleach - 367.mkv" = S02E01).
+   422→    const steer =
+   423→      type === "tv"
+   424→        ? `&season=${season}&episode=${episode}`
+   425→        : `&year=${getYear(target.item)}`;
+   426→    const absQ = hints?.absEpisode ? `&abs=${hints.absEpisode}` : "";
+   427→    const relQ = hints?.relEpisode ? `&rel=${hints.relEpisode}` : "";
+   428→    return `/api/torrent/stream?id=${activeServer.id}&dn=${encodeURIComponent(activeServer.releaseName)}${file}${steer}${absQ}${relQ}`;
+   429→  }, [activeServer, type, season, episode, target?.item, hints]);
+   430→
+   431→  useEffect(() => {
+   432→    streamStartRef.current = Date.now();
+   433→    setStatus(null);
+   434→    setNeedsTap(false);
+   435→  }, [streamUrl, videoNonce]);
+   436→
+   437→  /* ---------------- live status + watchdog failover ---------------- */
+   438→  useEffect(() => {
+   439→    if (!streamUrl || !activeServer) {
+   440→      setStatus(null);
+   441→      return;
+   442→    }
+   443→    let cancelled = false;
+   444→    const tick = async () => {
+   445→      if (cancelled) return;
+   446→      try {
+   447→        const r = await fetch(`/api/torrent/status?id=${activeServer.id}`);
+   448→        const j: TorrentStatus = await r.json();
+   449→        if (cancelled) return;
+   450→        setStatus(j);
+   451→        if (j.found === false) {
+   452→          failover("This server dropped the stream");
+   453→          return;
+   454→        }
+   455→        if (videoStateRef.current === "playing") return;
+   456→        const elapsed = Date.now() - streamStartRef.current;
+   457→        if (elapsed > NO_PEER_SWITCH_MS && (j.peers ?? 0) === 0 && (j.progress ?? 0) === 0) {
+   458→          failover("No peers on this server");
+   459→        } else if (elapsed > STALL_SWITCH_MS && videoStateRef.current === "loading") {
+   460→          // data may be flowing but the wrong pieces — this server can't start in time
+   461→          failover("This server is too slow to start");
+   462→        }
+   463→      } catch {
+   464→        /* transient — next tick retries */
+   465→      }
+   466→    };
+   467→    tick();
+   468→    const iv = setInterval(tick, 2000);
+   469→    return () => {
+   470→      cancelled = true;
+   471→      clearInterval(iv);
+   472→    };
+   473→  }, [streamUrl, activeServer, failover]);
+   474→
+   475→  /* ---------------- stop torrents on switch / unmount ---------------- */
+   476→  useEffect(() => {
+   477→    const id = activeServer?.id ?? null;
+   478→    if (currentIdRef.current && currentIdRef.current !== id) stopId(currentIdRef.current);
+   479→    currentIdRef.current = id;
+   480→  }, [activeServer?.id, stopId]);
+   481→  useEffect(() => {
+   482→    return () => {
+   483→      if (currentIdRef.current) stopId(currentIdRef.current);
+   484→    };
+   485→  }, [stopId]);
+   486→
+   487→  /* ---------------- record progress for Continue Watching ---------------- */
+   488→  useEffect(() => {
+   489→    if (!target || !mounted) return;
+   490→    const t = getMediaType(target.item);
+   491→    addContinue(target.item, t === "tv" ? season : undefined, t === "tv" ? episode : undefined);
+   492→  }, [target, mounted, addContinue, season, episode]);
+   493→
+   494→  /* ---------------- details (season list + trailer fallback) ---------------- */
+   495→  useEffect(() => {
+   496→    if (!target) return;
+   497→    let cancelled = false;
+   498→    tmdb<MediaDetails>(`${type}/${target.item.id}`)
+   499→      .then((d) => !cancelled && setDetails(d))
+   500→      .catch(() => {});
+   501→    return () => {
+   502→      cancelled = true;
+   503→    };
+   504→  }, [target, type]);
+   505→
+   506→  useEffect(() => {
+   507→    if (!target || type !== "tv") return;
+   508→    let cancelled = false;
+   509→    tmdb<{ episodes: Episode[] }>(`tv/${target.item.id}/season/${season}`)
+   510→      .then((res) => {
+   511→        if (!cancelled) {
+   512→          setEpisodes(res.episodes ?? []);
+   513→          setEpLoading(false);
+   514→        }
+   515→      })
+   516→      .catch(() => {
+   517→        if (!cancelled) {
+   518→          setEpisodes([]);
+   519→          setEpLoading(false);
+   520→        }
+   521→      });
+   522→    return () => {
+   523→      cancelled = true;
+   524→    };
+   525→  }, [target, type, season]);
+   526→
+   527→  /* ---------------- auto-refresh episodes while open ----------------
+   528→   * Daily shows (Bigg Boss…) publish a new episode every day: re-pull the
+   529→   * season when the tab regains focus and every few minutes, so the latest
+   530→   * episode appears on its own — no reload needed. */
+   531→  const epRefreshRef = useRef(0);
+   532→  useEffect(() => {
+   533→    if (!target || type !== "tv") return;
+   534→    const refresh = () => {
+   535→      if (Date.now() - epRefreshRef.current < 90_000) return; // throttle
+   536→      epRefreshRef.current = Date.now();
+   537→      tmdb<{ episodes: Episode[] }>(`tv/${target.item.id}/season/${season}`, { _fresh: 1 })
+   538→        .then((res) => setEpisodes(res.episodes ?? []))
+   539→        .catch(() => {});
+   540→    };
+   541→    const onVis = () => {
+   542→      if (document.visibilityState === "visible") refresh();
+   543→    };
+   544→    const iv = setInterval(onVis, 3 * 60_000);
+   545→    document.addEventListener("visibilitychange", onVis);
+   546→    return () => {
+   547→      clearInterval(iv);
+   548→      document.removeEventListener("visibilitychange", onVis);
+   549→    };
+   550→  }, [target, type, season]);
+   551→
+   552→  /* ---------------- placeholder episodes when TMDB lags ----------------
+   553→   * Brand-new anime / daily shows often have a season shell with an episode
+   554→   * count but no episode rows yet ("anime cards don't even have a ep").
+   555→   * Synthesise numbered placeholders so navigation and playback still work;
+   556→   * real data replaces them the moment TMDB publishes it (auto-refresh). */
+   557→  useEffect(() => {
+   558→    if (type !== "tv" || epLoading || episodes.length > 0 || !details) return;
+   559→    const count = details.seasons?.find((s) => s.season_number === season)?.episode_count ?? 0;
+   560→    if (count <= 0) return;
+   561→    setEpisodes(
+   562→      Array.from({ length: count }, (_, i) => ({
+   563→        id: -(season * 1000 + i + 1),
+   564→        name: `Episode ${i + 1}`,
+   565→        episode_number: i + 1,
+   566→        season_number: season,
+   567→        air_date: undefined,
+   568→        still_path: null,
+   569→        overview: undefined,
+   570→      }))
+   571→    );
+   572→  }, [type, epLoading, episodes.length, details, season]);
+   573→
+   574→  /* ---------------- banner auto-dismiss ---------------- */
+   575→  useEffect(() => {
+   576→    if (!banner) return;
+   577→    const t = setTimeout(() => setBanner(null), 7000);
+   578→    return () => clearTimeout(t);
+   579→  }, [banner]);
+   580→
+   581→  /* ---------------- scroll lock + escape ---------------- */
+   582→  useEffect(() => {
+   583→    if (!target) return;
+   584→    const original = document.body.style.overflow;
+   585→    document.body.style.overflow = "hidden";
+   586→    const onKey = (ev: KeyboardEvent) => {
+   587→      if (ev.key === "Escape") onClose();
+   588→    };
+   589→    window.addEventListener("keydown", onKey);
+   590→    return () => {
+   591→      document.body.style.overflow = original;
+   592→      window.removeEventListener("keydown", onKey);
+   593→    };
+   594→  }, [target, onClose]);
+   595→
+   596→  const seasonsList = (details?.seasons ?? []).filter(
+   597→    (s) => s.season_number > 0 && s.episode_count > 0
+   598→  );
+   599→  const maxEpisode =
+   600→    episodes.length ||
+   601→    details?.seasons?.find((s) => s.season_number === season)?.episode_count ||
+   602→    1;
+   603→
+   604→  /* -------- episode freshness (daily shows like Bigg Boss) -------- */
+   605→  const now = new Date();
+   606→  const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+   607→    now.getDate()
+   608→  ).padStart(2, "0")}`;
+   609→  const epAired = (ep: Episode) => !ep.air_date || ep.air_date <= todayYmd;
+   610→  const latestAired = useMemo(() => {
+   611→    for (let i = episodes.length - 1; i >= 0; i--) {
+   612→      if (epAired(episodes[i])) return episodes[i];
+   613→    }
+   614→    return null;
+   615→  }, [episodes]);
+   616→  const currentEpisode = episodes.find((ep) => ep.episode_number === episode);
+   617→
+   618→  /* ---------------- auto-research when an episode has no sources yet ----------------
+   619→   * Brand-new daily-show episodes (Bigg Boss…) are often indexed only hours
+   620→   * after broadcast. When the first scan comes up empty and the episode has
+   621→   * already aired, re-scan automatically every 90s (max 5 tries) so the
+   622→   * torrent appears the moment indexers list it — no manual refresh needed. */
+   623→  const noSourcesYet = serversState === "ready" && servers.length === 0;
+   624→  const episodeAired =
+   625→    type !== "tv" || !currentEpisode?.air_date || currentEpisode.air_date <= todayYmd;
+   626→  useEffect(() => {
+   627→    if (!noSourcesYet || !episodeAired || autoRetries >= 5) return;
+   628→    // a direct episode stream that is already playing must not be interrupted
+   629→    if (manualIdx === "archive" && archiveState === "found") return;
+   630→    const t = setTimeout(() => {
+   631→      setAutoRetries((n) => n + 1);
+   632→      setSearchNonce((n) => n + 1);
+   633→    }, 90_000);
+   634→    return () => clearTimeout(t);
+   635→  }, [noSourcesYet, episodeAired, autoRetries, searchNonce, manualIdx, archiveState]);
+   636→
+   637→  if (!target) return null;
+   638→
+   639→  const item = target.item;
+   640→  const title = getTitle(item);
+   641→
+   642→  const goEpisode = (s: number, e: number) => {
+   643→    setSeason(s);
+   644→    setEpisode(e);
+   645→    setShowEpisodes(false);
+   646→  };
+   647→  const nextEpisode = () => {
+   648→    // never step into episodes that haven't aired yet (TMDB publishes
+   649→    // placeholders days ahead for daily shows)
+   650→    const cap = latestAired?.episode_number ?? maxEpisode;
+   651→    if (episode < cap) goEpisode(season, episode + 1);
+   652→    else if (seasonsList.some((s) => s.season_number === season + 1)) goEpisode(season + 1, 1);
+   653→  };
+   654→  const prevEpisode = () => {
+   655→    if (episode > 1) goEpisode(season, episode - 1);
+   656→    else if (season > 1) goEpisode(season - 1, 1);
+   657→  };
+   658→
+   659→  const inList = mounted
+   660→    ? watchlist.some((w) => w.id === item.id && w.media_type === type)
+   661→    : false;
+   662→
+   663→  /* ---------------- user actions ---------------- */
+   664→  const selectTorrent = (idx: number) => {
+   665→    if (idx === activeIdx) {
+   666→      // re-selecting the active server = manual retry
+   667→      setVideoState("loading");
+   668→      setVideoNonce((n) => n + 1);
+   669→      return;
+   670→    }
+   671→    setManualIdx(idx);
+   672→    setExhausted(false);
+   673→    setVideoState("loading");
+   674→    setActiveIdx(idx);
+   675→    streamStartRef.current = Date.now();
+   676→  };
+   677→
+   678→  const selectAuto = () => {
+   679→    setManualIdx(null);
+   680→    setExhausted(false);
+   681→    setTried([]);
+   682→    triedRef.current = [];
+   683→    setActiveIdx(null); // auto-pick effect chooses the best server again
+   684→  };
+   685→
+   686→  const selectArchive = () => {
+   687→    if (archiveState !== "found" || !archive) return;
+   688→    if (manualIdx === "archive") {
+   689→      setVideoNonce((n) => n + 1);
+   690→      return;
+   691→    }
+   692→    if (activeServer) stopId(activeServer.id);
+   693→    setManualIdx("archive");
+   694→    setExhausted(false);
+   695→    setVideoState("loading");
+   696→  };
+   697→
+   698→  const playTrailer = () => {
+   699→    if (!trailer) return;
+   700→    if (activeServer) stopId(activeServer.id);
+   701→    setManualIdx("trailer");
+   702→    setExhausted(false);
+   703→  };
+   704→
+   705→  const retryAll = () => {
+   706→    setTried([]);
+   707→    triedRef.current = [];
+   708→    setExhausted(false);
+   709→    setManualIdx(null);
+   710→    setActiveIdx(null);
+   711→    setVideoState("loading");
+   712→    setBanner(null);
+   713→  };
+   714→
+   715→  const retryCurrent = () => {
+   716→    setExhausted(false);
+   717→    setVideoState("loading");
+   718→    setVideoNonce((n) => n + 1);
+   719→  };
+   720→
+   721→  /* ---------------- derived render state ---------------- */
+   722→  const noSources =
+   723→    (serversState === "ready" && servers.length === 0) || serversState === "error";
+   724→  // exhausted also becomes true when zero servers exist — in that case only
+   725→  // the no-source panel may show, never the "servers failed" panel too
+   726→  const showFailPanel =
+   727→    !noSources &&
+   728→    ((exhausted && !isArchive && !showTrailer) ||
+   729→      (videoState === "error" && exhausted && !isArchive && !showTrailer));
+   730→  const showNoSourcePanel =
+   731→    noSources && !isArchive && !showTrailer && archiveState !== "found";
+   732→
+   733→  const downloading = status && (status.progress ?? 0) < 0.999;
+   734→  const videoKey = `${streamUrl ?? "none"}-${videoNonce}`;
+   735→
+   736→  return (
+   737→    <div
+   738→      className="fixed inset-0 z-[80] flex flex-col bg-black"
+   739→      role="dialog"
+   740→      aria-modal="true"
+   741→      aria-label={`Playing ${title}`}
+   742→    >
+   743→      {/* Top bar */}
+   744→      <div className="flex items-center justify-between gap-3 px-3 py-2.5 md:px-5">
+   745→        <div className="flex min-w-0 items-center gap-3">
+   746→          <button
+   747→            type="button"
+   748→            onClick={onClose}
+   749→            aria-label="Close player"
+   750→            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-red-600"
+   751→          >
+   752→            <X className="h-5 w-5" />
+   753→          </button>
+   754→          <div className="min-w-0">
+   755→            <h2 className="truncate text-sm font-bold text-white md:text-base">
+   756→              {title}
+   757→              {type === "tv" && (
+   758→                <span className="ml-2 font-normal text-zinc-400">
+   759→                  S{season}:{episode < 10 ? `0${episode}` : episode}
+   760→                </span>
+   761→              )}
+   762→            </h2>
+   763→            {type === "tv" && currentEpisode?.name && currentEpisode.name !== "TBD" && (
+   764→              <p className="truncate text-xs text-zinc-500">{currentEpisode.name}</p>
+   765→            )}
+   766→          </div>
+   767→        </div>
+   768→
+   769→        <div className="flex shrink-0 items-center gap-2">
+   770→          <button
+   771→            type="button"
+   772→            onClick={() =>
+   773→              toggleWatchlist(item, type === "tv" ? season : undefined, type === "tv" ? episode : undefined)
+   774→            }
+   775→            className={`hidden h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold sm:flex ${
+   776→              inList
+   777→                ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-emerald-600/50"
+   778→                : "bg-white/10 text-zinc-200 hover:bg-white/20"
+   779→            }`}
+   780→          >
+   781→            {inList ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+   782→            {inList ? "Saved" : "Save"}
+   783→          </button>
+   784→          {type === "tv" && (
+   785→            <button
+   786→              type="button"
+   787→              onClick={() => setShowEpisodes((v) => !v)}
+   788→              className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/20 lg:hidden"
+   789→            >
+   790→              <List className="h-4 w-4" /> Episodes
+   791→            </button>
+   792→          )}
+   793→        </div>
+   794→      </div>
+   795→
+   796→      {/* Server strip — every chip is an ad-free torrent source */}
+   797→      <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5">
+   798→        <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+   799→          Server
+   800→        </span>
+   801→
+   802→        <button
+   803→          type="button"
+   804→          onClick={selectAuto}
+   805→          title="Automatically picks the best-seeded source and fails over if it stalls"
+   806→          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   807→            manualIdx === null
+   808→              ? "bg-red-600 text-white"
+   809→              : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+   810→          }`}
+   811→        >
+   812→          <Zap className="h-3 w-3" />
+   813→          Auto{activeServer && manualIdx === null ? ` · S${activeIdx! + 1}` : ""}
+   814→        </button>
+   815→
+   816→        <button
+   817→          type="button"
+   818→          onClick={selectArchive}
+   819→          disabled={archiveState !== "found"}
+   820→          title={
+   821→            archiveState === "found"
+   822→              ? type === "tv"
+   823→                ? "Built-in player, direct episode stream — 100% ad-free"
+   824→                : "Built-in player, direct public-domain stream — 100% ad-free"
+   825→              : archiveState === "loading"
+   826→                ? "Checking archive.org for a direct copy…"
+   827→                : "No direct copy found for this title"
+   828→          }
+   829→          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   830→            isArchive
+   831→              ? "bg-emerald-600 text-white"
+   832→              : archiveState === "found"
+   833→                ? "bg-emerald-600/15 text-emerald-300 ring-1 ring-emerald-600/40 hover:bg-emerald-600/25"
+   834→                : "bg-white/5 text-zinc-600"
+   835→          } ${archiveState !== "found" ? "cursor-not-allowed" : ""}`}
+   836→        >
+   837→          <ShieldCheck className="h-3 w-3" />
+   838→          Direct
+   839→          {archiveState === "loading" && <span className="animate-pulse">…</span>}
+   840→        </button>
+   841→
+   842→        {orderedServers.map((i) => {
+   843→          const s = servers[i];
+   844→          const active = activeIdx === i;
+   845→          const hStatus = health[s.id];
+   846→          const dead = hStatus === "dead" || (!hStatus && isServerDead(deadServers, s.id));
+   847→          const matchBadge =
+   848→            dead
+   849→              ? { label: "✗ dead", hint: "Health check failed — the swarm did not answer. Tap to try anyway." }
+   850→              : hStatus === "live"
+   851→                ? { label: "✓ live", hint: "Health check passed — this server answered just now" }
+   852→                : s.match === "verified"
+   853→                  ? { label: "✓", hint: "Release verified for this exact title/episode" }
+   854→                  : s.match === "pack"
+   855→                    ? { label: "Season pack", hint: "Season pack — the requested episode is picked automatically" }
+   856→                    : { label: "unverified", hint: "Could not verify the year/episode in this release name" };
+   857→          return (
+   858→            <button
+   859→              key={s.id}
+   860→              type="button"
+   861→              data-testid={`server-chip-${i + 1}`}
+   862→              onClick={() => selectTorrent(i)}
+   863→              title={`${s.releaseName}\n${s.seeders} seeders · ${fmtSize(s.sizeBytes)} · ${s.provider}\n${matchBadge.hint}\nAudio: ${(s.audioTags ?? []).map((t) => LANG_LABEL[t] ?? t).join(", ") || "unknown"}`}
+   864→              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   865→                active
+   866→                  ? "bg-red-600 text-white"
+   867→                  : dead
+   868→                    ? "bg-white/[0.03] text-zinc-600 line-through decoration-zinc-700 hover:bg-white/10"
+   869→                    : tried.includes(i)
+   870→                      ? "bg-white/5 text-zinc-600 hover:bg-white/10"
+   871→                      : "bg-white/8 text-zinc-300 hover:bg-white/15 hover:text-white"
+   872→              }`}
+   873→            >
+   874→              <Magnet className="h-3 w-3" />
+   875→              S{i + 1} · {s.quality}
+   876→              <span
+   877→                className={`hidden text-[9px] font-normal md:inline ${
+   878→                  dead
+   879→                    ? "text-red-400"
+   880→                    : hStatus === "live" || s.match === "verified"
+   881→                      ? "text-emerald-400"
+   882→                      : s.match === "pack"
+   883→                        ? "text-sky-400"
+   884→                        : "text-amber-400"
+   885→                }`}
+   886→              >
+   887→                {hStatus === "checking" ? "…" : matchBadge.label}
+   888→              </span>
+   889→              <span className="hidden text-[9px] font-normal text-zinc-500 lg:inline">
+   890→                {s.provider} · 👤{fmtSeeders(s.seeders)}
+   891→              </span>
+   892→            </button>
+   893→          );
+   894→        })}
+   895→
+   896→        {serversState === "loading" && (
+   897→          <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-zinc-500">
+   898→            <Loader2 className="h-3 w-3 animate-spin" /> Scanning torrent networks…
+   899→          </span>
+   900→        )}
+   901→        {healthBusy && servers.length > 0 && (
+   902→          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-zinc-500">
+   903→            <Loader2 className="h-3 w-3 animate-spin" /> Checking servers…
+   904→          </span>
+   905→        )}
+   906→      </div>
+   907→
+   908→      {/* Language filter — categorises every server by its audio track */}
+   909→      {langChips.length > 0 && (
+   910→        <div
+   911→          className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5"
+   912→          role="group"
+   913→          aria-label="Server language filter"
+   914→          data-testid="server-language-row"
+   915→        >
+   916→          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+   917→            Language
+   918→          </span>
+   919→          <button
+   920→            type="button"
+   921→            data-testid="lang-auto"
+   922→            aria-pressed={serverLang === "auto"}
+   923→            onClick={() => setServerLang("auto")}
+   924→            title="No language filter — always play the best server"
+   925→            className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   926→              serverLang === "auto"
+   927→                ? "bg-sky-600 text-white"
+   928→                : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+   929→            }`}
+   930→          >
+   931→            All
+   932→          </button>
+   933→          {langChips.map((tag) => {
+   934→            const count = servers.filter((s) => (s.audioTags ?? []).includes(tag)).length;
+   935→            const active = serverLang === tag;
+   936→            return (
+   937→              <button
+   938→                key={tag}
+   939→                type="button"
+   940→                data-testid={`lang-${tag}`}
+   941→                aria-pressed={active}
+   942→                onClick={() => setServerLang(tag)}
+   943→                title={`Only ${LANG_LABEL[tag] ?? tag} servers (${count} found)`}
+   944→                className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   945→                  active
+   946→                    ? "bg-sky-600 text-white"
+   947→                    : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+   948→                }`}
+   949→              >
+   950→                {LANG_LABEL[tag] ?? tag}
+   951→                <span className="text-[9px] font-normal opacity-70">{count}</span>
+   952→              </button>
+   953→            );
+   954→          })}
+   955→        </div>
+   956→      )}
+   957→
+   958→      {/* every source found is dead — set expectations before playback stalls */}
+   959→      {serversState === "ready" && servers.length > 0 && servers.every((s) => s.seeders === 0) && (
+   960→        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
+   961→          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+   962→          Only dead torrents found for this episode right now (0 seeders on every
+   963→          source). Playback will likely fail — check back later; daily-show
+   964→          episodes usually get seeded within days.
+   965→        </div>
+   966→      )}
+   967→
+   968→      {/* failover banner */}
+   969→      {banner && (
+   970→        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
+   971→          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+   972→          {banner}
+   973→        </div>
+   974→      )}
+   975→
+   976→      {/* Main area */}
+   977→      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+   978→        <div className="flex min-w-0 flex-1 flex-col">
+   979→          <div className="relative w-full bg-black lg:flex-1">
+   980→            <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
+   981→              {/* ---------- trailer fallback ---------- */}
+   982→              {showTrailer && trailer ? (
+   983→                <iframe
+   984→                  key={trailer.key}
+   985→                  src={`https://www.youtube-nocookie.com/embed/${trailer.key}?autoplay=1`}
+   986→                  title={`${title} trailer`}
+   987→                  allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+   988→                  allowFullScreen
+   989→                  className="h-full w-full border-0"
+   990→                />
+   991→              ) : isArchive && archive ? (
+   992→                /* ---------- Otama Direct: public-domain native stream ---------- */
+   993→                <>
+   994→                  <video
+   995→                    key={`${archive.identifier}-${videoNonce}`}
+   996→                    src={archive.fileUrl}
+   997→                    poster={img(item.backdrop_path, "w1280") ?? undefined}
+   998→                    controls
+   999→                    autoPlay
+  1000→                    playsInline
+  1001→                    preload="auto"
+  1002→                    onCanPlay={handleCanPlay}
+  1003→                    onPlaying={() => {
+  1004→                      setVideoState("playing");
+  1005→                      setNeedsTap(false);
+  1006→                    }}
+  1007→                    onError={() => {
+  1008→                      setVideoState("error");
+  1009→                      setExhausted(true);
+  1010→                    }}
+  1011→                    className="h-full w-full bg-black"
+  1012→                  />
+  1013→                  <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+  1014→                    <ShieldCheck className="h-3 w-3" />{" "}
+  1015→                    {archive.kind === "tv" ? "Ad-free · Direct episode" : "Ad-free · Public domain"}
+  1016→                  </div>
+  1017→                  <p className="absolute inset-x-3 bottom-2 truncate text-[10px] text-zinc-500">
+  1018→                    {archive.title}
+  1019→                    {archive.year ? ` (${archive.year})` : ""} · archive.org
+  1020→                    {archive.kind === "movie" ? ` · ${archive.license}` : ""}
+  1021→                  </p>
+  1022→                </>
+  1023→              ) : streamUrl ? (
+  1024→                /* ---------- torrent stream: native video, HTTP Range, no iframe ---------- */
+  1025→                <>
+  1026→                  <video
+  1027→                    ref={videoRef}
+  1028→                    key={videoKey}
+  1029→                    src={streamUrl}
+  1030→                    poster={img(item.backdrop_path, "w1280") ?? undefined}
+  1031→                    controls
+  1032→                    autoPlay
+  1033→                    playsInline
+  1034→                    preload="auto"
+  1035→                    onCanPlay={handleCanPlay}
+  1036→                    onPlaying={() => {
+  1037→                      setVideoState("playing");
+  1038→                      setNeedsTap(false);
+  1039→                    }}
+  1040→                    onError={() => failover("Stream failed on this server")}
+  1041→                    className="h-full w-full bg-black"
+  1042→                  />
+  1043→                  <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+  1044→                    <ShieldCheck className="h-3 w-3" /> Ad-free · P2P direct
+  1045→                  </div>
+  1046→                  {videoState === "playing" && downloading && (
+  1047→                    <div className="absolute bottom-2 left-3 flex items-center gap-2 rounded-full bg-black/70 px-2.5 py-1 text-[10px] font-semibold text-zinc-200 backdrop-blur">
+  1048→                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+  1049→                      P2P ↓ {Math.round((status?.progress ?? 0) * 100)}% · {fmtSpeed(status?.speed ?? 0)} ·{" "}
+  1050→                      {status?.peers ?? 0} peers
+  1051→                    </div>
+  1052→                  )}
+  1053→                </>
+  1054→              ) : null}
+  1055→
+  1056→              {/* ---------- tap to play (browser blocked autoplay) ---------- */}
+  1057→              {needsTap && !showTrailer && (
+  1058→                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
+  1059→                  <button
+  1060→                    type="button"
+  1061→                    onClick={() => {
+  1062→                      videoRef.current?.play().catch(() => {});
+  1063→                      setNeedsTap(false);
+  1064→                    }}
+  1065→                    aria-label="Play"
+  1066→                    className="flex h-20 w-20 items-center justify-center rounded-full bg-red-600 text-white shadow-2xl transition hover:scale-105 hover:bg-red-500"
+  1067→                  >
+  1068→                    <Play className="h-9 w-9" />
+  1069→                  </button>
+  1070→                </div>
+  1071→              )}
+  1072→
+  1073→              {/* ---------- connecting overlay ---------- */}
+  1074→              {streamUrl && videoState === "loading" && !showTrailer && !isArchive && (
+  1075→                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
+  1076→                  <Loader2 className="h-10 w-10 animate-spin text-red-600" />
+  1077→                  <p className="text-sm text-zinc-400">
+  1078→                    Connecting to{" "}
+  1079→                    <span className="font-semibold text-zinc-200">
+  1080→                      {activeServer ? `S${activeIdx! + 1} · ${serverLabel(activeServer)}` : "best server"}
+  1081→                    </span>
+  1082→                    …
+  1083→                  </p>
+  1084→                  {activeServer && (
+  1085→                    <p className="max-w-md truncate text-[11px] text-zinc-600">
+  1086→                      {activeServer.releaseName} · {fmtSize(activeServer.sizeBytes)}
+  1087→                    </p>
+  1088→                  )}
+  1089→                  {status && (status.progress ?? 0) > 0 && (
+  1090→                    <div className="w-56">
+  1091→                      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+  1092→                        <div
+  1093→                          className="h-full rounded-full bg-red-600 transition-all"
+  1094→                          style={{ width: `${Math.max(2, (status.progress ?? 0) * 100)}%` }}
+  1095→                        />
+  1096→                      </div>
+  1097→                      <p className="mt-1.5 text-[11px] text-zinc-400">
+  1098→                        {Math.round((status.progress ?? 0) * 100)}% buffered ·{" "}
+  1099→                        {fmtSpeed(status?.speed ?? 0)} · {status?.peers ?? 0} peers
+  1100→                      </p>
+  1101→                    </div>
+  1102→                  )}
+  1103→                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+  1104→                    <button
+  1105→                      type="button"
+  1106→                      onClick={() => failover("Skipped")}
+  1107→                      className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+  1108→                    >
+  1109→                      Next server
+  1110→                    </button>
+  1111→                    <button
+  1112→                      type="button"
+  1113→                      onClick={retryCurrent}
+  1114→                      className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+  1115→                    >
+  1116→                      Retry
+  1117→                    </button>
+  1118→                  </div>
+  1119→                </div>
+  1120→              )}
+  1121→
+  1122→              {/* ---------- no sources panel ---------- */}
+  1123→              {showNoSourcePanel && (
+  1124→                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center">
+  1125→                  <Magnet className="h-10 w-10 text-zinc-600" />
+  1126→                  <div>
+  1127→                    <p className="text-base font-bold text-white">
+  1128→                      No playable source found for this episode yet
+  1129→                    </p>
+  1130→                    <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
+  1131→                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch, EZTV and
+  1132→                      archive.org — no healthy source for it right now. Brand-new episodes of
+  1133→                      daily shows usually surface within hours to a few days. The episode list
+  1134→                      and servers refresh automatically, so simply retry later.
+  1135→                    </p>
+  1136→                    {type === "tv" && noSourcesYet && autoRetries < 5 && episodeAired && (
+  1137→                      <p
+  1138→                        className="mx-auto mt-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-sky-300"
+  1139→                        data-testid="auto-research-note"
+  1140→                      >
+  1141→                        <Loader2 className="h-3 w-3 animate-spin" />
+  1142→                        Auto-checking again in ~90 s (attempt {autoRetries + 1} of 5) — the stream
+  1143→                        will start on its own once a source appears
+  1144→                      </p>
+  1145→                    )}
+  1146→                    {type === "tv" && latestAired && latestAired.episode_number !== episode && (
+  1147→                      <button
+  1148→                        type="button"
+  1149→                        onClick={() =>
+  1150→                          goEpisode(latestAired.season_number || season, latestAired.episode_number)
+  1151→                        }
+  1152→                        className="mx-auto mt-2 block text-[11px] font-semibold text-zinc-400 underline decoration-dotted transition hover:text-zinc-200"
+  1153→                      >
+  1154→                        Episode {latestAired.episode_number} (aired{" "}
+  1155→                        {formatDate(latestAired.air_date) || "recently"}) — try it, older
+  1156→                        episodes are usually seeded first
+  1157→                      </button>
+  1158→                    )}
+  1159→                  </div>
+  1160→                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+  1161→                    <button
+  1162→                      type="button"
+  1163→                      onClick={() => setSearchNonce((n) => n + 1)}
+  1164→                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+  1165→                    >
+  1166→                      <RefreshCw className="h-3.5 w-3.5" /> Search again
+  1167→                    </button>
+  1168→                    {trailer && (
+  1169→                      <button
+  1170→                        type="button"
+  1171→                        onClick={playTrailer}
+  1172→                        className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-500"
+  1173→                      >
+  1174→                        <Play className="h-3.5 w-3.5" /> Play trailer
+  1175→                      </button>
+  1176→                    )}
+  1177→                  </div>
+  1178→                </div>
+  1179→              )}
+  1180→
+  1181→              {/* ---------- all servers exhausted ---------- */}
+  1182→              {showFailPanel && (
+  1183→                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center">
+  1184→                  <AlertTriangle className="h-10 w-10 text-amber-400" />
+  1185→                  <div>
+  1186→                    <p className="text-base font-bold text-white">
+  1187→                      None of the {servers.length || "available"} servers could start
+  1188→                    </p>
+  1189→                    <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
+  1190→                      Every source was tried automatically. Try again — swarms change by the
+  1191→                      minute — or watch the trailer while the torrents get more seeders.
+  1192→                    </p>
+  1193→                  </div>
+  1194→                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+  1195→                    <button
+  1196→                      type="button"
+  1197→                      onClick={retryAll}
+  1198→                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+  1199→                    >
+  1200→                      <RefreshCw className="h-3.5 w-3.5" /> Retry all
+  1201→                    </button>
+  1202→                    {trailer && (
+  1203→                      <button
+  1204→                        type="button"
+  1205→                        onClick={playTrailer}
+  1206→                        className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-500"
+  1207→                      >
+  1208→                        <Play className="h-3.5 w-3.5" /> Play trailer
+  1209→                      </button>
+  1210→                    )}
+  1211→                  </div>
+  1212→                </div>
+  1213→              )}
+  1214→            </div>
+  1215→          </div>
+  1216→
+  1217→          {/* Controls under player */}
+  1218→          <div className="flex items-center justify-center gap-3 border-t border-white/5 px-4 py-3">
+  1219→            {type === "tv" ? (
+  1220→              <>
+  1221→                <button
+  1222→                  type="button"
+  1223→                  onClick={prevEpisode}
+  1224→                  disabled={season === 1 && episode === 1}
+  1225→                  className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20 disabled:opacity-30"
+  1226→                >
+  1227→                  <ChevronLeft className="h-3.5 w-3.5" /> Prev Ep
+  1228→                </button>
+  1229→                <span className="text-xs text-zinc-500">
+  1230→                  Season {season} · Episode {episode}
+  1231→                </span>
+  1232→                <button
+  1233→                  type="button"
+  1234→                  onClick={nextEpisode}
+  1235→                  disabled={
+  1236→                    episode === maxEpisode &&
+  1237→                    !seasonsList.some((s) => s.season_number === season + 1)
+  1238→                  }
+  1239→                  className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20 disabled:opacity-30"
+  1240→                >
+  1241→                  Next Ep <ChevronRight className="h-3.5 w-3.5" />
+  1242→                </button>
+  1243→              </>
+  1244→            ) : (
+  1245→              <p className="flex items-center gap-2 text-center text-xs text-zinc-600">
+  1246→                <Info className="h-3.5 w-3.5 shrink-0" />
+  1247→                <span>
+  1248→                  <span className="font-semibold text-zinc-400">Auto</span> picks the best-seeded
+  1249→                  source and fails over automatically. Playback is a direct P2P stream on our own
+  1250→                  player — <span className="text-emerald-400">no ad networks, ever</span>.
+  1251→                </span>
+  1252→              </p>
+  1253→            )}
+  1254→          </div>
+  1255→        </div>
+  1256→
+  1257→        {/* Episode sidebar (TV) */}
+  1258→        {type === "tv" && (
+  1259→          <aside
+  1260→            className={`${
+  1261→              showEpisodes ? "flex" : "hidden"
+  1262→            } max-h-full w-full shrink-0 flex-col border-t border-white/10 bg-[#0d0d14] lg:flex lg:w-[340px] lg:border-l lg:border-t-0`}
+  1263→          >
+  1264→            <div className="border-b border-white/5 p-3">
+  1265→              <div className="flex items-center justify-between">
+  1266→                <h3 className="text-sm font-bold text-white">Episodes</h3>
+  1267→                <button
+  1268→                  type="button"
+  1269→                  onClick={() => setShowEpisodes(false)}
+  1270→                  className="text-zinc-500 hover:text-white lg:hidden"
+  1271→                  aria-label="Hide episode list"
+  1272→                >
+  1273→                  <X className="h-4 w-4" />
+  1274→                </button>
+  1275→              </div>
+  1276→              <select
+  1277→                value={season}
+  1278→                onChange={(e) => {
+  1279→                  setSeason(Number(e.target.value));
+  1280→                  setEpLoading(true);
+  1281→                }}
+  1282→                aria-label="Select season"
+  1283→                className="mt-2 w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 focus:border-red-600 focus:outline-none"
+  1284→              >
+  1285→                {seasonsList.length > 0
+  1286→                  ? seasonsList.map((s) => (
+  1287→                      <option key={s.id} value={s.season_number} className="bg-[#12121a]">
+  1288→                        {s.name} ({s.episode_count} eps)
+  1289→                      </option>
+  1290→                    ))
+  1291→                  : [...Array(20)].map((_, i) => (
+  1292→                      <option key={i + 1} value={i + 1} className="bg-[#12121a]">
+  1293→                        Season {i + 1}
+  1294→                      </option>
+  1295→                    ))}
+  1296→              </select>
+  1297→              {latestAired && (
+  1298→                <button
+  1299→                  type="button"
+  1300→                  onClick={() =>
+  1301→                    goEpisode(latestAired.season_number || season, latestAired.episode_number)
+  1302→                  }
+  1303→                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-red-600/20 px-3 py-1.5 text-xs font-semibold text-red-300 ring-1 ring-red-600/40 transition hover:bg-red-600/30"
+  1304→                >
+  1305→                  <FastForward className="h-3.5 w-3.5" />
+  1306→                  Jump to latest · E{latestAired.episode_number}
+  1307→                  {latestAired.air_date ? ` · ${formatDate(latestAired.air_date)}` : ""}
+  1308→                </button>
+  1309→              )}
+  1310→            </div>
+  1311→
+  1312→            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+  1313→              {epLoading && (
+  1314→                <div className="space-y-2 p-2">
+  1315→                  {[...Array(6)].map((_, i) => (
+  1316→                    <div key={i} className="h-16 animate-pulse rounded-lg bg-zinc-800/60" />
+  1317→                  ))}
+  1318→                </div>
+  1319→              )}
+  1320→              {!epLoading &&
+  1321→                episodes.map((ep) => {
+  1322→                  const active = ep.episode_number === episode;
+  1323→                  const aired = epAired(ep);
+  1324→                  // TMDB fills brand-new daily-show episodes with "TBD"
+  1325→                  // (Bigg Boss S20E55 airs with no title yet) — show a real
+  1326→                  // label and the broadcast date instead
+  1327→                  const name =
+  1328→                    ep.name && ep.name !== "TBD" ? ep.name : `Episode ${ep.episode_number}`;
+  1329→                  const isNew =
+  1330→                    !!ep.air_date &&
+  1331→                    ep.air_date <= todayYmd &&
+  1332→                    (Date.parse(todayYmd) - Date.parse(ep.air_date)) / 86400000 <= 2;
+  1333→                  return (
+  1334→                    <button
+  1335→                      key={`${ep.id}-${ep.episode_number}`}
+  1336→                      type="button"
+  1337→                      onClick={() => goEpisode(season, ep.episode_number)}
+  1338→                      disabled={!aired}
+  1339→                      title={
+  1340→                        aired
+  1341→                          ? undefined
+  1342→                          : `Airs ${formatDate(ep.air_date) || "TBA"} — not playable yet`
+  1343→                      }
+  1344→                      className={`mb-1.5 flex w-full items-start gap-3 rounded-lg p-2 text-left transition ${
+  1345→                        active
+  1346→                          ? "bg-red-600/20 ring-1 ring-red-600/60"
+  1347→                          : aired
+  1348→                            ? "ring-1 ring-transparent hover:bg-white/5"
+  1349→                            : "cursor-not-allowed opacity-45 ring-1 ring-transparent"
+  1350→                      }`}
+  1351→                    >
+  1352→                      <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-md bg-zinc-800">
+  1353→                        {img(ep.still_path, "w300") ? (
+  1354→                          <img
+  1355→                            src={img(ep.still_path, "w300") as string}
+  1356→                            alt={ep.name}
+  1357→                            loading="lazy"
+  1358→                            className="h-full w-full object-cover"
+  1359→                          />
+  1360→                        ) : (
+  1361→                          <div className="flex h-full w-full items-center justify-center text-xs text-zinc-600">
+  1362→                            E{ep.episode_number}
+  1363→                          </div>
+  1364→                        )}
+  1365→                        {active && (
+  1366→                          <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-red-400">
+  1367→                            <ChevronRight className="h-5 w-5" />
+  1368→                          </span>
+  1369→                        )}
+  1370→                      </div>
+  1371→                      <div className="min-w-0 flex-1">
+  1372→                        <p
+  1373→                          className={`truncate text-xs font-semibold ${
+  1374→                            active ? "text-red-400" : "text-zinc-200"
+  1375→                          }`}
+  1376→                        >
+  1377→                          {ep.episode_number}. {name}
+  1378→                          {isNew && (
+  1379→                            <span className="ml-1.5 rounded bg-red-600 px-1 py-0.5 align-middle text-[9px] font-bold uppercase text-white">
+  1380→                              New
+  1381→                            </span>
+  1382→                          )}
+  1383→                        </p>
+  1384→                        <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
+  1385→                          {!aired
+  1386→                            ? `Airs ${formatDate(ep.air_date) || "TBA"}`
+  1387→                            : `Aired ${formatDate(ep.air_date) || "—"}${
+  1388→                                ep.overview ? "" : " · details pending"
+  1389→                              }`}
+  1390→                        </p>
+  1391→                        {aired && ep.overview && (
+  1392→                          <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-zinc-600">
+  1393→                            {ep.overview}
+  1394→                          </p>
+  1395→                        )}
+  1396→                      </div>
+  1397→                    </button>
+  1398→                  );
+  1399→                })}
+  1400→              {!epLoading && !episodes.length && (
+  1401→                <p className="p-4 text-center text-xs text-zinc-600">
+  1402→                  No episode data for this season yet. New episodes appear here automatically
+  1403→                  as soon as they are published.
+  1404→                </p>
+  1405→              )}
+  1406→            </div>
+  1407→          </aside>
+  1408→        )}
+  1409→      </div>
+  1410→    </div>
+  1411→  );
+  1412→}
+  1413→

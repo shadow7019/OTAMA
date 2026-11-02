@@ -1,0 +1,44 @@
+{
+  "night_of_living_dead": {
+    "ident": "night-of-the-living-dead-1968-hd",
+    "file": "Night Of The Living Dead (1968) [HD].mp4",
+    "size_mb": 540.3,
+    "status": 206,
+    "url": "https://archive.org/download/night-of-the-living-dead-1968-hd/Night%20Of%20The%20Living%20Dead%20%281968%29%20%5BHD%5D.mp4"
+  },
+  "sintel": {
+    "ident": "sintel_202207",
+    "file": "data/sintel.mp4",
+    "size_mb": 88.5,
+    "status": 206,
+    "url": "https://archive.org/download/sintel_202207/data/sintel.mp4"
+  },
+  "plan_9": {
+    "ident": "plan-9-from-outer-space-1957-by-ed-wood",
+    "file": "Plan.9.From.Outer.Space.1957.1080p.BluRay.x264.AAC-[YTS.MX].mp4",
+    "size_mb": 1400.0,
+    "status": 206,
+    "url": "https://archive.org/download/plan-9-from-outer-space-1957-by-ed-wood/Plan.9.From.Outer.Space.1957.1080p.BluRay.x264.AAC-%5BYTS.MX%5D.mp4"
+  },
+  "sherlock_jr": {
+    "ident": "sherlock-jr_202506",
+    "file": "Sherlock Jr.mp4",
+    "size_mb": 1256.5,
+    "status": 206,
+    "url": "https://archive.org/download/sherlock-jr_202506/Sherlock%20Jr.mp4"
+  },
+  "nosferatu": {
+    "ident": "nosferatu-1922",
+    "file": "Nosferatu (1922).mp4",
+    "size_mb": 1183.7,
+    "status": 206,
+    "url": "https://archive.org/download/nosferatu-1922/Nosferatu%20%281922%29.mp4"
+  },
+  "gulliver": {
+    "ident": "gullivers-travels-1939-fleischer",
+    "file": "Gulliver's Travels (1939).mp4",
+    "size_mb": 1154.7,
+    "status": 206,
+    "url": "https://archive.org/download/gullivers-travels-1939-fleischer/Gulliver%27s%20Travels%20%281939%29.mp4"
+  }
+}

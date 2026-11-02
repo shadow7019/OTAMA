@@ -1,0 +1,567 @@
+   630→          >
+   631→            {inList ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+   632→            {inList ? "Saved" : "Save"}
+   633→          </button>
+   634→          {type === "tv" && (
+   635→            <button
+   636→              type="button"
+   637→              onClick={() => setShowEpisodes((v) => !v)}
+   638→              className="flex h-9 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/20 lg:hidden"
+   639→            >
+   640→              <List className="h-4 w-4" /> Episodes
+   641→            </button>
+   642→          )}
+   643→        </div>
+   644→      </div>
+   645→
+   646→      {/* Server strip — every chip is an ad-free torrent source */}
+   647→      <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-2 md:px-5">
+   648→        <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-600">
+   649→          Server
+   650→        </span>
+   651→
+   652→        <button
+   653→          type="button"
+   654→          onClick={selectAuto}
+   655→          title="Automatically picks the best-seeded source and fails over if it stalls"
+   656→          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   657→            manualIdx === null
+   658→              ? "bg-red-600 text-white"
+   659→              : "bg-white/8 text-zinc-400 hover:bg-white/15 hover:text-zinc-200"
+   660→          }`}
+   661→        >
+   662→          <Zap className="h-3 w-3" />
+   663→          Auto{activeServer && manualIdx === null ? ` · S${activeIdx! + 1}` : ""}
+   664→        </button>
+   665→
+   666→        <button
+   667→          type="button"
+   668→          onClick={selectArchive}
+   669→          disabled={archiveState !== "found"}
+   670→          title={
+   671→            archiveState === "found"
+   672→              ? type === "tv"
+   673→                ? "Built-in player, direct episode stream — 100% ad-free"
+   674→                : "Built-in player, direct public-domain stream — 100% ad-free"
+   675→              : archiveState === "loading"
+   676→                ? "Checking archive.org for a direct copy…"
+   677→                : "No direct copy found for this title"
+   678→          }
+   679→          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   680→            isArchive
+   681→              ? "bg-emerald-600 text-white"
+   682→              : archiveState === "found"
+   683→                ? "bg-emerald-600/15 text-emerald-300 ring-1 ring-emerald-600/40 hover:bg-emerald-600/25"
+   684→                : "bg-white/5 text-zinc-600"
+   685→          } ${archiveState !== "found" ? "cursor-not-allowed" : ""}`}
+   686→        >
+   687→          <ShieldCheck className="h-3 w-3" />
+   688→          Direct
+   689→          {archiveState === "loading" && <span className="animate-pulse">…</span>}
+   690→        </button>
+   691→
+   692→        {servers.map((s, i) => {
+   693→          const active = activeIdx === i;
+   694→          const matchBadge =
+   695→            s.match === "verified"
+   696→              ? { label: "✓", hint: "Release verified for this exact title/episode" }
+   697→              : s.match === "pack"
+   698→                ? { label: "Season pack", hint: "Season pack — the requested episode is picked automatically" }
+   699→                : { label: "unverified", hint: "Could not verify the year/episode in this release name" };
+   700→          return (
+   701→            <button
+   702→              key={s.id}
+   703→              type="button"
+   704→              onClick={() => selectTorrent(i)}
+   705→              title={`${s.releaseName}\n${s.seeders} seeders · ${fmtSize(s.sizeBytes)} · ${s.provider}\n${matchBadge.hint}`}
+   706→              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+   707→                active
+   708→                  ? "bg-red-600 text-white"
+   709→                  : tried.includes(i)
+   710→                    ? "bg-white/5 text-zinc-600 hover:bg-white/10"
+   711→                    : "bg-white/8 text-zinc-300 hover:bg-white/15 hover:text-white"
+   712→              }`}
+   713→            >
+   714→              <Magnet className="h-3 w-3" />
+   715→              S{i + 1} · {s.quality}
+   716→              <span
+   717→                className={`hidden text-[9px] font-normal md:inline ${
+   718→                  s.match === "verified"
+   719→                    ? "text-emerald-400"
+   720→                    : s.match === "pack"
+   721→                      ? "text-sky-400"
+   722→                      : "text-amber-400"
+   723→                }`}
+   724→              >
+   725→                {matchBadge.label}
+   726→              </span>
+   727→              <span className="hidden text-[9px] font-normal text-zinc-500 lg:inline">
+   728→                {s.provider} · 👤{fmtSeeders(s.seeders)}
+   729→              </span>
+   730→            </button>
+   731→          );
+   732→        })}
+   733→
+   734→        {serversState === "loading" && (
+   735→          <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-zinc-500">
+   736→            <Loader2 className="h-3 w-3 animate-spin" /> Scanning torrent networks…
+   737→          </span>
+   738→        )}
+   739→      </div>
+   740→
+   741→      {/* every source found is dead — set expectations before playback stalls */}
+   742→      {serversState === "ready" && servers.length > 0 && servers.every((s) => s.seeders === 0) && (
+   743→        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
+   744→          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+   745→          Only dead torrents found for this episode right now (0 seeders on every
+   746→          source). Playback will likely fail — check back later; daily-show
+   747→          episodes usually get seeded within days.
+   748→        </div>
+   749→      )}
+   750→
+   751→      {/* failover banner */}
+   752→      {banner && (
+   753→        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 md:mx-5">
+   754→          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+   755→          {banner}
+   756→        </div>
+   757→      )}
+   758→
+   759→      {/* Main area */}
+   760→      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+   761→        <div className="flex min-w-0 flex-1 flex-col">
+   762→          <div className="relative w-full bg-black lg:flex-1">
+   763→            <div className="relative mx-auto aspect-video max-h-[calc(100vh-160px)] w-full max-w-[calc((100vh-160px)*16/9)]">
+   764→              {/* ---------- trailer fallback ---------- */}
+   765→              {showTrailer && trailer ? (
+   766→                <iframe
+   767→                  key={trailer.key}
+   768→                  src={`https://www.youtube-nocookie.com/embed/${trailer.key}?autoplay=1`}
+   769→                  title={`${title} trailer`}
+   770→                  allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+   771→                  allowFullScreen
+   772→                  className="h-full w-full border-0"
+   773→                />
+   774→              ) : isArchive && archive ? (
+   775→                /* ---------- Otama Direct: public-domain native stream ---------- */
+   776→                <>
+   777→                  <video
+   778→                    key={`${archive.identifier}-${videoNonce}`}
+   779→                    src={archive.fileUrl}
+   780→                    poster={img(item.backdrop_path, "w1280") ?? undefined}
+   781→                    controls
+   782→                    autoPlay
+   783→                    playsInline
+   784→                    preload="auto"
+   785→                    onCanPlay={handleCanPlay}
+   786→                    onPlaying={() => {
+   787→                      setVideoState("playing");
+   788→                      setNeedsTap(false);
+   789→                    }}
+   790→                    onError={() => {
+   791→                      setVideoState("error");
+   792→                      setExhausted(true);
+   793→                    }}
+   794→                    className="h-full w-full bg-black"
+   795→                  />
+   796→                  <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+   797→                    <ShieldCheck className="h-3 w-3" />{" "}
+   798→                    {archive.kind === "tv" ? "Ad-free · Direct episode" : "Ad-free · Public domain"}
+   799→                  </div>
+   800→                  <p className="absolute inset-x-3 bottom-2 truncate text-[10px] text-zinc-500">
+   801→                    {archive.title}
+   802→                    {archive.year ? ` (${archive.year})` : ""} · archive.org
+   803→                    {archive.kind === "movie" ? ` · ${archive.license}` : ""}
+   804→                  </p>
+   805→                </>
+   806→              ) : streamUrl ? (
+   807→                /* ---------- torrent stream: native video, HTTP Range, no iframe ---------- */
+   808→                <>
+   809→                  <video
+   810→                    ref={videoRef}
+   811→                    key={videoKey}
+   812→                    src={streamUrl}
+   813→                    poster={img(item.backdrop_path, "w1280") ?? undefined}
+   814→                    controls
+   815→                    autoPlay
+   816→                    playsInline
+   817→                    preload="auto"
+   818→                    onCanPlay={handleCanPlay}
+   819→                    onPlaying={() => {
+   820→                      setVideoState("playing");
+   821→                      setNeedsTap(false);
+   822→                    }}
+   823→                    onError={() => failover("Stream failed on this server")}
+   824→                    className="h-full w-full bg-black"
+   825→                  />
+   826→                  <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+   827→                    <ShieldCheck className="h-3 w-3" /> Ad-free · P2P direct
+   828→                  </div>
+   829→                  {videoState === "playing" && downloading && (
+   830→                    <div className="absolute bottom-2 left-3 flex items-center gap-2 rounded-full bg-black/70 px-2.5 py-1 text-[10px] font-semibold text-zinc-200 backdrop-blur">
+   831→                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+   832→                      P2P ↓ {Math.round((status?.progress ?? 0) * 100)}% · {fmtSpeed(status?.speed ?? 0)} ·{" "}
+   833→                      {status?.peers ?? 0} peers
+   834→                    </div>
+   835→                  )}
+   836→                </>
+   837→              ) : null}
+   838→
+   839→              {/* ---------- tap to play (browser blocked autoplay) ---------- */}
+   840→              {needsTap && !showTrailer && (
+   841→                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
+   842→                  <button
+   843→                    type="button"
+   844→                    onClick={() => {
+   845→                      videoRef.current?.play().catch(() => {});
+   846→                      setNeedsTap(false);
+   847→                    }}
+   848→                    aria-label="Play"
+   849→                    className="flex h-20 w-20 items-center justify-center rounded-full bg-red-600 text-white shadow-2xl transition hover:scale-105 hover:bg-red-500"
+   850→                  >
+   851→                    <Play className="h-9 w-9" />
+   852→                  </button>
+   853→                </div>
+   854→              )}
+   855→
+   856→              {/* ---------- connecting overlay ---------- */}
+   857→              {streamUrl && videoState === "loading" && !showTrailer && !isArchive && (
+   858→                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
+   859→                  <Loader2 className="h-10 w-10 animate-spin text-red-600" />
+   860→                  <p className="text-sm text-zinc-400">
+   861→                    Connecting to{" "}
+   862→                    <span className="font-semibold text-zinc-200">
+   863→                      {activeServer ? `S${activeIdx! + 1} · ${serverLabel(activeServer)}` : "best server"}
+   864→                    </span>
+   865→                    …
+   866→                  </p>
+   867→                  {activeServer && (
+   868→                    <p className="max-w-md truncate text-[11px] text-zinc-600">
+   869→                      {activeServer.releaseName} · {fmtSize(activeServer.sizeBytes)}
+   870→                    </p>
+   871→                  )}
+   872→                  {status && (status.progress ?? 0) > 0 && (
+   873→                    <div className="w-56">
+   874→                      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+   875→                        <div
+   876→                          className="h-full rounded-full bg-red-600 transition-all"
+   877→                          style={{ width: `${Math.max(2, (status.progress ?? 0) * 100)}%` }}
+   878→                        />
+   879→                      </div>
+   880→                      <p className="mt-1.5 text-[11px] text-zinc-400">
+   881→                        {Math.round((status.progress ?? 0) * 100)}% buffered ·{" "}
+   882→                        {fmtSpeed(status?.speed ?? 0)} · {status?.peers ?? 0} peers
+   883→                      </p>
+   884→                    </div>
+   885→                  )}
+   886→                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+   887→                    <button
+   888→                      type="button"
+   889→                      onClick={() => failover("Skipped")}
+   890→                      className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+   891→                    >
+   892→                      Next server
+   893→                    </button>
+   894→                    <button
+   895→                      type="button"
+   896→                      onClick={retryCurrent}
+   897→                      className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+   898→                    >
+   899→                      Retry
+   900→                    </button>
+   901→                  </div>
+   902→                </div>
+   903→              )}
+   904→
+   905→              {/* ---------- no sources panel ---------- */}
+   906→              {showNoSourcePanel && (
+   907→                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center">
+   908→                  <Magnet className="h-10 w-10 text-zinc-600" />
+   909→                  <div>
+   910→                    <p className="text-base font-bold text-white">
+   911→                      No playable source found for this episode yet
+   912→                    </p>
+   913→                    <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
+   914→                      We searched ThePirateBay, Torrentio, TorrentsCSV, BitSearch, EZTV and
+   915→                      archive.org — no healthy source for it right now. Brand-new episodes of
+   916→                      daily shows usually surface within hours to a few days. The episode list
+   917→                      and servers refresh automatically, so simply retry later.
+   918→                    </p>
+   919→                    {type === "tv" && noSourcesYet && autoRetries < 5 && episodeAired && (
+   920→                      <p
+   921→                        className="mx-auto mt-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-sky-300"
+   922→                        data-testid="auto-research-note"
+   923→                      >
+   924→                        <Loader2 className="h-3 w-3 animate-spin" />
+   925→                        Auto-checking again in ~90 s (attempt {autoRetries + 1} of 5) — the stream
+   926→                        will start on its own once a source appears
+   927→                      </p>
+   928→                    )}
+   929→                    {type === "tv" && latestAired && latestAired.episode_number !== episode && (
+   930→                      <button
+   931→                        type="button"
+   932→                        onClick={() =>
+   933→                          goEpisode(latestAired.season_number || season, latestAired.episode_number)
+   934→                        }
+   935→                        className="mx-auto mt-2 block text-[11px] font-semibold text-zinc-400 underline decoration-dotted transition hover:text-zinc-200"
+   936→                      >
+   937→                        Episode {latestAired.episode_number} (aired{" "}
+   938→                        {formatDate(latestAired.air_date) || "recently"}) — try it, older
+   939→                        episodes are usually seeded first
+   940→                      </button>
+   941→                    )}
+   942→                  </div>
+   943→                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+   944→                    <button
+   945→                      type="button"
+   946→                      onClick={() => setSearchNonce((n) => n + 1)}
+   947→                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+   948→                    >
+   949→                      <RefreshCw className="h-3.5 w-3.5" /> Search again
+   950→                    </button>
+   951→                    {trailer && (
+   952→                      <button
+   953→                        type="button"
+   954→                        onClick={playTrailer}
+   955→                        className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-500"
+   956→                      >
+   957→                        <Play className="h-3.5 w-3.5" /> Play trailer
+   958→                      </button>
+   959→                    )}
+   960→                  </div>
+   961→                </div>
+   962→              )}
+   963→
+   964→              {/* ---------- all servers exhausted ---------- */}
+   965→              {showFailPanel && (
+   966→                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center">
+   967→                  <AlertTriangle className="h-10 w-10 text-amber-400" />
+   968→                  <div>
+   969→                    <p className="text-base font-bold text-white">
+   970→                      None of the {servers.length || "available"} servers could start
+   971→                    </p>
+   972→                    <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-zinc-400">
+   973→                      Every source was tried automatically. Try again — swarms change by the
+   974→                      minute — or watch the trailer while the torrents get more seeders.
+   975→                    </p>
+   976→                  </div>
+   977→                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+   978→                    <button
+   979→                      type="button"
+   980→                      onClick={retryAll}
+   981→                      className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20"
+   982→                    >
+   983→                      <RefreshCw className="h-3.5 w-3.5" /> Retry all
+   984→                    </button>
+   985→                    {trailer && (
+   986→                      <button
+   987→                        type="button"
+   988→                        onClick={playTrailer}
+   989→                        className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-500"
+   990→                      >
+   991→                        <Play className="h-3.5 w-3.5" /> Play trailer
+   992→                      </button>
+   993→                    )}
+   994→                  </div>
+   995→                </div>
+   996→              )}
+   997→            </div>
+   998→          </div>
+   999→
+  1000→          {/* Controls under player */}
+  1001→          <div className="flex items-center justify-center gap-3 border-t border-white/5 px-4 py-3">
+  1002→            {type === "tv" ? (
+  1003→              <>
+  1004→                <button
+  1005→                  type="button"
+  1006→                  onClick={prevEpisode}
+  1007→                  disabled={season === 1 && episode === 1}
+  1008→                  className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20 disabled:opacity-30"
+  1009→                >
+  1010→                  <ChevronLeft className="h-3.5 w-3.5" /> Prev Ep
+  1011→                </button>
+  1012→                <span className="text-xs text-zinc-500">
+  1013→                  Season {season} · Episode {episode}
+  1014→                </span>
+  1015→                <button
+  1016→                  type="button"
+  1017→                  onClick={nextEpisode}
+  1018→                  disabled={
+  1019→                    episode === maxEpisode &&
+  1020→                    !seasonsList.some((s) => s.season_number === season + 1)
+  1021→                  }
+  1022→                  className="flex items-center gap-1.5 rounded-md bg-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-white/20 disabled:opacity-30"
+  1023→                >
+  1024→                  Next Ep <ChevronRight className="h-3.5 w-3.5" />
+  1025→                </button>
+  1026→              </>
+  1027→            ) : (
+  1028→              <p className="flex items-center gap-2 text-center text-xs text-zinc-600">
+  1029→                <Info className="h-3.5 w-3.5 shrink-0" />
+  1030→                <span>
+  1031→                  <span className="font-semibold text-zinc-400">Auto</span> picks the best-seeded
+  1032→                  source and fails over automatically. Playback is a direct P2P stream on our own
+  1033→                  player — <span className="text-emerald-400">no ad networks, ever</span>.
+  1034→                </span>
+  1035→              </p>
+  1036→            )}
+  1037→          </div>
+  1038→        </div>
+  1039→
+  1040→        {/* Episode sidebar (TV) */}
+  1041→        {type === "tv" && (
+  1042→          <aside
+  1043→            className={`${
+  1044→              showEpisodes ? "flex" : "hidden"
+  1045→            } max-h-full w-full shrink-0 flex-col border-t border-white/10 bg-[#0d0d14] lg:flex lg:w-[340px] lg:border-l lg:border-t-0`}
+  1046→          >
+  1047→            <div className="border-b border-white/5 p-3">
+  1048→              <div className="flex items-center justify-between">
+  1049→                <h3 className="text-sm font-bold text-white">Episodes</h3>
+  1050→                <button
+  1051→                  type="button"
+  1052→                  onClick={() => setShowEpisodes(false)}
+  1053→                  className="text-zinc-500 hover:text-white lg:hidden"
+  1054→                  aria-label="Hide episode list"
+  1055→                >
+  1056→                  <X className="h-4 w-4" />
+  1057→                </button>
+  1058→              </div>
+  1059→              <select
+  1060→                value={season}
+  1061→                onChange={(e) => {
+  1062→                  setSeason(Number(e.target.value));
+  1063→                  setEpLoading(true);
+  1064→                }}
+  1065→                aria-label="Select season"
+  1066→                className="mt-2 w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 focus:border-red-600 focus:outline-none"
+  1067→              >
+  1068→                {seasonsList.length > 0
+  1069→                  ? seasonsList.map((s) => (
+  1070→                      <option key={s.id} value={s.season_number} className="bg-[#12121a]">
+  1071→                        {s.name} ({s.episode_count} eps)
+  1072→                      </option>
+  1073→                    ))
+  1074→                  : [...Array(20)].map((_, i) => (
+  1075→                      <option key={i + 1} value={i + 1} className="bg-[#12121a]">
+  1076→                        Season {i + 1}
+  1077→                      </option>
+  1078→                    ))}
+  1079→              </select>
+  1080→              {latestAired && (
+  1081→                <button
+  1082→                  type="button"
+  1083→                  onClick={() =>
+  1084→                    goEpisode(latestAired.season_number || season, latestAired.episode_number)
+  1085→                  }
+  1086→                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-red-600/20 px-3 py-1.5 text-xs font-semibold text-red-300 ring-1 ring-red-600/40 transition hover:bg-red-600/30"
+  1087→                >
+  1088→                  <FastForward className="h-3.5 w-3.5" />
+  1089→                  Jump to latest · E{latestAired.episode_number}
+  1090→                  {latestAired.air_date ? ` · ${formatDate(latestAired.air_date)}` : ""}
+  1091→                </button>
+  1092→              )}
+  1093→            </div>
+  1094→
+  1095→            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+  1096→              {epLoading && (
+  1097→                <div className="space-y-2 p-2">
+  1098→                  {[...Array(6)].map((_, i) => (
+  1099→                    <div key={i} className="h-16 animate-pulse rounded-lg bg-zinc-800/60" />
+  1100→                  ))}
+  1101→                </div>
+  1102→              )}
+  1103→              {!epLoading &&
+  1104→                episodes.map((ep) => {
+  1105→                  const active = ep.episode_number === episode;
+  1106→                  const aired = epAired(ep);
+  1107→                  // TMDB fills brand-new daily-show episodes with "TBD"
+  1108→                  // (Bigg Boss S20E55 airs with no title yet) — show a real
+  1109→                  // label and the broadcast date instead
+  1110→                  const name =
+  1111→                    ep.name && ep.name !== "TBD" ? ep.name : `Episode ${ep.episode_number}`;
+  1112→                  const isNew =
+  1113→                    !!ep.air_date &&
+  1114→                    ep.air_date <= todayYmd &&
+  1115→                    (Date.parse(todayYmd) - Date.parse(ep.air_date)) / 86400000 <= 2;
+  1116→                  return (
+  1117→                    <button
+  1118→                      key={`${ep.id}-${ep.episode_number}`}
+  1119→                      type="button"
+  1120→                      onClick={() => goEpisode(season, ep.episode_number)}
+  1121→                      disabled={!aired}
+  1122→                      title={
+  1123→                        aired
+  1124→                          ? undefined
+  1125→                          : `Airs ${formatDate(ep.air_date) || "TBA"} — not playable yet`
+  1126→                      }
+  1127→                      className={`mb-1.5 flex w-full items-start gap-3 rounded-lg p-2 text-left transition ${
+  1128→                        active
+  1129→                          ? "bg-red-600/20 ring-1 ring-red-600/60"
+  1130→                          : aired
+  1131→                            ? "ring-1 ring-transparent hover:bg-white/5"
+  1132→                            : "cursor-not-allowed opacity-45 ring-1 ring-transparent"
+  1133→                      }`}
+  1134→                    >
+  1135→                      <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-md bg-zinc-800">
+  1136→                        {img(ep.still_path, "w300") ? (
+  1137→                          <img
+  1138→                            src={img(ep.still_path, "w300") as string}
+  1139→                            alt={ep.name}
+  1140→                            loading="lazy"
+  1141→                            className="h-full w-full object-cover"
+  1142→                          />
+  1143→                        ) : (
+  1144→                          <div className="flex h-full w-full items-center justify-center text-xs text-zinc-600">
+  1145→                            E{ep.episode_number}
+  1146→                          </div>
+  1147→                        )}
+  1148→                        {active && (
+  1149→                          <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-red-400">
+  1150→                            <ChevronRight className="h-5 w-5" />
+  1151→                          </span>
+  1152→                        )}
+  1153→                      </div>
+  1154→                      <div className="min-w-0 flex-1">
+  1155→                        <p
+  1156→                          className={`truncate text-xs font-semibold ${
+  1157→                            active ? "text-red-400" : "text-zinc-200"
+  1158→                          }`}
+  1159→                        >
+  1160→                          {ep.episode_number}. {name}
+  1161→                          {isNew && (
+  1162→                            <span className="ml-1.5 rounded bg-red-600 px-1 py-0.5 align-middle text-[9px] font-bold uppercase text-white">
+  1163→                              New
+  1164→                            </span>
+  1165→                          )}
+  1166→                        </p>
+  1167→                        <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
+  1168→                          {!aired
+  1169→                            ? `Airs ${formatDate(ep.air_date) || "TBA"}`
+  1170→                            : `Aired ${formatDate(ep.air_date) || "—"}${
+  1171→                                ep.overview ? "" : " · details pending"
+  1172→                              }`}
+  1173→                        </p>
+  1174→                        {aired && ep.overview && (
+  1175→                          <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-zinc-600">
+  1176→                            {ep.overview}
+  1177→                          </p>
+  1178→                        )}
+  1179→                      </div>
+  1180→                    </button>
+  1181→                  );
+  1182→                })}
+  1183→              {!epLoading && !episodes.length && (
+  1184→                <p className="p-4 text-center text-xs text-zinc-600">
+  1185→                  No episode data for this season yet. New episodes appear here automatically
+  1186→                  as soon as they are published.
+  1187→                </p>
+  1188→              )}
+  1189→            </div>
+  1190→          </aside>
+  1191→        )}
+  1192→      </div>
+  1193→    </div>
+  1194→  );
+  1195→}
+  1196→

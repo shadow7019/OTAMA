@@ -1,0 +1,1024 @@
+     1→// Catalog data — all titles are public domain or Creative Commons licensed films
+     2→// streamed from the Internet Archive (verified sources).
+     3→// All synopses are original descriptions written for this project.
+     4→
+     5→export type Episode = {
+     6→  id: string;
+     7→  title: string;
+     8→  season: number;
+     9→  episode: number;
+    10→  /** archive.org item identifier */
+    11→  iaId: string;
+    12→  /** file path inside the item (may include a subfolder) */
+    13→  iaFile: string;
+    14→  runtime: number; // minutes
+    15→  synopsis: string;
+    16→};
+    17→
+    18→export type Title = {
+    19→  id: string;
+    20→  slug: string;
+    21→  name: string;
+    22→  year: number;
+    23→  kind: "movie" | "show" | "anime";
+    24→  type: "Movie" | "TV Series" | "Anime" | "Animation";
+    25→  genres: string[];
+    26→  language: string;
+    27→  country: string;
+    28→  rating: number; // 0-10
+    29→  runtime: number; // minutes (for movies) or avg episode length
+    30→  poster: string;
+    31→  backdrop?: string;
+    32→  tagline: string;
+    33→  synopsis: string;
+    34→  director: string;
+    35→  cast: string[];
+    36→  /** matched quality labels derived from source */
+    37→  quality: string[];
+    38→  accent: string; // hex used for gradients/fallback
+    39→  iaId: string;
+    40→  iaFile: string;
+    41→  episodes?: Episode[];
+    42→};
+    43→
+    44→export const GENRES = [
+    45→  "Action",
+    46→  "Adventure",
+    47→  "Animation",
+    48→  "Comedy",
+    49→  "Drama",
+    50→  "Family",
+    51→  "Fantasy",
+    52→  "Horror",
+    53→  "Mystery",
+    54→  "Romance",
+    55→  "Sci-Fi",
+    56→  "Thriller",
+    57→] as const;
+    58→
+    59→export const LANGUAGES = [
+    60→  "English",
+    61→  "Silent",
+    62→  "Japanese",
+    63→] as const;
+    64→
+    65→const P = (slug: string) => `/posters/${slug}.png`;
+    66→const B = (slug: string) => `/backdrops/${slug}.png`;
+    67→
+    68→export const CATALOG: Title[] = [
+    69→  // ------------------------- MOVIES -------------------------
+    70→  {
+    71→    id: "t-notld",
+    72→    slug: "night-of-the-living-dead",
+    73→    name: "Night of the Living Dead",
+    74→    year: 1968,
+    75→    kind: "movie",
+    76→    type: "Movie",
+    77→    genres: ["Horror", "Thriller"],
+    78→    language: "English",
+    79→    country: "United States",
+    80→    rating: 7.9,
+    81→    runtime: 96,
+    82→    poster: P("night-of-the-living-dead"),
+    83→    backdrop: B("night-of-the-living-dead-wide"),
+    84→    tagline: "They won't stay dead.",
+    85→    synopsis:
+    86→      "Seven strangers barricade themselves inside a rural Pennsylvania farmhouse as the recently dead rise and attack the living. As radio reports fray and the barricades strain, the real horror turns out to be the people inside, whose fear and suspicion prove as dangerous as what shambles outside. George A. Romero's black-and-white landmark invented the modern zombie film and still hits with savage, documentary-like force.",
+    87→    director: "George A. Romero",
+    88→    cast: ["Duane Jones", "Judith O'Dea", "Karl Hardman", "Marilyn Eastman"],
+    89→    quality: ["HD", "CC"],
+    90→    accent: "#5f7d54",
+    91→    iaId: "night-of-the-living-dead-1968-hd",
+    92→    iaFile: "Night Of The Living Dead (1968) [HD].mp4",
+    93→  },
+    94→  {
+    95→    id: "t-metropolis",
+    96→    slug: "metropolis",
+    97→    name: "Metropolis",
+    98→    year: 1927,
+    99→    kind: "movie",
+   100→    type: "Movie",
+   101→    genres: ["Sci-Fi", "Drama"],
+   102→    language: "Silent",
+   103→    country: "Germany",
+   104→    rating: 8.3,
+   105→    runtime: 148,
+   106→    poster: P("metropolis"),
+   107→    backdrop: B("metropolis-wide"),
+   108→    tagline: "The fate of civilization rests in their hands.",
+   109→    synopsis:
+   110→      "In a towering future city, the pampered son of the ruler discovers an underground world of workers who keep the machines alive. Fritz Lang's silent epic fuses art-deco spectacle with a story of class division, machine worship and mediation between the head and the hands. Its robot double, skyscraper skylines and mass choreography remain among the most influential images in all of science fiction.",
+   111→    director: "Fritz Lang",
+   112→    cast: ["Brigitte Helm", "Gustav Fröhlich", "Alfred Abel", "Rudolf Klein-Rogge"],
+   113→    quality: ["4K", "Restored"],
+   114→    accent: "#c8a24a",
+   115→    iaId: "metropolis-1927-full-movie-4-k-color-remastered-2023-colorized-with-gottfried-huppertz-score",
+   116→    iaFile: "Metropolis (1927) Full Movie _ 4K Color Remastered_ 2023 Colorized with Gottfried Huppertz Score.mp4",
+   117→  },
+   118→  {
+   119→    id: "t-nosferatu",
+   120→    slug: "nosferatu",
+   121→    name: "Nosferatu",
+   122→    year: 1922,
+   123→    kind: "movie",
+   124→    type: "Movie",
+   125→    genres: ["Horror", "Fantasy"],
+   126→    language: "Silent",
+   127→    country: "Germany",
+   128→    rating: 7.9,
+   129→    runtime: 94,
+   130→    poster: P("nosferatu"),
+   131→    tagline: "A symphony of horror.",
+   132→    synopsis:
+   133→      "An estate agent travels to the Carpathian mountains to close a property sale with a reclusive count, and carries a plague back home with him. F. W. Murnau's unofficial retelling of Dracula trades aristocratic charm for pure pestilence: Max Schreck's rat-toothed predator stalks expressionist shadows toward one of cinema's most chilling final images. The blueprint for every vampire film that followed.",
+   134→    director: "F. W. Murnau",
+   135→    cast: ["Max Schreck", "Gustav von Wangenheim", "Greta Schröder"],
+   136→    quality: ["Restored"],
+   137→    accent: "#5d7a58",
+   138→    iaId: "nosferatu-1922",
+   139→    iaFile: "Nosferatu (1922).mp4",
+   140→  },
+   141→  {
+   142→    id: "t-caligari",
+   143→    slug: "the-cabinet-of-dr-caligari",
+   144→    name: "The Cabinet of Dr. Caligari",
+   145→    year: 1920,
+   146→    kind: "movie",
+   147→    type: "Movie",
+   148→    genres: ["Horror", "Mystery"],
+   149→    language: "Silent",
+   150→    country: "Germany",
+   151→    rating: 8.0,
+   152→    runtime: 77,
+   153→    poster: P("the-cabinet-of-dr-caligari"),
+   154→    tagline: "You must become Caligari.",
+   155→    synopsis:
+   156→      "A fairground hypnotist and his sleepwalking sideshow act arrive in a town where murders begin at night. Told through crooked painted sets, spliced windows and oblique stairways, the story folds into an unreliable narration that helped invent the psychological twist ending. The single most recognizable visual style of German expressionism, and still a vertigo-inducing watch a century later.",
+   157→    director: "Robert Wiene",
+   158→    cast: ["Werner Krauss", "Conrad Veidt", "Friedrich Fehér"],
+   159→    quality: ["Restored"],
+   160→    accent: "#7a9e7e",
+   161→    iaId: "the-cabinet-of-dr-caligari",
+   162→    iaFile: "The Cabinet Of Dr Caligari.mp4",
+   163→  },
+   164→  {
+   165→    id: "t-sherlock-jr",
+   166→    slug: "sherlock-jr",
+   167→    name: "Sherlock Jr.",
+   168→    year: 1924,
+   169→    kind: "movie",
+   170→    type: "Movie",
+   171→    genres: ["Comedy", "Action"],
+   172→    language: "Silent",
+   173→    country: "United States",
+   174→    rating: 8.2,
+   175→    runtime: 45,
+   176→    poster: P("sherlock-jr"),
+   177→    tagline: "The greatest detective in motion pictures… almost.",
+   178→    synopsis:
+   179→      "A daydreaming film projectionist, framed for a theft he didn't commit, falls asleep in the booth and walks straight into the movie he is screening. Buster Keaton's shorts-length masterpiece turns cinema itself into a playground: he steps through edits, rides motorcycles over collapsing bridges and executes stunts that remain jaw-dropping a century on. Brief, breezy and absolutely essential.",
+   180→    director: "Buster Keaton",
+   181→    cast: ["Buster Keaton", "Kathryn McGuire", "Joe Keaton"],
+   182→    quality: ["Restored"],
+   183→    accent: "#b09a6a",
+   184→    iaId: "sherlock-jr_202506",
+   185→    iaFile: "Sherlock Jr.mp4",
+   186→  },
+   187→  {
+   188→    id: "t-the-kid",
+   189→    slug: "the-kid",
+   190→    name: "The Kid",
+   191→    year: 1921,
+   192→    kind: "movie",
+   193→    type: "Movie",
+   194→    genres: ["Comedy", "Drama", "Family"],
+   195→    language: "Silent",
+   196→    country: "United States",
+   197→    rating: 8.2,
+   198→    runtime: 68,
+   199→    poster: P("the-kid"),
+   200→    tagline: "A picture with a smile — and perhaps, a tear.",
+   201→    synopsis:
+   202→      "A drifting tramp raises an abandoned child as his own, and the two scamper through the city as an inseparable team of small hustlers. Chaplin's first feature balances slapstick with genuine heart, building to a rooftop chase and a reunion that still lands. The film that proved the Little Tramp could carry a full-length story without losing an ounce of charm.",
+   203→    director: "Charles Chaplin",
+   204→    cast: ["Charles Chaplin", "Jackie Coogan", "Edna Purviance"],
+   205→    quality: ["Restored"],
+   206→    accent: "#b08d5a",
+   207→    iaId: "the-kid-1921_202609",
+   208→    iaFile: "The Kid 1921.mp4",
+   209→  },
+   210→  {
+   211→    id: "t-the-general",
+   212→    slug: "the-general",
+   213→    name: "The General",
+   214→    year: 1926,
+   215→    kind: "movie",
+   216→    type: "Movie",
+   217→    genres: ["Comedy", "Action", "Adventure"],
+   218→    language: "Silent",
+   219→    country: "United States",
+   220→    rating: 8.1,
+   221→    runtime: 79,
+   222→    poster: P("the-general"),
+   223→    tagline: "He stole his girl, his engine — and the show.",
+   224→    synopsis:
+   225→      "A railway engineer rejected by the army chases his stolen locomotive — and his sweetheart — straight through enemy lines. Built around real trains, collapsing bridges and Keaton's deadpan nerve, the film is one long, escalating action sequence engineered with comic precision. Widely called the greatest silent comedy ever made, and arguably the first great action movie.",
+   226→    director: "Buster Keaton",
+   227→    cast: ["Buster Keaton", "Marion Mack", "Glen Cavender"],
+   228→    quality: ["HD"],
+   229→    accent: "#8a6f4d",
+   230→    iaId: "TheGeneral1926",
+   231→    iaFile: "The_General_1926_720p_512kb.mp4",
+   232→  },
+   233→  {
+   234→    id: "t-his-girl-friday",
+   235→    slug: "his-girl-friday",
+   236→    name: "His Girl Friday",
+   237→    year: 1940,
+   238→    kind: "movie",
+   239→    type: "Movie",
+   240→    genres: ["Comedy", "Romance", "Drama"],
+   241→    language: "English",
+   242→    country: "United States",
+   243→    rating: 7.9,
+   244→    runtime: 92,
+   245→    poster: P("his-girl-friday"),
+   246→    tagline: "Nobody talks faster than a newspaperman on a deadline.",
+   247→    synopsis:
+   248→      "A newspaper editor will do anything — lie, stall, kidnap — to keep his star reporter and ex-wife from quitting the paper and remarrying. Hawks' newsroom classic overlaps dialogue like a woodwind ensemble, letting Cary Grant and Rosalind Russell talk rings around everyone in the building. The fastest screwball comedy of Hollywood's golden age, and still the gold standard for banter.",
+   249→    director: "Howard Hawks",
+   250→    cast: ["Cary Grant", "Rosalind Russell", "Ralph Bellamy"],
+   251→    quality: ["HD"],
+   252→    accent: "#b34a3e",
+   253→    iaId: "his_girl_friday",
+   254→    iaFile: "his_girl_friday_512kb.mp4",
+   255→  },
+   256→  {
+   257→    id: "t-charade",
+   258→    slug: "charade",
+   259→    name: "Charade",
+   260→    year: 1963,
+   261→    kind: "movie",
+   262→    type: "Movie",
+   263→    genres: ["Mystery", "Romance", "Thriller"],
+   264→    language: "English",
+   265→    country: "United States",
+   266→    rating: 7.8,
+   267→    runtime: 113,
+   268→    poster: P("charade"),
+   269→    backdrop: B("charade-wide"),
+   270→    tagline: "The game is dangerous. The prize is deadly.",
+   271→    synopsis:
+   272→      "A young widow in Paris learns her late husband's fortune is missing, and that every charming stranger circling her may be a murderer wearing a different name. Cary Grant charms, Audrey Hepburn glides, and the plot reshuffles its suspects with each scene like a card sharp. Often called the best Hitchcock film Hitchcock never made — with a Mancini score to die for.",
+   273→    director: "Stanley Donen",
+   274→    cast: ["Cary Grant", "Audrey Hepburn", "Walter Matthau"],
+   275→    quality: ["HD"],
+   276→    accent: "#c96a6e",
+   277→    iaId: "charade-1963-cary-grant-audrey-hepburn-comedy-mystery-romance-thriller-full-movie",
+   278→    iaFile: "Charade_READY.mp4",
+   279→  },
+   280→  {
+   281→    id: "t-plan-9",
+   282→    slug: "plan-9-from-outer-space",
+   283→    name: "Plan 9 from Outer Space",
+   284→    year: 1957,
+   285→    kind: "movie",
+   286→    type: "Movie",
+   287→    genres: ["Sci-Fi", "Horror"],
+   288→    language: "English",
+   289→    country: "United States",
+   290→    rating: 4.2,
+   291→    runtime: 79,
+   292→    poster: P("plan-9-from-outer-space"),
+   293→    tagline: "Gloriously, unmissably bad.",
+   294→    synopsis:
+   295→      "Aliens resurrect the town cemetery in their ninth attempt to conquer Earth, and flying saucers made of paper plates patrol the skies. Ed Wood's masterpiece of ineptitude — wobbly tombstones, incoherent stock footage, a leading man's role played by a chiropractor — has earned its crown as the most lovable bad movie ever made. Bring friends; it's better that way.",
+   296→    director: "Ed Wood",
+   297→    cast: ["Béla Lugosi", "Tor Johnson", "Vampira"],
+   298→    quality: ["HD", "So Bad It's Good"],
+   299→    accent: "#5a7d7a",
+   300→    iaId: "plan-9-from-outer-space-1957-by-ed-wood",
+   301→    iaFile: "Plan.9.From.Outer.Space.1957.1080p.BluRay.x264.AAC-[YTS.MX].mp4",
+   302→  },
+   303→  {
+   304→    id: "t-little-shop",
+   305→    slug: "the-little-shop-of-horrors",
+   306→    name: "The Little Shop of Horrors",
+   307→    year: 1960,
+   308→    kind: "movie",
+   309→    type: "Movie",
+   310→    genres: ["Comedy", "Horror"],
+   311→    language: "English",
+   312→    country: "United States",
+   313→    rating: 6.3,
+   314→    runtime: 72,
+   315→    poster: P("the-little-shop-of-horrors"),
+   316→    tagline: "Feed me!",
+   317→    synopsis:
+   318→      "A hapless flower-shop clerk breeds a talking plant with an appetite that gets progressively less botanical. Roger Corman shot the entire cult comedy in two days on standing sets, and its gallery of weirdos — including a young Jack Nicholson in a milk-drinking cameo — has kept midnight audiences howling for decades. Cheap, quick and absolutely alive.",
+   319→    director: "Roger Corman",
+   320→    cast: ["Jonathan Haze", "Jackie Joseph", "Jack Nicholson"],
+   321→    quality: ["HD"],
+   322→    accent: "#6d8f4e",
+   323→    iaId: "TheLittleShopOfHorrors",
+   324→    iaFile: "The Little Shop of Horrors.mp4",
+   325→  },
+   326→  {
+   327→    id: "t-gulliver",
+   328→    slug: "gullivers-travels",
+   329→    name: "Gulliver's Travels",
+   330→    year: 1939,
+   331→    kind: "movie",
+   332→    type: "Movie",
+   333→    genres: ["Animation", "Family", "Adventure", "Fantasy"],
+   334→    language: "English",
+   335→    country: "United States",
+   336→    rating: 6.5,
+   337→    runtime: 76,
+   338→    poster: P("gullivers-travels"),
+   339→    tagline: "A giant among cartoons.",
+   340→    synopsis:
+   341→      "A shipwrecked sailor wakes on the shore of Lilliput, where two kingdoms are ready to go to war over which wedding song the princess should marry to. The Fleischer Studios answer to Disney swings for the fences with rotoscoped giants, swing-era songs and dazzling model-made storms. The first full-length cartoon to challenge the Mouse at the box office.",
+   342→    director: "Dave Fleischer",
+   343→    cast: ["Jessica Dragonette", "Lanny Ross", "Pinto Colvig"],
+   344→    quality: ["Restored"],
+   345→    accent: "#4e8f6d",
+   346→    iaId: "gullivers-travels-1939-fleischer",
+   347→    iaFile: "Gulliver's Travels (1939).mp4",
+   348→  },
+   349→  // ------------------------- ANIMATION (open movies + classic cartoons) -------------------------
+   350→  {
+   351→    id: "t-bbb",
+   352→    slug: "big-buck-bunny",
+   353→    name: "Big Buck Bunny",
+   354→    year: 2008,
+   355→    kind: "movie",
+   356→    type: "Animation",
+   357→    genres: ["Animation", "Comedy", "Family"],
+   358→    language: "Silent",
+   359→    country: "Netherlands",
+   360→    rating: 7.4,
+   361→    runtime: 10,
+   362→    poster: P("big-buck-bunny"),
+   363→    backdrop: B("big-buck-bunny-wide"),
+   364→    tagline: "Don't bully the bunny.",
+   365→    synopsis:
+   366→      "A gentle giant rabbit has his idyllic morning ruined by three cruel rodents, and responds with elaborately poetic payback. The Blender Institute's first open movie put a professional-grade animation pipeline in everyone's hands — every frame is free to remix. Ten minutes of sunshine, slapstick and perfectly timed cartoon karma.",
+   367→    director: "Sacha Goedegebure",
+   368→    cast: ["Blender Foundation Team"],
+   369→    quality: ["HD", "CC-BY"],
+   370→    accent: "#5f9e57",
+   371→    iaId: "big-buck-bunny-720p-h264_202403",
+   372→    iaFile: "big buck bunny 720p h264.mp4",
+   373→  },
+   374→  {
+   375→    id: "t-sintel",
+   376→    slug: "sintel",
+   377→    name: "Sintel",
+   378→    year: 2010,
+   379→    kind: "movie",
+   380→    type: "Animation",
+   381→    genres: ["Animation", "Fantasy", "Adventure", "Drama"],
+   382→    language: "Silent",
+   383→    country: "Netherlands",
+   384→    rating: 7.6,
+   385→    runtime: 15,
+   386→    poster: P("sintel"),
+   387→    backdrop: B("sintel-wide"),
+   388→    tagline: "A quest across a lifetime.",
+   389→    synopsis:
+   390→      "A lonely wanderer nurses an injured dragon hatchling back to health, only to have it stolen from her — so begins a journey that consumes her youth. The Blender Foundation's third open movie packs an entire epic trilogy of heartbreak into a quarter of an hour, ending on a note most features wouldn't dare. Gorgeous, wordless-scale fantasy filmmaking.",
+   391→    director: "Colin Levy",
+   392→    cast: ["Halina Reijn", "Thom Hoffman"],
+   393→    quality: ["HD", "CC-BY"],
+   394→    accent: "#3f7d8c",
+   395→    iaId: "sintel_202207",
+   396→    iaFile: "data/sintel.mp4",
+   397→  },
+   398→  {
+   399→    id: "t-elephants-dream",
+   400→    slug: "elephants-dream",
+   401→    name: "Elephants Dream",
+   402→    year: 2006,
+   403→    kind: "movie",
+   404→    type: "Animation",
+   405→    genres: ["Animation", "Sci-Fi", "Fantasy"],
+   406→    language: "Silent",
+   407→    country: "Netherlands",
+   408→    rating: 6.9,
+   409→    runtime: 11,
+   410→    poster: P("elephants-dream"),
+   411→    tagline: "Two men, one machine, a thousand doors.",
+   412→    synopsis:
+   413→      "Two explorers wander a vast living machine of corridors, pipes and doors that rewrites itself around them — one sees wonder, the other sees menace. The world's first open movie is equal parts art installation and riddle, dreamt up by the Blender community. A dense, dreamlike eleven minutes that rewards a second watch immediately.",
+   414→    director: "Bassam Kurdali",
+   415→    cast: ["Tygo Gernandt", "Cas Jansen"],
+   416→    quality: ["HD", "CC-BY"],
+   417→    accent: "#4a7d8a",
+   418→    iaId: "elephants-dream",
+   419→    iaFile: "ElephantsDream.mp4",
+   420→  },
+   421→  {
+   422→    id: "t-tears-of-steel",
+   423→    slug: "tears-of-steel",
+   424→    name: "Tears of Steel",
+   425→    year: 2012,
+   426→    kind: "movie",
+   427→    type: "Animation",
+   428→    genres: ["Animation", "Sci-Fi", "Thriller"],
+   429→    language: "English",
+   430→    country: "Netherlands",
+   431→    rating: 6.6,
+   432→    runtime: 12,
+   433→    poster: P("tears-of-steel"),
+   434→    tagline: "The future needs a second chance.",
+   435→    synopsis:
+   436→      "In a robot-ravaged future Amsterdam, a team of scientists recreates a decades-old lovers' quarrel hoping to prevent the machine uprising. The Blender Foundation's live-action/VFX hybrid turns a breakup into an apocalypse, staged on real locations with open-source visual effects. A short, sharp experiment in do-it-yourself blockbuster craft.",
+   437→    director: "Ian Hubert",
+   438→    cast: ["Derek de Lint", "Sergio Hasselbaink", "Rogier Schippers"],
+   439→    quality: ["HD", "CC-BY"],
+   440→    accent: "#5a6f8c",
+   441→    iaId: "Tears-of-Steel",
+   442→    iaFile: "tears_of_steel_720p.mp4",
+   443→  },
+   444→  {
+   445→    id: "t-cosmos-laundromat",
+   446→    slug: "cosmos-laundromat",
+   447→    name: "Cosmos Laundromat: First Cycle",
+   448→    year: 2015,
+   449→    kind: "movie",
+   450→    type: "Animation",
+   451→    genres: ["Animation", "Comedy", "Fantasy"],
+   452→    language: "Silent",
+   453→    country: "Netherlands",
+   454→    rating: 7.1,
+   455→    runtime: 12,
+   456→    poster: P("cosmos-laundromat"),
+   457→    tagline: "Wish you were dead? Wish again.",
+   458→    synopsis:
+   459→      "A suicidal sheep on a desolate island is talked out of ending it all by a strange salesman who offers him unlimited lives. Blender's wildest open movie pitches existential comedy and psychedelic shape-shifting against gorgeous windswept coastlines. The first chapter of an ambitious anthology — and a hell of a sales pitch.",
+   460→    director: "Mathieu Auvray",
+   461→    cast: ["Pierre Bokma", "Reinout Scholten van Aschat"],
+   462→    quality: ["HD", "CC-BY"],
+   463→    accent: "#c98a4a",
+   464→    iaId: "cosmos-laundromat-first-cycle",
+   465→    iaFile: "Cosmos Laundromat - First Cycle.mp4",
+   466→  },
+   467→  {
+   468→    id: "t-caminandes",
+   469→    slug: "caminandes-llamigos",
+   470→    name: "Caminandes 3: Llamigos",
+   471→    year: 2016,
+   472→    kind: "movie",
+   473→    type: "Animation",
+   474→    genres: ["Animation", "Comedy", "Family"],
+   475→    language: "Silent",
+   476→    country: "Netherlands",
+   477→    rating: 7.2,
+   478→    runtime: 3,
+   479→    poster: P("caminandes-llamigos"),
+   480→    tagline: "Llama vs. penguin: the frost awakens.",
+   481→    synopsis:
+   482→      "A dim-witted llama and a scheming penguin face off across a snowy Patagonian road for supremacy over the last berry bush. The third Caminandes short is a two-and-a-half-minute masterclass in cartoon timing, told entirely without words. Winter has never been this adorable.",
+   483→    director: "Pablo Vazquez",
+   484→    cast: ["Blender Foundation Team"],
+   485→    quality: ["HD", "CC-BY"],
+   486→    accent: "#7aa8c9",
+   487→    iaId: "caminandes-3-llamigos",
+   488→    iaFile: "2_Caminandes3_Llamigos_1080p_vp9.ogv",
+   489→  },
+   490→  {
+   491→    id: "t-superman-mechanical",
+   492→    slug: "superman-mechanical-monsters",
+   493→    name: "Superman: The Mechanical Monsters",
+   494→    year: 1941,
+   495→    kind: "movie",
+   496→    type: "Animation",
+   497→    genres: ["Animation", "Action", "Sci-Fi", "Adventure"],
+   498→    language: "English",
+   499→    country: "United States",
+   500→    rating: 7.6,
+   501→    runtime: 10,
+   502→    poster: P("superman-mechanical-monsters"),
+   503→    tagline: "Up in the sky — the first superhero animation.",
+   504→    synopsis:
+   505→      "A gang of towering robots robs banks and jewelry stores under orders from a masked inventor plotting to fly his armada against the city. The second Fleischer Superman cartoon defined how the Man of Steel flies, lands and poses for the next eighty years. Every superhero movie owes these ten minutes a debt.",
+   506→    director: "Dave Fleischer",
+   507→    cast: ["Bud Collyer", "Joan Alexander"],
+   508→    quality: ["Restored"],
+   509→    accent: "#b3402e",
+   510→    iaId: "Superman2.TheMechanicalMonsters",
+   511→    iaFile: "MaxFleischerWithSupermanNo.2TheMechanicalMonsters.mp4NqNovioquality-Youtube.mp4",
+   512→  },
+   513→  {
+   514→    id: "t-betty-snow-white",
+   515→    slug: "betty-boop-snow-white",
+   516→    name: "Betty Boop in Snow-White",
+   517→    year: 1933,
+   518→    kind: "movie",
+   519→    type: "Animation",
+   520→    genres: ["Animation", "Fantasy", "Music"],
+   521→    language: "English",
+   522→    country: "United States",
+   523→    rating: 7.3,
+   524→    runtime: 8,
+   525→    poster: P("betty-boop-snow-white"),
+   526→    tagline: "Jazz, rotoscope and a very cruel queen.",
+   527→    synopsis:
+   528→      "Betty Boop flees a jealous queen into a surreal forest where trees and candles dance to Cab Calloway's wailing 'St. James Infirmary'. The Fleischer rotoscope bend reality in ways no modern cartoon dares, turning a fairy tale into a haunted jazz number. One of the strangest and greatest animated shorts ever produced.",
+   529→    director: "Dave Fleischer",
+   530→    cast: ["Mae Questel", "Cab Calloway"],
+   531→    quality: ["Restored"],
+   532→    accent: "#8c4a5f",
+   533→    iaId: "BettyBoopInSnowWhite",
+   534→    iaFile: "bb_snow_white-1.mp4",
+   535→  },
+   536→  {
+   537→    id: "t-popeye-paneless",
+   538→    slug: "popeye-the-paneless-window-washer",
+   539→    name: "Popeye the Sailor: The Paneless Window Washer",
+   540→    year: 1937,
+   541→    kind: "movie",
+   542→    type: "Animation",
+   543→    genres: ["Animation", "Comedy", "Family"],
+   544→    language: "English",
+   545→    country: "United States",
+   546→    rating: 7.0,
+   547→    runtime: 7,
+   548→    poster: P("popeye-the-paneless-window-washer"),
+   549→    tagline: "High-rise rivalry, skyscraper scale.",
+   550→    synopsis:
+   551→      "Popeye and Bluto compete to wash the windows of a skyscraper office while Olive works inside, and the building becomes a battlefield of suds, ladders and hydraulics. Classic rubber-hose escalation with gravity-defying gags in every frame. Spinach is, of course, involved.",
+   552→    director: "Dave Fleischer",
+   553→    cast: ["Jack Mercer", "Mae Questel", "Gus Wickie"],
+   554→    quality: ["Restored"],
+   555→    accent: "#c9803e",
+   556→    iaId: "Popeye_ThePanelessWindowWasher",
+   557→    iaFile: "Popeye_ThePanelessWindowWasher_512kb.mp4",
+   558→  },
+   559→  // ------------------------- ANIME -------------------------
+   560→  {
+   561→    id: "t-dull-sword",
+   562→    slug: "the-dull-sword",
+   563→    name: "The Dull Sword (Namakura Gatana)",
+   564→    year: 1917,
+   565→    kind: "anime",
+   566→    type: "Anime",
+   567→    genres: ["Animation", "Comedy", "Action"],
+   568→    language: "Japanese",
+   569→    country: "Japan",
+   570→    rating: 6.9,
+   571→    runtime: 4,
+   572→    poster: P("the-dull-sword"),
+   573→    tagline: "The oldest anime you can still watch.",
+   574→    synopsis:
+   575→      "A dim-witted samurai buys a bargain blade and learns the hard way that being outspent in the sword shop has consequences. This hand-drawn short from 1917 is among the earliest surviving Japanese animations — a small silent comedy that treats swordplay like vaudeville. A genuine national treasure, rediscovered in an antique shop in 2007.",
+   576→    director: "Jun'ichi Kōuchi",
+   577→    cast: ["Silent cast"],
+   578→    quality: ["Restored", "Historic"],
+   579→    accent: "#9c7c50",
+   580→    iaId: "1917-the-dull-sword-namakura-gatana",
+   581→    iaFile: "1917： The Dull Sword - Namakura Gatana.mp4",
+   582→  },
+   583→  {
+   584→    id: "t-momotaro-sea-eagles",
+   585→    slug: "momotaros-sea-eagles",
+   586→    name: "Momotaro's Sea Eagles",
+   587→    year: 1943,
+   588→    kind: "anime",
+   589→    type: "Anime",
+   590→    genres: ["Animation", "Action", "Adventure"],
+   591→    language: "Japanese",
+   592→    country: "Japan",
+   593→    rating: 5.9,
+   594→    runtime: 37,
+   595→    poster: P("momotaros-sea-eagles"),
+   596→    tagline: "The first feature-length anime.",
+   597→    synopsis:
+   598→      "Peach Boy leads a squadron of animal pilots on a daring aerial raid across the sea, with monkeys, dogs and pheasants manning the bombers. This 1943 naval fantasy is the earliest surviving feature-length piece of Japanese animation — a milestone you watch for its place in history, with cartoon gags and gravity-defying slapstick layered over wartime spectacle. A fascinating, troubling, indispensable artifact.",
+   599→    director: "Mitsuyo Seo",
+   600→    cast: ["Silent cast"],
+   601→    quality: ["Restored", "Historic"],
+   602→    accent: "#b3504a",
+   603→    iaId: "momotaro-no-umiwashi-1943",
+   604→    iaFile: "Momotaro no umiwashi (1943).mp4",
+   605→  },
+   606→  {
+   607→    id: "t-fox-and-tanuki",
+   608→    slug: "fox-and-tanuki",
+   609→    name: "Fox and Tanuki's Trick Competition",
+   610→    year: 1933,
+   611→    kind: "anime",
+   612→    type: "Anime",
+   613→    genres: ["Animation", "Fantasy", "Comedy"],
+   614→    language: "Japanese",
+   615→    country: "Japan",
+   616→    rating: 6.5,
+   617→    runtime: 11,
+   618→    poster: P("fox-and-tanuki"),
+   619→    tagline: "Shape-shifting spirits, escalating chaos.",
+   620→    synopsis:
+   621→      "A fox and a tanuki wage a duel of increasingly absurd illusions — lanterns, teapots, monsters and fireworks — that transforms a temple into pandemonium. Ōfuji Noburō's paper-cutout magic predates every animation festival award named after him. Japanese folklore rendered in gloriously inventive silhouette.",
+   622→    director: "Noburō Ōfuji",
+   623→    cast: ["Silent cast"],
+   624→    quality: ["Restored", "Historic"],
+   625→    accent: "#8a5f9e",
+   626→    iaId: "ugokie-kori-no-tatehiki-1933",
+   627→    iaFile: "Ugokie kori no tatehiki (1933).mp4",
+   628→  },
+   629→  {
+   630→    id: "t-benkei-ushiwaka",
+   631→    slug: "benkei-vs-ushiwaka",
+   632→    name: "Benkei vs Ushiwaka",
+   633→    year: 1939,
+   634→    kind: "anime",
+   635→    type: "Anime",
+   636→    genres: ["Animation", "Action", "Drama"],
+   637→    language: "Japanese",
+   638→    country: "Japan",
+   639→    rating: 6.4,
+   640→    runtime: 13,
+   641→    poster: P("benkei-vs-ushiwaka"),
+   642→    tagline: "The duel on Gojō Bridge, animated.",
+   643→    synopsis:
+   644→      "On a moonlit Kyoto bridge, a hulking warrior monk collects swords from every man he defeats — until a swift young nobleman turns the tables. Kenzō Masaoka's take on Japan's most famous legend brings fluid, rotoscope-adjacent movement to 1930s animation. A bedtime-story duel staged like an action picture.",
+   645→    director: "Kenzō Masaoka",
+   646→    cast: ["Silent cast"],
+   647→    quality: ["Restored", "Historic"],
+   648→    accent: "#5f6d9e",
+   649→    iaId: "benkei-tai-ushiwaka-1939",
+   650→    iaFile: "Benkei tai Ushiwaka (1939).mp4",
+   651→  },
+   652→  // ------------------------- TV SHOWS -------------------------
+   653→  {
+   654→    id: "t-sherlock-holmes",
+   655→    slug: "the-adventures-of-sherlock-holmes",
+   656→    name: "The Adventures of Sherlock Holmes",
+   657→    year: 1954,
+   658→    kind: "show",
+   659→    type: "TV Series",
+   660→    genres: ["Mystery", "Thriller", "Drama"],
+   661→    language: "English",
+   662→    country: "United States",
+   663→    rating: 7.6,
+   664→    runtime: 26,
+   665→    poster: P("sherlock-holmes-1954"),
+   666→    tagline: "The world's greatest detective, in the only TV series shot in France.",
+   667→    synopsis:
+   668→      "Ronald Howard's warm, quick-witted Holmes and Howard Marion-Crawford's Watson solve locked rooms, disguised thieves and midnight blackmailers across 1950s Europe. The lone screen Holmes produced in France, it plays the canon straight with brisk half-hour mysteries and fog-drenched atmosphere. Every episode streams freely — the whole series fell into the public domain.",
+   669→    director: "Steve Previn",
+   670→    cast: ["Ronald Howard", "H. Marion Crawford", "Archie Duncan"],
+   671→    quality: ["HD"],
+   672→    accent: "#8a7d5a",
+   673→    iaId: "SherlockHolmes-TheCaseofLadyBeryl",
+   674→    iaFile: "TheCaseofLadyBeryl_512kb.mp4",
+   675→    episodes: [
+   676→      {
+   677→        id: "e-sh-1",
+   678→        title: "The Case of the Cunningham Heritage",
+   679→        season: 1,
+   680→        episode: 1,
+   681→        iaId: "1954SHERLOCKHOLMESEP1",
+   682→        iaFile: "1954__SHERLOCK_HOLMES_EP_1.mp4",
+   683→        runtime: 26,
+   684→        synopsis:
+   685→          "A bridegroom found dead behind a locked door, a torn wedding dress and a missing pearl draw Holmes into his first case of the series.",
+   686→      },
+   687→      {
+   688→        id: "e-sh-2",
+   689→        title: "The Case of Lady Beryl",
+   690→        season: 1,
+   691→        episode: 2,
+   692→        iaId: "SherlockHolmes-TheCaseofLadyBeryl",
+   693→        iaFile: "TheCaseofLadyBeryl_512kb.mp4",
+   694→        runtime: 26,
+   695→        synopsis:
+   696→          "A society lady confesses to murder to protect someone she loves, but the apartment's layout tells Holmes a very different story.",
+   697→      },
+   698→      {
+   699→        id: "e-sh-3",
+   700→        title: "The Case of the Texas Cowgirl",
+   701→        season: 1,
+   702→        episode: 3,
+   703→        iaId: "4.-the-case-of-the-texas-cowgirl",
+   704→        iaFile: "4. The Case of the Texas Cowgirl.mp4",
+   705→        runtime: 26,
+   706→        synopsis:
+   707→          "An American rodeo rider flees a hotel room where a body lies under the bed, and Holmes must outrun the police to untangle the truth.",
+   708→      },
+   709→      {
+   710→        id: "e-sh-4",
+   711→        title: "The Reluctant Carpenter",
+   712→        season: 1,
+   713→        episode: 4,
+   714→        iaId: "the-adventures-of-sherlock-holmes-s-03-e-01-reluctant-carpenter",
+   715→        iaFile: "The Adventures of Sherlock Holmes_S03E01_Reluctant Carpenter.mp4",
+   716→        runtime: 26,
+   717→        synopsis:
+   718→          "A stranger hires a carpenter for one night's work and refuses to leave; by morning, someone is dead and the carpenter can't explain why.",
+   719→      },
+   720→    ],
+   721→  },
+   722→  {
+   723→    id: "t-one-step-beyond",
+   724→    slug: "one-step-beyond",
+   725→    name: "One Step Beyond",
+   726→    year: 1959,
+   727→    kind: "show",
+   728→    type: "TV Series",
+   729→    genres: ["Mystery", "Thriller", "Fantasy"],
+   730→    language: "English",
+   731→    country: "United States",
+   732→    rating: 7.4,
+   733→    runtime: 26,
+   734→    poster: P("one-step-beyond"),
+   735→    tagline: "True stories of the supernatural… allegedly.",
+   736→    synopsis:
+   737→      "Hosted by John Newland and billed as dramatizations of documented paranormal events, this anthology series walks the line between The Twilight Zone and a séance. Fog, whispering narration and endings that refuse comfort made it the creepier cousin of television's golden-age anthologies. Most episodes claim a 'true' basis — decide for yourself.",
+   738→    director: "John Newland",
+   739→    cast: ["John Newland", "Various guests"],
+   740→    quality: ["HD"],
+   741→    accent: "#7a6a9e",
+   742→    iaId: "OneStepBeyondTheInheritance",
+   743→    iaFile: "One Step Beyond - The Inheritance.mp4",
+   744→    episodes: [
+   745→      {
+   746→        id: "e-osb-1",
+   747→        title: "Echo",
+   748→        season: 1,
+   749→        episode: 20,
+   750→        iaId: "S1E20Echo",
+   751→        iaFile: "S1E20 - Echo.mp4",
+   752→        runtime: 26,
+   753→        synopsis:
+   754→          "A woman begins receiving radio broadcasts through her dental fillings, and the voice knows things it shouldn't.",
+   755→      },
+   756→      {
+   757→        id: "e-osb-2",
+   758→        title: "The Inheritance",
+   759→        season: 1,
+   760→        episode: 1,
+   761→        iaId: "OneStepBeyondTheInheritance",
+   762→        iaFile: "One Step Beyond - The Inheritance.mp4",
+   763→        runtime: 26,
+   764→        synopsis:
+   765→          "A man inherits a house he has never seen and a family he cannot remember — the walls remember for him.",
+   766→      },
+   767→      {
+   768→        id: "e-osb-3",
+   769→        title: "The Storm",
+   770→        season: 2,
+   771→        episode: 5,
+   772→        iaId: "OneStepBeyondTheStorm",
+   773→        iaFile: "OneStepBeyond-TheStorm-Youtube.mp4",
+   774→        runtime: 26,
+   775→        synopsis:
+   776→          "Two fishermen read the sea's mood the same way their dead father did — and the horizon says something terrible is coming.",
+   777→      },
+   778→      {
+   779→        id: "e-osb-4",
+   780→        title: "Tidal Wave",
+   781→        season: 3,
+   782→        episode: 1,
+   783→        iaId: "S3E1TIDALWAVE",
+   784→        iaFile: "S3E1 - TIDAL WAVE.mp4",
+   785→        runtime: 26,
+   786→        synopsis:
+   787→          "A recurring nightmare of a drowning city begins matching the news, hour by hour, in the series' most ambitious disaster episode.",
+   788→      },
+   789→    ],
+   790→  },
+   791→  {
+   792→    id: "t-lucy-show",
+   793→    slug: "the-lucy-show",
+   794→    name: "The Lucy Show",
+   795→    year: 1962,
+   796→    kind: "show",
+   797→    type: "TV Series",
+   798→    genres: ["Comedy", "Family"],
+   799→    language: "English",
+   800→    country: "United States",
+   801→    rating: 7.5,
+   802→    runtime: 26,
+   803→    poster: P("the-lucy-show"),
+   804→    tagline: "Lucille Ball, still the physical comedy champion.",
+   805→    synopsis:
+   806→      "Lucy Carmichael juggles kids, jobs and catastrophes with her best friend Viv — and whenever a scheme needs sabotaging, Lucy is first in line. Following I Love Lucy, Lucille Ball proved her balletic gift for disaster translate to any decade, from department-store mob scenes to celebrity run-ins. Later episodes aired live to glowing reviews and remain in the public domain today.",
+   807→    director: "Jack Donohue",
+   808→    cast: ["Lucille Ball", "Vivian Vance", "Gale Gordon"],
+   809→    quality: ["HD"],
+   810→    accent: "#c96a3e",
+   811→    iaId: "TheLucyShow5x0191266LucyAndGeorgeBurns",
+   812→    iaFile: "TheLucyShow_5x01_9-12-66_LucyandGeorgeBurns.mp4",
+   813→    episodes: [
+   814→      {
+   815→        id: "e-lucy-1",
+   816→        title: "Lucy and George Burns",
+   817→        season: 5,
+   818→        episode: 1,
+   819→        iaId: "TheLucyShow5x0191266LucyAndGeorgeBurns",
+   820→        iaFile: "TheLucyShow_5x01_9-12-66_LucyandGeorgeBurns.mp4",
+   821→        runtime: 26,
+   822→        synopsis:
+   823→          "Season five kicks off with George Burns offering Lucy a job — provided she can keep one secret from herself for a whole day.",
+   824→      },
+   825→      {
+   826→        id: "e-lucy-2",
+   827→        title: "Lucy Meets Mel Torme",
+   828→        season: 3,
+   829→        episode: 3,
+   830→        iaId: "Lucy_Show_Main_Street",
+   831→        iaFile: "Lucy_MelTorme_512kb.mp4",
+   832→        runtime: 26,
+   833→        synopsis:
+   834→          "Lucy schemes her way into a musical number with Mel Torme, and the Velvet Fog learns what a hurricane in a sequined dress sounds like.",
+   835→      },
+   836→      {
+   837→        id: "e-lucy-3",
+   838→        title: "Lucy Gets Jack Benny's Account",
+   839→        season: 3,
+   840→        episode: 4,
+   841→        iaId: "TheLucyShow-LucyGetsJackBennysAccount",
+   842→        iaFile: "thelucyshow_lucygetsjackbennysaccount.mp4",
+   843→        runtime: 26,
+   844→        synopsis:
+   845→          "Bank teller Lucy lands the branch's richest customer — Jack Benny — and his legendary stinginess goes to war with her legendary clumsiness.",
+   846→      },
+   847→      {
+   848→        id: "e-lucy-4",
+   849→        title: "Little Old Lucy",
+   850→        season: 6,
+   851→        episode: 5,
+   852→        iaId: "TheLucyShowLittleOldLucy",
+   853→        iaFile: "The Lucy Show - Little Old Lucy.mp4",
+   854→        runtime: 26,
+   855→        synopsis:
+   856→          "Disguised as a sweet elderly lady to teach a con artist a lesson, Lucy discovers nobody underestimates a granny like her.",
+   857→      },
+   858→    ],
+   859→  },
+   860→  {
+   861→    id: "t-burns-allen",
+   862→    slug: "the-george-burns-and-gracie-allen-show",
+   863→    name: "The George Burns and Gracie Allen Show",
+   864→    year: 1950,
+   865→    kind: "show",
+   866→    type: "TV Series",
+   867→    genres: ["Comedy", "Family"],
+   868→    language: "English",
+   869→    country: "United States",
+   870→    rating: 7.6,
+   871→    runtime: 26,
+   872→    poster: P("burns-and-allen"),
+   873→    tagline: "The original fourth-wall breaker.",
+   874→    synopsis:
+   875→      "George plays straight man to his real-life wife's glorious illogic, breaking the fourth wall to comment on the chaos Gracie creates in their own living room. Gracie Allen's 'illogical logic' — answering every question with impeccable wrongness — remains one of the sharpest comic engines ever built. television's first great meta-sitcom, freely streamable in the public domain.",
+   876→    director: "Frederick de Cordova",
+   877→    cast: ["George Burns", "Gracie Allen", "Bea Benaderet"],
+   878→    quality: ["HD"],
+   879→    accent: "#b3824a",
+   880→    iaId: "TheGeorgeBurnsAndGracieAllenShow-NewCoatssitcom1950s",
+   881→    iaFile: "BurnsAllenCoats_512kb.mp4",
+   882→    episodes: [
+   883→      {
+   884→        id: "e-ba-1",
+   885→        title: "New Coats",
+   886→        season: 1,
+   887→        episode: 1,
+   888→        iaId: "TheGeorgeBurnsAndGracieAllenShow-NewCoatssitcom1950s",
+   889→        iaFile: "BurnsAllenCoats_512kb.mp4",
+   890→        runtime: 26,
+   891→        synopsis:
+   892→          "Gracie buys fur coats for the whole neighborhood on George's credit — and negotiates him into an even deeper hole.",
+   893→      },
+   894→      {
+   895→        id: "e-ba-2",
+   896→        title: "Gracie Thinks She's Not Married",
+   897→        season: 3,
+   898→        episode: 16,
+   899→        iaId: "the-george-burns-and-gracie-allen-show-s-03-e-16-gracie-thinks-shes-not-married",
+   900→        iaFile: "The George Burns and Gracie Allen Show - S03E16 - Gracie Thinks She's Not Married.mp4",
+   901→        runtime: 26,
+   902→        synopsis:
+   903→          "A missing photograph convinces Gracie she and George were never legally wed, and her pursuit of a second wedding ruins his peace twice over.",
+   904→      },
+   905→      {
+   906→        id: "e-ba-3",
+   907→        title: "The Football Show",
+   908→        season: 2,
+   909→        episode: 7,
+   910→        iaId: "TheGeorgeBurnsAndGracieAllenShow-Football",
+   911→        iaFile: "TheFootballShowBurnsAllen_512kb.mp4",
+   912→        runtime: 26,
+   913→        synopsis:
+   914→          "Gracie maneuvers George into coaching a neighborhood football team full of kids, vaudeville rivals and one very tired stagehand.",
+   915→      },
+   916→    ],
+   917→  },
+   918→  {
+   919→    id: "t-beverly-hillbillies",
+   920→    slug: "the-beverly-hillbillies",
+   921→    name: "The Beverly Hillbillies",
+   922→    year: 1962,
+   923→    kind: "show",
+   924→    type: "TV Series",
+   925→    genres: ["Comedy", "Family"],
+   926→    language: "English",
+   927→    country: "United States",
+   928→    rating: 7.1,
+   929→    runtime: 26,
+   930→    poster: P("the-beverly-hillbillies"),
+   931→    tagline: "Tex. Oil. Millionaires. Fish out of water.",
+   932→    synopsis:
+   933→      "A backwoods family strikes oil on their land, moves into a Beverly Hills mansion, and proceeds to confuse every banker, socialite and neighbor in California. Fish-out-of-water sitcom gold with Buddy Ebsen's dry warmth at the center, it was America's most-watched show within two seasons. Early episodes are public domain and endlessly rewatchable.",
+   934→    director: "Paul Henning",
+   935→    cast: ["Buddy Ebsen", "Irene Ryan", "Donna Douglas", "Max Baer Jr."],
+   936→    quality: ["HD"],
+   937→    accent: "#7a9e4a",
+   938→    iaId: "The_Beverly_Hillbillies",
+   939→    iaFile: "The_Clampets_Strike_Oil_512kb.mp4",
+   940→    episodes: [
+   941→      {
+   942→        id: "e-bh-1",
+   943→        title: "The Clampetts Strike Oil",
+   944→        season: 1,
+   945→        episode: 1,
+   946→        iaId: "The_Beverly_Hillbillies",
+   947→        iaFile: "The_Clampets_Strike_Oil_512kb.mp4",
+   948→        runtime: 26,
+   949→        synopsis:
+   950→          "The pilot: black gold bubbles up in Jed's swamp, and the whole family rolls into Beverly Hills in a rattletrap truck.",
+   951→      },
+   952→      {
+   953→        id: "e-bh-2",
+   954→        title: "Trick or Treat",
+   955→        season: 1,
+   956→        episode: 6,
+   957→        iaId: "Beverly_Hillbillies_Ep06_Trick_Or_Treat",
+   958→        iaFile: "BH06_Trick_Or_Treat_512kb.mp4",
+   959→        runtime: 26,
+   960→        synopsis:
+   961→          "Granny declares war on Halloween, convinced the trick-or-treaters are real goblins come for the family's gold.",
+   962→      },
+   963→      {
+   964→        id: "e-bh-3",
+   965→        title: "Elly Needs a Maw",
+   966→        season: 2,
+   967→        episode: 12,
+   968→        iaId: "TheBeverlyHillbillies-EllyNeedsAMaw-Ep2x12",
+   969→        iaFile: "TheBeverlyHillbillies212-EllyNeedsAMaw_512kb.mp4",
+   970→        runtime: 26,
+   971→        synopsis:
+   972→          "Granny decides Elly May needs a mother's influence and advertises for a bride — for Jed — with predictably chaotic interviews.",
+   973→      },
+   974→    ],
+   975→  },
+   976→];
+   977→
+   978→// Fix a stray character guard (in case any non-ASCII slipped in unexpectedly, keep clean)
+   979→export function iaUrl(iaId: string, iaFile: string): string {
+   980→  const encoded = iaFile
+   981→    .split("/")
+   982→    .map((seg) => encodeURIComponent(seg))
+   983→    .join("/");
+   984→  return `https://archive.org/download/${iaId}/${encoded}`;
+   985→}
+   986→
+   987→export function getTitle(idOrSlug: string): Title | undefined {
+   988→  return CATALOG.find((t) => t.id === idOrSlug || t.slug === idOrSlug);
+   989→}
+   990→
+   991→export const byId = new Map(CATALOG.map((t) => [t.id, t]));
+   992→
+   993→export function episodesOf(t: Title): Episode[] {
+   994→  return t.episodes ?? [];
+   995→}
+   996→
+   997→export function getEpisode(t: Title, season: number, episode: number): Episode | undefined {
+   998→  return episodesOf(t).find((e) => e.season === season && e.episode === episode);
+   999→}
+  1000→
+  1001→export function relatedTo(t: Title, n = 12): Title[] {
+  1002→  return CATALOG.filter((o) => o.id !== t.id)
+  1003→    .map((o) => ({
+  1004→      o,
+  1005→      score:
+  1006→        o.genres.filter((g) => t.genres.includes(g)).length * 10 +
+  1007→        (o.kind === t.kind ? 3 : 0) +
+  1008→        (o.language === t.language ? 1 : 0),
+  1009→    }))
+  1010→    .sort((a, b) => b.score - a.score || b.o.rating - a.o.rating)
+  1011→    .slice(0, n)
+  1012→    .map((x) => x.o);
+  1013→}
+  1014→
+  1015→export const FEATURED_IDS = ["t-metropolis", "t-notld", "t-sintel", "t-charade", "t-bbb"];
+  1016→
+  1017→export function trending(n = 12): Title[] {
+  1018→  return [...CATALOG].sort((a, b) => b.rating - a.rating).slice(0, n);
+  1019→}
+  1020→
+  1021→export function newArrivals(n = 12): Title[] {
+  1022→  return [...CATALOG].sort((a, b) => b.year - a.year).slice(0, n);
+  1023→}
+  1024→

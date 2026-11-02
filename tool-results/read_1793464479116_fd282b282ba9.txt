@@ -1,0 +1,1030 @@
+     1→/**
+     2→ * Multi-provider torrent search with strict content matching.
+     3→ *
+     4→ * Providers are tried in parallel and merged — if one is unreachable
+     5→ * (Cloudflare, DNS block, rate limit) it is simply skipped and the others
+     6→ * still answer. Every result is normalized to a common shape, validated
+     7→ * against the requested title/year/season/episode (so same-named movies and
+     8→ * series episodes never get mixed) and scored so the player can pick the
+     9→ * best server automatically.
+    10→ */
+    11→import { getAbsoluteEpisode, getImdbId, getTitleMeta, tmdbServer } from "./tmdb-server";
+    12→import {
+    13→  bestTitleMatch,
+    14→  countryPenalty,
+    15→  matchMovie,
+    16→  matchTv,
+    17→  parseRelease,
+    18→  subtitleWords,
+    19→  type MatchClass,
+    20→  type ParsedRelease,
+    21→} from "./torrent-match";
+    22→
+    23→export interface TorrentSource {
+    24→  /** BitTorrent info hash (40 hex chars) — doubles as the server id */
+    25→  id: string;
+    26→  releaseName: string;
+    27→  seeders: number;
+    28→  peers: number;
+    29→  sizeBytes: number;
+    30→  provider: string;
+    31→  quality: string;
+    32→  /** provider-hinted video file index (used by multi-file episode packs) */
+    33→  fileIdx: number | null;
+    34→  /** how tightly the release name matches the requested content */
+    35→  match: MatchClass;
+    36→  /** negative when the release is tagged with a country the show isn't from */
+    37→  countryPenalty?: number;
+    38→  /** audio/language tags parsed from the release name — drives the player's
+    39→   *  server-language filter ("sub", "eng", "hindi", "dual"…) */
+    40→  audioTags: string[];
+    41→  score: number;
+    42→}
+    43→
+    44→/**
+    45→ * Audio-language / dub tags parsed from a release name. These power the
+    46→ * player's server categorisation so users can pick Subbed / English / Hindi /
+    47→ * Tamil… servers instead of digging through release names.
+    48→ */
+    49→const AUDIO_TAG_PATTERNS: [string, RegExp][] = [
+    50→  ["dual", /\bdual[\s._-]*(?:audio|aac|ac3)?\b|\bdualaudio\b|\bdual-audio\b/],
+    51→  ["multi", /\bmulti(?:ple)?[\s._-]*(?:audio|subs?|dubs?)?\b(?!.*\bsingle\b)/],
+    52→  ["hindi", /\bhindi\b|\bhin\b/],
+    53→  ["tamil", /\btamil\b|\btam\b/],
+    54→  ["telugu", /\btelugu\b|\btel\b/],
+    55→  ["malayalam", /\bmalayalam\b|\bmal\b/],
+    56→  ["kannada", /\bkannada\b|\bkan\b/],
+    57→  ["bengali", /\bbengali\b|\bbangla\b|\bben\b/],
+    58→  ["marathi", /\bmarathi\b/],
+    59→  ["punjabi", /\bpunjabi\b|\bpa\b/],
+    60→  ["chi", /\bmandarin\b|\bcantonese\b|\bchinese\b|\bchi\b|\bzho\b/],
+    61→  ["eng", /\b(?:eng|english)[\s._-]*(?:dub|audio|aac|ac3|eac3|ddp?5?|2\.0|5\.1)\b|\bdubbed\b(?!.*\bjapanese?\b)|\bfandub\b|\beng?\b(?=.*\bdubs?\b)/],
+    62→  ["eng", /\bdublado\b|\benglish[\s._-]*dubs?\b/],
+    63→  ["spa", /\b(?:latino|latino|espanol|spanish|castellano)\b/],
+    64→  ["por", /\b(?:portugues|portuguesa|pt[\s._-]*br)\b/],
+    65→  ["jap", /\bjapanese?\b|\bjpn?\b(?![^.]*\bsub)/],
+    66→  ["raw", /\braw\b/],
+    67→];
+    68→
+    69→/**
+    70→ * Tags for one release. Japanese-audio-with-subs (the default anime shape:
+    71→ * fansub groups, "Eng-Subs", "MultiSub") lands on "sub"; anything with a
+    72→ * dub/audio tag lands on its language; "dual"/"multi" are additive so a
+    73→ * "Dual-Audio Eng/Jap" release matches both language filters.
+    74→ */
+    75→export function detectAudioTags(releaseName: string, isAnime: boolean): string[] {
+    76→  const n = releaseName.toLowerCase();
+    77→  const tags = new Set<string>();
+    78→  for (const [tag, re] of AUDIO_TAG_PATTERNS) {
+    79→    if (re.test(n)) tags.add(tag);
+    80→  }
+    81→  // "Eng-Subs" / "MultiSub" mean subtitles, not a dub — remove the dub tag
+    82→  // the generic \beng\b pattern may have picked up from them
+    83→  const subsOnly = /\b(?:eng|english)[\s._-]*subs?\b|\bmultisubs?\b|\bvost(?:fr|en)?\b|\bsub ?(?:eng|es|indo)?\b/.test(n);
+    84→  if (subsOnly && !/\b(?:dub|dubbed|dublado|dual)\b/.test(n)) tags.delete("eng");
+    85→  // "Hindi Dubbed" dubs INTO Hindi — the generic \bdubbed\b tag must not add
+    86→  // English unless the name actually mentions it
+    87→  const indianTag = ["hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi", "punjabi", "spa", "por", "chi"].find((t) => tags.has(t));
+    88→  if (tags.has("eng") && indianTag && !/\b(?:eng|english)\b/.test(n)) tags.delete("eng");
+    89→  if (tags.has("dual") || tags.has("multi")) {
+    90→    // a dual/multi-audio release carries both the original and a dub
+    91→    if (isAnime) tags.add("jap");
+    92→    if (/\b(?:eng|english)\b/.test(n) || tags.has("eng")) tags.add("eng");
+    93→  }
+    94→  // "[Multi-Dub]" on anime = several dubs, English always among them
+    95→  if (isAnime && /\bmulti[\s._-]*dubs?\b/.test(n)) tags.add("eng");
+    96→  if (tags.size === 0) {
+    97→    // anime fansub defaults to subbed japanese; western releases unknown
+    98→    if (isAnime) return ["sub", "jap"];
+    99→    return ["unknown"];
+   100→  }
+   101→  if (isAnime && !tags.has("eng") && !indianTag &&
+   102→      !tags.has("dual") && !tags.has("multi") &&
+   103→      !tags.has("raw")) {
+   104→    tags.add("sub"); // japanese audio + subs is the anime default
+   105→    tags.add("jap");
+   106→  }
+   107→  return [...tags];
+   108→}
+   109→
+   110→/* ---------- parsing helpers ---------- */
+   111→
+   112→function parseCount(raw: string | undefined | null): number {
+   113→  if (!raw) return 0;
+   114→  const m = raw.replace(/,/g, "").trim().match(/^([\d.]+)\s*([KM])?$/i);
+   115→  if (!m) return 0;
+   116→  const n = parseFloat(m[1]);
+   117→  const mult = m[2]?.toUpperCase() === "K" ? 1e3 : m[2]?.toUpperCase() === "M" ? 1e6 : 1;
+   118→  return Math.round((isFinite(n) ? n : 0) * mult);
+   119→}
+   120→
+   121→function parseSizeBytes(raw: string | undefined | null): number {
+   122→  if (!raw) return 0;
+   123→  const m = raw.replace(/,/g, "").match(/([\d.]+)\s*(B|KB|MB|GB|TB)/i);
+   124→  if (!m) return 0;
+   125→  const n = parseFloat(m[1]);
+   126→  const unit = m[2].toUpperCase();
+   127→  const mult = unit === "TB" ? 1e12 : unit === "GB" ? 1e9 : unit === "MB" ? 1e6 : unit === "KB" ? 1e3 : 1;
+   128→  return Math.round((isFinite(n) ? n : 0) * mult);
+   129→}
+   130→
+   131→function detectQuality(name: string): string {
+   132→  const n = name.toLowerCase();
+   133→  if (/\b(2160p|4k)\b/.test(n)) return "2160p";
+   134→  if (/\b1080p\b/.test(n)) return "1080p";
+   135→  if (/\b720p\b/.test(n)) return "720p";
+   136→  if (/\b480p\b|\bdvdrip\b|\bdvd\b/.test(n)) return "480p";
+   137→  if (/\b(360p|sd)\b/.test(n)) return "SD";
+   138→  return "unknown";
+   139→}
+   140→
+   141→async function fetchJson<T>(url: string, timeoutMs = 8000): Promise<T | null> {
+   142→  try {
+   143→    const res = await fetch(url, {
+   144→      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0" },
+   145→      signal: AbortSignal.timeout(timeoutMs),
+   146→    });
+   147→    if (!res.ok) return null;
+   148→    return (await res.json()) as T;
+   149→  } catch {
+   150→    return null;
+   151→  }
+   152→}
+   153→
+   154→/* ---------- strict validation ---------- */
+   155→
+   156→/**
+   157→ * Full strict match for IMDb-keyed provider rows (Torrentio). The plain
+   158→ * sanity check above is not enough for TV: releases with NO season/episode
+   159→ * markers in the name all pass it, so same-franchise uploads that share the
+   160→ * IMDb entry ("Bleach 001~366" answering a Thousand-Year Blood War request)
+   161→ * were slipping in as "verified". Every TV row now runs the same matchTv
+   162→ * rules as the keyword providers; only a completely unmarked, clean-title
+   163→ * name may still fall back to "weak".
+   164→ */
+   165→function strictImdbMatch(
+   166→  p: ParsedRelease,
+   167→  type: "movie" | "tv",
+   168→  title: string,
+   169→  originalTitle: string | undefined,
+   170→  year: string,
+   171→  season: number,
+   172→  episode: number,
+   173→  ctx: Pick<BayContext, "airDate" | "showLang" | "absEpisode" | "relEpisode" | "isAnime">,
+   174→  pubDate?: number | null
+   175→): MatchClass | null {
+   176→  if (type === "movie") return matchMovie(p, title, originalTitle, year);
+   177→  const m = matchTv(p, season, episode, title, originalTitle, {
+   178→    airDate: ctx.airDate,
+   179→    showLang: ctx.showLang,
+   180→    absEpisode: ctx.absEpisode,
+   181→    relEpisode: ctx.relEpisode,
+   182→    pubDate,
+   183→  });
+   184→  if (m) return m;
+   185→  // anime multi-episode batches: shared range check with the Nyaa provider
+   186→  if (ctx.isAnime) {
+   187→    return animeBatchMatch(p, p.titleTokens.join(" "), {
+   188→      absEpisode: ctx.absEpisode,
+   189→      relEpisode: ctx.relEpisode,
+   190→      episode,
+   191→    }, title, originalTitle);
+   192→  }
+   193→  // last resort for TV: a release with no season/episode/date markers at all
+   194→  // and a perfectly clean title ("Show.Name.1080p.WEB-DL") stays reachable
+   195→  // but demoted to weak — it may be any episode of the show
+   196→  const noMarkers =
+   197→    p.season === null &&
+   198→    p.episode === null &&
+   199→    !p.isSeasonPack &&
+   200→    !p.seasonRange &&
+   201→    !p.date &&
+   202→    !p.titleTokens.some((t) => /^\d+$/.test(t));
+   203→  if (noMarkers) {
+   204→    const { ratio, unmatched } = bestTitleMatch(p, [title, originalTitle].filter(Boolean) as string[]);
+   205→    if (ratio >= 0.99 && unmatched.length === 0) return "weak";
+   206→  }
+   207→  return null;
+   208→}
+   209→
+   210→/**
+   211→ * Shared anime batch-range acceptance (used by the Nyaa provider and the
+   212→ * strict IMDb match). A batch "Show - 001 ~ 366" answers an episode request
+   213→ * when the requested number falls inside the range — with one guard: a
+   214→ * SEQUEL-named batch ("Thousand-Year Blood War S01E01-06") must never answer
+   215→ * a base-season request, because its range is the sequel's own numbering.
+   216→ */
+   217→function animeBatchMatch(
+   218→  p: ParsedRelease,
+   219→  releaseName: string,
+   220→  ctx: { absEpisode?: number | null; relEpisode?: number | null; episode: number },
+   221→  title: string,
+   222→  originalTitle: string | undefined
+   223→): MatchClass | null {
+   224→  const br = batchRange(releaseName);
+   225→  if (!br) return null;
+   226→  const subs = subtitleWords(p, [title, originalTitle]).length;
+   227→  const sequelNamed = ctx.relEpisode == null && subs >= 2;
+   228→  const wanted = ctx.absEpisode ?? ctx.episode;
+   229→  const inAbs = wanted >= br[0] && wanted <= br[1];
+   230→  const inRel = ctx.relEpisode != null && ctx.relEpisode >= br[0] && ctx.relEpisode <= br[1];
+   231→  if (inAbs && !sequelNamed) return "pack";
+   232→  if (inRel && subs >= 2) return "pack";
+   233→  return null;
+   234→}
+   235→
+   236→/* ---------- providers ---------- */
+   237→
+   238→interface TorrentioStream {
+   239→  name?: string;
+   240→  title?: string;
+   241→  infoHash?: string;
+   242→  fileIdx?: number;
+   243→  behaviorHints?: { filename?: string };
+   244→}
+   245→
+   246→/** IMDb-keyed — but indexers mislabel ids, so names are still cross-checked. */
+   247→async function providerTorrentio(
+   248→  type: "movie" | "tv",
+   249→  imdbId: string,
+   250→  season: number,
+   251→  episode: number,
+   252→  year: string,
+   253→  title: string,
+   254→  originalTitle: string | undefined,
+   255→  ctx: Pick<BayContext, "airDate" | "showLang" | "absEpisode" | "relEpisode" | "isAnime">
+   256→): Promise<TorrentSource[]> {
+   257→  // Stremio addon stream ids are single segments: `tt…:season:episode`.
+   258→  // (slash-separated paths 404 since the 2026 addon API tightening)
+   259→  const path =
+   260→    type === "movie"
+   261→      ? `stream/movie/${imdbId}.json`
+   262→      : `stream/series/${imdbId}:${season}:${episode}.json`;
+   263→  const data = await fetchJson<{ streams?: TorrentioStream[] }>(
+   264→    `https://torrentio.strem.fun/${path}`
+   265→  );
+   266→  const streams = data?.streams ?? [];
+   267→  const out: TorrentSource[] = [];
+   268→  for (const s of streams) {
+   269→    if (!s.infoHash || !/^[0-9a-f]{40}$/i.test(s.infoHash)) continue;
+   270→    const titleLines = (s.title ?? "").split("\n");
+   271→    const releaseName = (titleLines[0] || s.behaviorHints?.filename || "Torrent").trim();
+   272→    // indexers occasionally attach a wrong IMDb id — cross-check the name
+   273→    // with the full strict matcher (catches franchise uploads that share the
+   274→    // IMDb entry, e.g. original-series batches answering a TYBW request)
+   275→    const parsed = parseRelease(releaseName);
+   276→    const match = strictImdbMatch(parsed, type, title, originalTitle, year, season, episode, ctx);
+   277→    if (!match) continue;
+   278→    const metaLine = titleLines.find((l) => l.includes("👤")) ?? "";
+   279→    const seeders = parseCount(metaLine.match(/👤\s*([\d.,]+\s*[KM]?)/)?.[1]);
+   280→    const sizeBytes = parseSizeBytes(metaLine.match(/💾\s*([\d.,]+\s*[KMGTB]+)/i)?.[1]);
+   281→    const provider = metaLine.match(/⚙️\s*([^\n]+)/)?.[1]?.trim() || "Torrentio";
+   282→    const hintName = s.name ?? "";
+   283→    const quality =
+   284→      /4k/i.test(hintName) && !/1080p/.test(releaseName)
+   285→        ? "2160p"
+   286→        : detectQuality(releaseName);
+   287→    out.push({
+   288→      id: s.infoHash.toLowerCase(),
+   289→      releaseName,
+   290→      seeders,
+   291→      peers: 0,
+   292→      sizeBytes,
+   293→      provider,
+   294→      quality,
+   295→      fileIdx: typeof s.fileIdx === "number" ? s.fileIdx : null,
+   296→      match,
+   297→      audioTags: detectAudioTags(releaseName, Boolean(ctx.isAnime)),
+   298→      score: 0,
+   299→    });
+   300→  }
+   301→  return out;
+   302→}
+   303→
+   304→interface ApibayResult {
+   305→  name?: string;
+   306→  info_hash?: string;
+   307→  leechers?: string;
+   308→  seeders?: string;
+   309→  size?: string;
+   310→}
+   311→
+   312→/** TMDB original_language code → the word Indian releases use for it */
+   313→export const LANG_WORD: Record<string, string> = {
+   314→  ta: "tamil",
+   315→  te: "telugu",
+   316→  hi: "hindi",
+   317→  ml: "malayalam",
+   318→  kn: "kannada",
+   319→  mr: "marathi",
+   320→  bn: "bengali",
+   321→  pa: "punjabi",
+   322→};
+   323→
+   324→const pad = (n: number) => String(n).padStart(2, "0");
+   325→
+   326→/** Air date (YYYY-MM-DD) of one episode — short TTL so brand-new daily-show
+   327→ *  episodes (Bigg Boss S20E55…) get their date as soon as TMDB publishes it. */
+   328→const seasonCache = new Map<string, { dates: Map<number, string | null>; ts: number }>();
+   329→const SEASON_TTL = 30 * 60 * 1000;
+   330→
+   331→export async function getEpisodeAirDate(
+   332→  tmdbId: number,
+   333→  season: number,
+   334→  episode: number
+   335→): Promise<string | null> {
+   336→  const key = `tv:${tmdbId}:${season}`;
+   337→  let hit = seasonCache.get(key);
+   338→  if (!hit || Date.now() - hit.ts > SEASON_TTL) {
+   339→    try {
+   340→      const data = await tmdbServer<{
+   341→        episodes?: { episode_number: number; air_date: string | null }[];
+   342→      }>(`tv/${tmdbId}/season/${season}`);
+   343→      const dates = new Map<number, string | null>();
+   344→      for (const e of data.episodes ?? []) dates.set(e.episode_number, e.air_date ?? null);
+   345→      hit = { dates, ts: Date.now() };
+   346→      seasonCache.set(key, hit);
+   347→    } catch {
+   348→      return null;
+   349→    }
+   350→  }
+   351→  return hit.dates.get(episode) ?? null;
+   352→}
+   353→
+   354→interface BayContext {
+   355→  title: string;
+   356→  originalTitle?: string;
+   357→  year?: string;
+   358→  countries: string[];
+   359→  season: number;
+   360→  episode: number;
+   361→  airDate?: string | null;
+   362→  showLang?: string | null;
+   363→  /** broadcast-order episode number (anime) */
+   364→  absEpisode?: number | null;
+   365→  /** fansub-relative episode for merged sequel seasons (anime: TMDB
+   366→   *  "Bleach" S02 = Thousand-Year Blood War, fansubs number it from 1) */
+   367→  relEpisode?: number | null;
+   368→  /** Japanese-language title → fansub indexers (Nyaa) get queried too */
+   369→  isAnime?: boolean;
+   370→}
+   371→
+   372→/**
+   373→ * Keyword provider — answers on title words alone, so every result is
+   374→ * strictly validated here against the requested year (movies) or
+   375→ * season/episode (TV) before it may enter the candidate list.
+   376→ */
+   377→async function providerPirateBay(
+   378→  type: "movie" | "tv",
+   379→  ctx: BayContext
+   380→): Promise<TorrentSource[]> {
+   381→  const { title, originalTitle, year, season, episode } = ctx;
+   382→  const queries =
+   383→    type === "movie"
+   384→      ? [`${title} ${year ?? ""}`.trim(), title]
+   385→      : [
+   386→          `${title} s${pad(season)}e${pad(episode)}`,
+   387→          // language variant — Indian versions ("Bigg Boss Telugu") overflow the
+   388→          // bare-title result window on trackers
+   389→          ...(ctx.showLang ? [`${title} ${ctx.showLang}`] : []),
+   390→          `${title} ${season}x${pad(episode)}`,
+   391→          title, // dated daily-show names carry no SxxExx — match by name + air date
+   392→        ];
+   393→
+   394→  const seen = new Map<string, TorrentSource>();
+   395→  const collect = (rows: ApibayResult[]) => {
+   396→    for (const r of rows) {
+   397→      if (!r.info_hash || !/^[0-9a-f]{40}$/i.test(r.info_hash)) continue;
+   398→      const name = (r.name ?? "Torrent").trim();
+   399→      if (name === "No results") continue;
+   400→      const p = parseRelease(name);
+   401→      const match =
+   402→        type === "movie"
+   403→          ? matchMovie(p, title, originalTitle, year)
+   404→          : matchTv(p, season, episode, title, originalTitle, {
+   405→              airDate: ctx.airDate,
+   406→              showLang: ctx.showLang,
+   407→              absEpisode: ctx.absEpisode,
+   408→            });
+   409→      if (!match) continue; // same name, different film/episode — reject
+   410→      const cPen = type === "tv" ? countryPenalty(p, ctx.countries) : 0;
+   411→      // an explicit country tag that contradicts the show ("The.Office.US"
+   412→      // when the TMDB show is GB) is a different show — hard reject
+   413→      if (cPen < 0) continue;
+   414→      const key = r.info_hash.toLowerCase();
+   415→      if (seen.has(key)) continue;
+   416→      seen.set(key, {
+   417→        id: key,
+   418→        releaseName: name,
+   419→        seeders: parseCount(r.seeders),
+   420→        peers: parseCount(r.leechers),
+   421→        sizeBytes: parseSizeBytes(r.size),
+   422→        provider: "ThePirateBay",
+   423→        quality: detectQuality(name),
+   424→        fileIdx: null,
+   425→        match,
+   426→        countryPenalty: cPen,
+   427→        audioTags: detectAudioTags(name, Boolean(ctx.isAnime)),
+   428→        score: 0,
+   429→      });
+   430→    }
+   431→  };
+   432→
+   433→  // apibay answers tiny JSON quickly; sequential keeps request count low
+   434→  for (const q of queries) {
+   435→    if (seen.size >= 5) break;
+   436→    const rows = await fetchJson<ApibayResult[]>(
+   437→      `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=`,
+   438→      7000
+   439→    );
+   440→    if (rows && Array.isArray(rows)) collect(rows);
+   441→  }
+   442→
+   443→  // episode-level search came up empty → try season packs for TV
+   444→  if (type === "tv" && seen.size === 0) {
+   445→    const packQueries = [`${title} s${pad(season)}`, `${title} season ${season}`];
+   446→    for (const q of packQueries) {
+   447→      const rows = await fetchJson<ApibayResult[]>(
+   448→        `https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=`,
+   449→        7000
+   450→      );
+   451→      if (rows && Array.isArray(rows)) collect(rows);
+   452→      if (seen.size > 0) break;
+   453→    }
+   454→  }
+   455→  return [...seen.values()];
+   456→}
+   457→
+   458→interface BitsearchCard {
+   459→  hash: string;
+   460→  name: string;
+   461→  seeders: number;
+   462→  peers: number;
+   463→  sizeBytes: number;
+   464→}
+   465→
+   466→/**
+   467→ * BitSearch (bitsearch.eu) — HTML search, the last live indexer when the
+   468→ * JSON APIs are down or blocked. It indexes Indian release groups
+   469→ * (1TamilBlasters, TamilMV, 3MovieRulz…) that upload daily-show episodes
+   470→ * ("Bigg Boss (2026) S09E101 …") hours after broadcast. Every row is
+   471→ * validated with the same strict matcher as the keyword providers.
+   472→ */
+   473→async function providerBitSearch(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
+   474→  const { title, originalTitle, year, season, episode } = ctx;
+   475→  const queries =
+   476→    type === "movie"
+   477→      ? [`${title} ${year ?? ""}`.trim(), title]
+   478→      : [
+   479→          `${title} s${pad(season)}e${pad(episode)}`,
+   480→          `${title} season ${season}`, // dated daily shows + season packs
+   481→        ];
+   482→
+   483→  const cards = new Map<string, BitsearchCard>();
+   484→  const scrape = async (q: string) => {
+   485→    try {
+   486→      const res = await fetch(`https://bitsearch.eu/search?q=${encodeURIComponent(q)}`, {
+   487→        headers: {
+   488→          accept: "text/html,application/xhtml+xml",
+   489→          "user-agent":
+   490→            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+   491→        },
+   492→        signal: AbortSignal.timeout(9000),
+   493→        redirect: "follow",
+   494→      });
+   495→      if (!res.ok) return;
+   496→      const html = (await res.text()).replace(/\s+/g, " ");
+   497→      const re = /\/download\/torrent\/([0-9a-fA-F]{40})\?title=([^">]+)/g;
+   498→      for (const m of html.matchAll(re)) {
+   499→        const hash = m[1].toLowerCase();
+   500→        if (cards.has(hash)) continue;
+   501→        let name = m[2];
+   502→        try { name = decodeURIComponent(name); } catch { /* raw text fallback */ }
+   503→        name = name
+   504→          .replace(/&amp;/g, "&")
+   505→          .replace(/&#x3D;|&#61;/gi, "=")
+   506→          .replace(/&quot;/gi, '"')
+   507→          .replace(/&#39;/g, "'")
+   508→          .trim();
+   509→        const win = html.slice(Math.max(0, m.index - 2200), m.index);
+   510→        const seeders = Number(win.match(/font-medium">(\d+)<\/span>\s*<span>\s*seeders/)?.[1] ?? 0);
+   511→        const peers = Number(win.match(/font-medium">(\d+)<\/span>\s*<span>\s*leechers/)?.[1] ?? 0);
+   512→        const sizeBytes = parseSizeBytes(
+   513→          win.match(/fa-download"><\/i>\s*<span>\s*([\d.]+\s*[KMGT]?B)</i)?.[1] ?? null
+   514→        );
+   515→        cards.set(hash, { hash, name, seeders, peers, sizeBytes });
+   516→      }
+   517→    } catch {
+   518→      // blocked / timed out — the other providers still answer
+   519→    }
+   520→  };
+   521→
+   522→  await Promise.all(queries.map(scrape));
+   523→
+   524→  const out: TorrentSource[] = [];
+   525→  for (const c of cards.values()) {
+   526→    const p = parseRelease(c.name);
+   527→    const match =
+   528→      type === "movie"
+   529→        ? matchMovie(p, title, originalTitle, year)
+   530→        : matchTv(p, season, episode, title, originalTitle, {
+   531→            airDate: ctx.airDate,
+   532→            showLang: ctx.showLang,
+   533→            absEpisode: ctx.absEpisode,
+   534→          });
+   535→    if (!match) continue; // same name, wrong season/episode/year — reject
+   536→    if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
+   537→    out.push({
+   538→      id: c.hash,
+   539→      releaseName: c.name,
+   540→      seeders: c.seeders,
+   541→      peers: c.peers,
+   542→      sizeBytes: c.sizeBytes,
+   543→      provider: "BitSearch",
+   544→      quality: detectQuality(c.name),
+   545→      fileIdx: null,
+   546→      match,
+   547→      audioTags: detectAudioTags(c.name, Boolean(ctx.isAnime)),
+   548→      score: 0,
+   549→    });
+   550→  }
+   551→  return out;
+   552→}
+   553→
+   554→interface TorrentsCsvRow {
+   555→  infohash?: string;
+   556→  name?: string;
+   557→  size_bytes?: number;
+   558→  seeders?: number;
+   559→  leechers?: number;
+   560→}
+   561→
+   562→/**
+   563→ * torrents-csv.com — open torrent database with a JSON API. It indexes the
+   564→ * Indian release groups (TamilMV / TamilBlasters / 5MovieRulz …) that publish
+   565→ * daily-show episodes hours after broadcast ("BIGG BOSS (Telugu) S10 EP21 …"),
+   566→ * which the western trackers are slow to pick up. Every row is validated with
+   567→ * the same strict matcher as the other keyword providers.
+   568→ */
+   569→async function providerTorrentsCsv(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
+   570→  const { title, originalTitle, year, season, episode } = ctx;
+   571→  const queries =
+   572→    type === "movie"
+   573→      ? [`${title} ${year ?? ""}`.trim(), title]
+   574→      : [
+   575→          `${title} ${ctx.showLang ?? ""}`.trim(), // "Bigg Boss Telugu" — current-season uploads
+   576→          `${title} s${pad(season)}e${pad(episode)}`,
+   577→          `${title} season ${season}`,
+   578→          title,
+   579→        ];
+   580→
+   581→  const seen = new Map<string, TorrentSource>();
+   582→  for (const q of queries) {
+   583→    if (seen.size >= 5) break;
+   584→    const data = await fetchJson<{ torrents?: TorrentsCsvRow[] }>(
+   585→      `https://torrents-csv.com/service/search?q=${encodeURIComponent(q)}&size=100`,
+   586→      8000
+   587→    );
+   588→    for (const r of data?.torrents ?? []) {
+   589→      if (!r.infohash || !/^[0-9a-f]{40}$/i.test(r.infohash)) continue;
+   590→      const name = (r.name ?? "Torrent").trim();
+   591→      const p = parseRelease(name);
+   592→      const match =
+   593→        type === "movie"
+   594→          ? matchMovie(p, title, originalTitle, year)
+   595→          : matchTv(p, season, episode, title, originalTitle, {
+   596→              airDate: ctx.airDate,
+   597→              showLang: ctx.showLang,
+   598→              absEpisode: ctx.absEpisode,
+   599→            });
+   600→      if (!match) continue; // same name, different film/episode/language — reject
+   601→      if (type === "tv" && countryPenalty(p, ctx.countries) < 0) continue;
+   602→      const key = r.infohash.toLowerCase();
+   603→      if (seen.has(key)) continue;
+   604→      seen.set(key, {
+   605→        id: key,
+   606→        releaseName: name,
+   607→        seeders: r.seeders ?? 0,
+   608→        peers: r.leechers ?? 0,
+   609→        sizeBytes: r.size_bytes ?? 0,
+   610→        provider: "TorrentsCSV",
+   611→        quality: detectQuality(name),
+   612→        fileIdx: null,
+   613→        match,
+   614→        audioTags: detectAudioTags(name, Boolean(ctx.isAnime)),
+   615→        score: 0,
+   616→      });
+   617→    }
+   618→  }
+   619→  return [...seen.values()];
+   620→}
+   621→
+   622→interface YtsMovie {
+   623→  imdb_code?: string;
+   624→  title?: string;
+   625→  year?: number;
+   626→  torrents?: { hash?: string; quality?: string; size?: string; seeds?: number; peers?: number }[];
+   627→}
+   628→
+   629→/** IMDb-keyed, but the endpoint fuzzy-matches — pin to the exact IMDb code. */
+   630→async function providerYts(imdbId: string, year: string, timeoutMs = 7000): Promise<TorrentSource[]> {
+   631→  const data = await fetchJson<{ data?: { movies?: YtsMovie[] } }>(
+   632→    `https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(imdbId)}&limit=5`,
+   633→    timeoutMs
+   634→  );
+   635→  const movies = (data?.data?.movies ?? []).filter(
+   636→    (mv) => (mv.imdb_code ?? "").toLowerCase() === imdbId.toLowerCase()
+   637→  );
+   638→  const out: TorrentSource[] = [];
+   639→  for (const mv of movies) {
+   640→    // sanity: YTS metadata year must agree with TMDB (±1)
+   641→    if (year && mv.year && Math.abs(mv.year - Number(year)) > 1) continue;
+   642→    for (const t of mv.torrents ?? []) {
+   643→      if (!t.hash || !/^[0-9a-f]{40}$/i.test(t.hash)) continue;
+   644→      out.push({
+   645→        id: t.hash.toLowerCase(),
+   646→        releaseName: `${mv.title ?? "Movie"} ${mv.year ?? ""} ${t.quality ?? ""} YTS`.replace(/\s+/g, " ").trim(),
+   647→        seeders: t.seeds ?? 0,
+   648→        peers: t.peers ?? 0,
+   649→        sizeBytes: parseSizeBytes(t.size),
+   650→        provider: "YTS",
+   651→        quality: t.quality ?? detectQuality(`${t.size}`),
+   652→        fileIdx: null,
+   653→        match: "verified",
+   654→        audioTags: detectAudioTags(`${mv.title ?? ""} ${t.quality ?? ""}`, false),
+   655→        score: 0,
+   656→      });
+   657→    }
+   658→  }
+   659→  return out;
+   660→}
+   661→
+   662→interface EztvTorrent {
+   663→  hash?: string;
+   664→  filename?: string;
+   665→  size_bytes?: number;
+   666→  seeds?: number;
+   667→  peers?: number;
+   668→  season?: number;
+   669→  episode?: number;
+   670→}
+   671→
+   672→/** EZTV rotates domains; the first mirror that answers wins. */
+   673→const EZTV_HOSTS = ["eztvx.to", "eztv.wf", "eztv.tf"];
+   674→
+   675→async function eztvPage(
+   676→  numericId: string,
+   677→  page: number
+   678→): Promise<{ torrents?: EztvTorrent[] } | null> {
+   679→  for (const host of EZTV_HOSTS) {
+   680→    const data = await fetchJson<{ torrents?: EztvTorrent[] }>(
+   681→      `https://${host}/api/get-torrents?imdb_id=${numericId}&limit=100&page=${page}`,
+   682→      7000
+   683→    );
+   684→    if (data) return data; // any well-formed answer — even empty — ends the chain
+   685→  }
+   686→  return null;
+   687→}
+   688→
+   689→/**
+   690→ * IMDb-keyed per episode. The API rows carry season/episode metadata and
+   691→ * ignore the season/episode query params, so we scan a couple of recency
+   692→ * pages; the filename is cross-checked so a mislabeled row can't leak wrong
+   693→ * episodes into same-named shows.
+   694→ */
+   695→async function providerEztv(
+   696→  imdbId: string,
+   697→  season: number,
+   698→  episode: number
+   699→): Promise<TorrentSource[]> {
+   700→  const out: TorrentSource[] = [];
+   701→  const numericId = imdbId.replace(/^tt/i, "");
+   702→  for (let page = 1; page <= 2 && out.length < 8; page++) {
+   703→    const data = await eztvPage(numericId, page);
+   704→    const rows = data?.torrents ?? [];
+   705→    for (const r of rows) {
+   706→      if (!r.hash || !/^[0-9a-f]{40}$/i.test(r.hash)) continue;
+   707→      if (r.season && season && r.season !== season) continue;
+   708→      if (r.episode && episode && r.episode !== episode) continue;
+   709→      const filename = (r.filename ?? "Episode").trim();
+   710→      const p = parseRelease(filename);
+   711→      const wrongEpisode =
+   712→        (p.season !== null && p.season !== season) ||
+   713→        (p.episode !== null && p.episode !== episode);
+   714→      if (wrongEpisode) continue;
+   715→      out.push({
+   716→        id: r.hash.toLowerCase(),
+   717→        releaseName: filename,
+   718→        seeders: r.seeds ?? 0,
+   719→        peers: r.peers ?? 0,
+   720→        sizeBytes: r.size_bytes ?? 0,
+   721→        provider: "EZTV",
+   722→        quality: detectQuality(filename),
+   723→        fileIdx: null,
+   724→        match: "verified",
+   725→        audioTags: detectAudioTags(filename, false),
+   726→        score: 0,
+   727→      });
+   728→      if (out.length >= 8) break;
+   729→    }
+   730→    if (rows.length < 100) break; // no more pages for this show
+   731→  }
+   732→  return out;
+   733→}
+   734→
+   735→/* ---------- anime: nyaa.si (fansub indexers) ---------- */
+   736→
+   737→interface NyaaItem {
+   738→  title: string;
+   739→  infoHash: string;
+   740→  seeders: number;
+   741→  leechers: number;
+   742→  sizeBytes: number;
+   743→  /** upload date (epoch ms) — identifies fresh sequel-episode fansubs */
+   744→  pubDate: number | null;
+   745→}
+   746→
+   747→/** RSS search on nyaa.si — the primary public index for fansubbed anime. */
+   748→async function nyaaSearch(query: string): Promise<NyaaItem[]> {
+   749→  try {
+   750→    const res = await fetch(
+   751→      `https://nyaa.si/?page=rss&f=0&c=0_0&q=${encodeURIComponent(query)}`,
+   752→      {
+   753→        headers: {
+   754→          accept: "application/rss+xml",
+   755→          "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0",
+   756→        },
+   757→        signal: AbortSignal.timeout(9000),
+   758→      }
+   759→    );
+   760→    if (!res.ok) return [];
+   761→    const xml = await res.text();
+   762→    const items: NyaaItem[] = [];
+   763→    for (const chunk of xml.split("<item>").slice(1)) {
+   764→      const pick = (re: RegExp) => chunk.match(re)?.[1]?.trim() ?? "";
+   765→      const title = pick(/<title>([\s\S]*?)<\/title>/);
+   766→      const infoHash = pick(/<nyaa:infoHash>([0-9a-fA-F]{40})<\/nyaa:infoHash>/).toLowerCase();
+   767→      if (!title || !infoHash) continue;
+   768→      // "1.4 GiB" → "1.4 GB" so the shared size parser understands it
+   769→      const sizeRaw = pick(/<nyaa:size>([\d.]+\s*[KMGTP]i?B)<\/nyaa:size>/).replace(/i/g, "");
+   770→      const pubRaw = pick(/<pubDate>([\s\S]*?)<\/pubDate>/);
+   771→      const pubMs = pubRaw ? new Date(pubRaw).getTime() : NaN;
+   772→      items.push({
+   773→        title,
+   774→        infoHash,
+   775→        seeders: parseInt(pick(/<nyaa:seeders>(\d+)<\/nyaa:seeders>/), 10) || 0,
+   776→        leechers: parseInt(pick(/<nyaa:leechers>(\d+)<\/nyaa:leechers>/), 10) || 0,
+   777→        sizeBytes: parseSizeBytes(sizeRaw),
+   778→        pubDate: Number.isFinite(pubMs) ? pubMs : null,
+   779→      });
+   780→    }
+   781→    return items;
+   782→  } catch {
+   783→    return [];
+   784→  }
+   785→}
+   786→
+   787→/** "892-1085" / "1078.5-1085" / "E01-E52" batch range inside a fansub
+   788→ *  release name. */
+   789→export function batchRange(name: string): [number, number] | null {
+   790→  const m = name.match(/(\d{1,4})(?:\.\d)?\s*(?:[-–—~]|to)\s*E?(\d{1,4})\b/i);
+   791→  if (!m) return null;
+   792→  const a = Number(m[1]);
+   793→  const b = Number(m[2]);
+   794→  return b > a && b - a <= 400 ? [a, b] : null;
+   795→}
+   796→
+   797→/**
+   798→ * Nyaa — fansubbed anime releases. Names use broadcast-order episode numbers
+   799→ * ("One Piece - 1085"), season/episode tags ("S02E05") or batch ranges
+   800→ * ("Season 20 (892-1085) Batch"), all handled via the strict matcher plus an
+   801→ * explicit absolute-episode check. Only enabled for Japanese titles.
+   802→ */
+   803→async function providerNyaa(type: "movie" | "tv", ctx: BayContext): Promise<TorrentSource[]> {
+   804→  const { title, originalTitle, season, episode, absEpisode, relEpisode, isAnime } = ctx;
+   805→  if (!isAnime) return [];
+   806→  const wanted = absEpisode ?? episode;
+   807→  const relWanted = relEpisode ?? null;
+   808→  const queries =
+   809→    type === "movie"
+   810→      ? [`${title} ${ctx.year ?? ""}`.trim(), title, ...(originalTitle ? [originalTitle] : [])]
+   811→      : [
+   812→          `${title} ${wanted}`,
+   813→          // merged sequel seasons are fansub-numbered from 1 ("Sennen
+   814→          // Kessen-hen - 45"), which differs from the broadcast-order number
+   815→          ...(relWanted != null && relWanted !== wanted ? [`${title} ${relWanted}`] : []),
+   816→          ...(originalTitle ? [`${originalTitle} ${wanted}`] : []),
+   817→          `${title} s${pad(season)}e${pad(episode)}`,
+   818→        ];
+   819→
+   820→  const seen = new Map<string, TorrentSource>();
+   821→  for (const q of queries) {
+   822→    if (seen.size >= 6) break;
+   823→    const rows = await nyaaSearch(q);
+   824→    for (const r of rows) {
+   825→      if (seen.has(r.infoHash)) continue;
+   826→      const p = parseRelease(r.title);
+   827→      let match: MatchClass | null;
+   828→      if (type === "movie") {
+   829→        match = matchMovie(p, title, originalTitle, ctx.year);
+   830→      } else {
+   831→        match = matchTv(p, season, episode, title, originalTitle, {
+   832→          airDate: ctx.airDate,
+   833→          absEpisode,
+   834→          relEpisode: relWanted,
+   835→          pubDate: r.pubDate,
+   836→        });
+   837→        if (!match) {
+   838→          // multi-episode batch: keep it as a pack — the stream route picks
+   839→          // the right file inside the torrent by episode number. The relative
+   840→          // number is only accepted inside a SUBTITLED release (>= 2 unconsumed
+   841→          // title words — "Sennen Kessen-hen 1-52 Batch"), so the base show's
+   842→          // batches ("Bleach 001~366", "BLEACH Kai 1~366") can never answer
+   843→          // a sequel-season request, and sequel-named batches can never answer
+   844→          // a base-season request.
+   845→          match = animeBatchMatch(p, r.title, {
+   846→            absEpisode,
+   847→            relEpisode: relWanted,
+   848→            episode,
+   849→          }, title, originalTitle);
+   850→        }
+   851→      }
+   852→      if (!match) continue;
+   853→      seen.set(r.infoHash, {
+   854→        id: r.infoHash,
+   855→        releaseName: r.title,
+   856→        seeders: r.seeders,
+   857→        peers: r.leechers,
+   858→        sizeBytes: r.sizeBytes,
+   859→        provider: "Nyaa",
+   860→        quality: detectQuality(r.title),
+   861→        fileIdx: null,
+   862→        match,
+   863→        audioTags: detectAudioTags(r.title, true),
+   864→        score: 0,
+   865→      });
+   866→    }
+   867→  }
+   868→  return [...seen.values()];
+   869→}
+   870→
+   871→/* ---------- scoring ---------- */
+   872→
+   873→export function scoreTorrent(t: TorrentSource): number {
+   874→  let s = Math.min(Math.log10(t.seeders + 1) * 4, 13);
+   875→  if (t.quality === "1080p") s += 5;
+   876→  else if (t.quality === "720p") s += 4;
+   877→  else if (t.quality === "2160p") s += 2;
+   878→  else if (t.quality === "480p") s += 1;
+   879→  const n = t.releaseName.toLowerCase();
+   880→  if (/x265|h\.?265|hevc/.test(n)) s -= 4; // HEVC support is spotty in browsers
+   881→  if (/av1/.test(n)) s += 1;
+   882→  if (/x264|h\.?264|xvid/.test(n)) s += 2;
+   883→  if (/\b(cam|ts|telesync|screener|dvdscr|hdts|\btc\b)\b/.test(n)) s -= 12;
+   884→  if (/\b3d\b/.test(n)) s -= 6;
+   885→  if (/\.mp4\b/.test(n) || /yts/i.test(t.releaseName)) s += 1.5;
+   886→  if (t.sizeBytes > 0 && t.sizeBytes < 120 * 1024 * 1024) s -= 2;
+   887→  if (t.sizeBytes > 25 * 1024 * 1024 * 1024) s -= 3;
+   888→  return Math.round(s * 10) / 10;
+   889→}
+   890→
+   891→/** Bonus/penalty applied for how tightly a release matches the request. */
+   892→const MATCH_RANK: Record<MatchClass, number> = {
+   893→  verified: 8,
+   894→  pack: 2.5,
+   895→  weak: -6,
+   896→};
+   897→
+   898→function merge(sources: TorrentSource[]): TorrentSource[] {
+   899→  const best = new Map<string, TorrentSource>();
+   900→  for (const t of sources) {
+   901→    const prev = best.get(t.id);
+   902→    if (!prev || t.seeders > prev.seeders) best.set(t.id, t);
+   903→  }
+   904→  const list = [...best.values()];
+   905→  for (const t of list) {
+   906→    t.score =
+   907→      Math.round((scoreTorrent(t) + MATCH_RANK[t.match] + (t.countryPenalty ?? 0)) * 10) / 10;
+   908→  }
+   909→  // only fall back to unverified (no-year) releases when nothing better exists
+   910→  const confident = list.filter((t) => t.match !== "weak");
+   911→  const final = confident.length ? confident : list;
+   912→  return final.sort((a, b) => b.score - a.score || b.seeders - a.seeders).slice(0, 14);
+   913→}
+   914→
+   915→/* ---------- public API ---------- */
+   916→
+   917→export interface SearchArgs {
+   918→  type: "movie" | "tv";
+   919→  tmdbId: number;
+   920→  title: string;
+   921→  year: string;
+   922→  season: number;
+   923→  episode: number;
+   924→}
+   925→
+   926→export interface SearchHints {
+   927→  /** broadcast-order episode number (anime) — steers file picking inside
+   928→   *  fansub batches on the stream route */
+   929→  absEpisode: number | null;
+   930→  /** fansub-relative episode number (anime merged sequel seasons) */
+   931→  relEpisode: number | null;
+   932→}
+   933→
+   934→export interface SearchResult {
+   935→  results: TorrentSource[];
+   936→  hints: SearchHints;
+   937→}
+   938→
+   939→export async function searchTorrentSources(args: SearchArgs): Promise<SearchResult> {
+   940→  const { type, tmdbId, title, season, episode } = args;
+   941→  const [imdbId, meta] = await Promise.all([getImdbId(type, tmdbId), getTitleMeta(type, tmdbId)]);
+   942→  // TMDB's own year is canonical (guards against stale/rounded client data)
+   943→  const year = meta.year || args.year || "";
+   944→  // Indian daily shows (Bigg Boss…) name episodes by broadcast date and tag
+   945→  // language versions — both are needed to match them without mixing content
+   946→  const airDate = type === "tv" ? await getEpisodeAirDate(tmdbId, season, episode) : null;
+   947→  const showLang = meta.originalLanguage ? LANG_WORD[meta.originalLanguage] ?? null : null;
+   948→  // "Bigg Boss Tamil" uploads are named "Bigg Boss (2026) S09E101 [Tamil …]":
+   949→  // the language moves into the tag area, so match against the base title and
+   950→  // let the release's language tag pick the right version (mismatch = reject)
+   951→  const matchTitle =
+   952→    type === "tv" && showLang
+   953→      ? title.replace(new RegExp(`\\s+${showLang}$`, "i"), "").trim() || title
+   954→      : title;
+   955→
+   956→  // Japanese titles are anime: fansub indexers (Nyaa) get queried and the
+   957→  // broadcast-order episode number is offered to the matchers. Sequel seasons
+   958→  // folded into the base show ("Bleach" S02 = TYBW) additionally carry the
+   959→  // fansub-relative episode number.
+   960→  const isAnime = (meta.originalLanguage ?? "") === "ja";
+   961→  const absEpisode = type === "tv" && isAnime ? await getAbsoluteEpisode(tmdbId, season, episode) : null;
+   962→  const relEpisode = type === "tv" && isAnime && season >= 2 ? episode : null;
+   963→
+   964→  const jobs: Promise<TorrentSource[]>[] = [];
+   965→  if (matchTitle) {
+   966→    const bayCtx: BayContext = {
+   967→      title: matchTitle,
+   968→      originalTitle: meta.originalTitle ?? undefined,
+   969→      year: year || undefined,
+   970→      countries: meta.countries,
+   971→      season,
+   972→      episode,
+   973→      airDate,
+   974→      showLang,
+   975→      absEpisode,
+   976→      relEpisode,
+   977→      isAnime,
+   978→    };
+   979→    jobs.push(providerPirateBay(type, bayCtx));
+   980→    jobs.push(providerBitSearch(type, bayCtx));
+   981→    jobs.push(providerTorrentsCsv(type, bayCtx));
+   982→    if (isAnime) jobs.push(providerNyaa(type, bayCtx));
+   983→  }
+   984→  if (imdbId) {
+   985→    jobs.push(
+   986→      providerTorrentio(type, imdbId, season, episode, year, matchTitle, meta.originalTitle ?? undefined, {
+   987→        airDate,
+   988→        showLang,
+   989→        absEpisode,
+   990→        relEpisode,
+   991→        isAnime,
+   992→      })
+   993→    );
+   994→    if (type === "movie") jobs.push(providerYts(imdbId, year));
+   995→    else jobs.push(providerEztv(imdbId, season, episode));
+   996→  }
+   997→
+   998→  const settled = await Promise.allSettled(jobs);
+   999→  const all: TorrentSource[] = [];
+  1000→  for (const r of settled) if (r.status === "fulfilled") all.push(...r.value);
+  1001→  return {
+  1002→    results: merge(all),
+  1003→    hints: { absEpisode: absEpisode ?? null, relEpisode: relEpisode ?? null },
+  1004→  };
+  1005→}
+  1006→
+  1007→/** Cheap availability probe for the auto-content pipeline (Torrentio only). */
+  1008→const availCache = new Map<string, { n: number; ts: number }>();
+  1009→const AVAIL_TTL = 30 * 60 * 1000;
+  1010→
+  1011→export async function quickAvailability(
+  1012→  type: "movie" | "tv",
+  1013→  imdbId: string,
+  1014→  season: number,
+  1015→  episode: number
+  1016→): Promise<number> {
+  1017→  const key = `${type}:${imdbId}:${season}:${episode}`;
+  1018→  const hit = availCache.get(key);
+  1019→  if (hit && Date.now() - hit.ts < AVAIL_TTL) return hit.n;
+  1020→  const data = await fetchJson<{ streams?: TorrentioStream[] }>(
+  1021→    type === "movie"
+  1022→      ? `https://torrentio.strem.fun/stream/movie/${imdbId}.json`
+  1023→      : `https://torrentio.strem.fun/stream/series/${imdbId}:${season}:${episode}.json`,
+  1024→    8000
+  1025→  );
+  1026→  const n = (data?.streams ?? []).length;
+  1027→  availCache.set(key, { n, ts: Date.now() });
+  1028→  return n;
+  1029→}
+  1030→
