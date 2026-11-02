@@ -1,5 +1,5 @@
 /*
- * Otama service worker — installable-app shell for macOS / Windows /
+ * Popcorn Time service worker — installable-app shell for macOS / Windows /
  * Android / iOS (PWA install + offline UI).
  *
  * Strategy:
@@ -10,7 +10,7 @@
  *    the stream route needs Range handling that only the network stack does
  *    correctly; respondWith on a media request would break seeking
  */
-const VERSION = "otama-v1";
+const VERSION = "popcorn-v1";
 const SHELL_CACHE = `${VERSION}-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 

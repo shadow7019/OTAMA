@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command deploy of the Otama web app to Antideploy.
+# One-command deploy of the Popcorn Time web app to Antideploy.
 #
 #   bash scripts/deploy.sh [--force]
 #
@@ -25,6 +25,7 @@ tar czf "$ARCHIVE" \
   --exclude=download --exclude=upload --exclude=tool-results \
   --exclude=.torrent-cache --exclude=dev.log --exclude=server.log \
   --exclude=tsconfig.tsbuildinfo --exclude=repo.tar \
+  --exclude=native \
   .
 echo "    archive: $(du -h "$ARCHIVE" | cut -f1) (platform limit: 28 MB)"
 

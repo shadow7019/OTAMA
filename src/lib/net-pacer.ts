@@ -158,7 +158,7 @@ export async function pacedFetch(
 export async function pacedJson<T>(url: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T | null> {
   try {
     const res = await pacedFetch(url, {
-      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0" },
+      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) PopcornTime/1.0" },
       timeoutMs,
     });
     if (!res.ok) return null;

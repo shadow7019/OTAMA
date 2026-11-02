@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   android:
-    name: Android APK
+    name: Android APK (Popcorn Time)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,7 +42,7 @@ jobs:
       - run: cd android && bash gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: Otama-android-debug-apk
+          name: PopcornTime-android-debug-apk
           path: native/mobile-capacitor/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -60,7 +60,7 @@ jobs:
           args: --target x86_64-pc-windows-msvc
       - uses: actions/upload-artifact@v4
         with:
-          name: Otama-windows-x64
+          name: PopcornTime-windows-x64
           path: |
             native/desktop-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             native/desktop-tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
@@ -82,7 +82,7 @@ jobs:
           args: --target aarch64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
-          name: Otama-macos-apple-silicon
+          name: PopcornTime-macos-apple-silicon
           path: |
             native/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             native/desktop-tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app

@@ -1,6 +1,6 @@
 {
-  "name": "Otama — Stream Movies & TV Shows",
-  "short_name": "Otama",
+  "name": "Popcorn Time — Stream Movies & TV Shows",
+  "short_name": "Popcorn Time",
   "description": "Browse trending movies and TV shows, watch trailers and stream instantly.",
   "id": "/",
   "start_url": "/?source=pwa",

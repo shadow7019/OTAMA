@@ -111,7 +111,7 @@ export async function getSubtitles(
     const res = await fetch(`${ADDON}/${path}`, {
       headers: {
         accept: "application/json",
-        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0",
+        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) PopcornTime/1.0",
       },
       signal: AbortSignal.timeout(10000),
     });

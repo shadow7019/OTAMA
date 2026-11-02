@@ -4,7 +4,7 @@ import { getEpisodeAirDate, LANG_WORD } from "@/lib/torrent-sources";
 import { getTitleMeta } from "@/lib/tmdb-server";
 
 /**
- * Otama Direct — direct-stream finder on archive.org.
+ * Popcorn Direct — direct-stream finder on archive.org.
  *
  * Two modes:
  *
@@ -173,7 +173,7 @@ function pickEpisodeFile(files: ArchiveFile[]): { name: string; size: number } |
 
 async function fetchJson<T>(url: string, timeoutMs = 9000): Promise<T> {
   const res = await fetch(url, {
-    headers: { accept: "application/json", "user-agent": "Otama/1.0 (public-domain lookup)" },
+    headers: { accept: "application/json", "user-agent": "PopcornTime/1.0 (public-domain lookup)" },
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`archive ${res.status}`);

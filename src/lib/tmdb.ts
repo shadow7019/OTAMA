@@ -228,7 +228,7 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
  *    backend via webtorrent and streams to the native <video> element with
  *    HTTP Range requests. No third-party iframe is ever embedded, so no
  *    pop-ups, tab redirects or injected ad scripts.
- *  - Otama Direct: public-domain direct streams (archive.org) as fallback.
+ *  - Popcorn Direct: public-domain direct streams (archive.org) as fallback.
  *  - Web embed servers (Ads group): third-party players, ad-supported
  *    by the providers themselves. Used by hand from the amber Ads chips,
  *    and opened automatically when every ad-free server fails.

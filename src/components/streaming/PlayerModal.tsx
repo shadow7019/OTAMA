@@ -310,7 +310,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
         if (!cancelled) setServersState("error");
       });
 
-    // Otama Direct: movies → public-domain copy; TV episodes → episode lookup
+    // Popcorn Direct: movies → public-domain copy; TV episodes → episode lookup
     // (Indian daily shows surface on archive.org hours after broadcast, long
     // before the public trackers list them)
     setArchiveState("loading");
@@ -408,7 +408,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
       .catch(() => markServerFailed("Stream failed on this server — pick another one below"));
   };
 
-  /* ---------------- Otama Direct for episodes with no torrent sources ----------------
+  /* ---------------- Popcorn Direct for episodes with no torrent sources ----------------
    * Daily-show episodes (Bigg Boss Hindi…) are usually absent from public
    * trackers but uploaded to archive.org within hours of broadcast. When the
    * torrent scan comes up empty and a direct episode stream exists, play it. */
@@ -1036,7 +1036,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   className="h-full w-full border-0"
                 />
               ) : isArchive && archive ? (
-                /* ---------- Otama Direct: public-domain native stream ---------- */
+                /* ---------- Popcorn Direct: public-domain native stream ---------- */
                 <>
                   <video
                     key={`${archive.identifier}-${videoNonce}`}

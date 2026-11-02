@@ -137,7 +137,7 @@ export default function Home() {
               images courtesy of The Movie Database (www.themoviedb.org).
             </p>
             <p>
-              Otama does not host any media files. Playback streams directly from public
+              Popcorn Time does not host any media files. Playback streams directly from public
               peer-to-peer networks through the built-in ad-free player; availability depends on
               the public swarm.
             </p>
@@ -153,7 +153,7 @@ export default function Home() {
             </h2>
             <div className="mt-3 max-w-3xl space-y-3 text-xs leading-relaxed text-zinc-500">
               <p>
-                Otama is a free, browser-based discovery and playback app for movies, TV shows and
+                Popcorn Time is a free, browser-based discovery and playback app for movies, TV shows and
                 anime. The catalog, posters, ratings and episode guides are powered by The Movie
                 Database (TMDB), and every title page gathers every way to watch it in one place —
                 trailers, a built-in player, direct streams and third-party web servers — so you
@@ -164,7 +164,7 @@ export default function Home() {
                 <span className="font-semibold text-emerald-400">Ad-free</span> group runs through
                 our own player: sources are found on public peer-to-peer networks and streamed by
                 the built-in player, and <span className="font-semibold text-emerald-400">
-                Otama Direct</span> serves public-domain and freely licensed copies straight from
+                Popcorn Direct</span> serves public-domain and freely licensed copies straight from
                 archive.org. The <span className="font-semibold text-amber-400">Ads</span> group
                 lists third-party web servers — those pages carry the providers&apos; own
                 advertising. The player always tries the best ad-free source first, and whenever

@@ -1,8 +1,8 @@
-# Otama — ad-free torrent streaming
+# Popcorn Time — ad-free torrent streaming
 
 Movie / TV / anime streaming web app: TMDB catalog, BitTorrent streaming with
 automatic server failover, multi-language subtitles (OpenSubtitles via the
-Stremio addon), Otama Direct fallback for episodes on archive.org, continue
+Stremio addon), Popcorn Time Direct fallback for episodes on archive.org, continue
 watching, and an auto-verified "playable now" home row.
 
 ## Run it

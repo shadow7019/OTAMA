@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, X, Menu, Clapperboard } from "lucide-react";
+import { List, Menu, Search, X } from "lucide-react";
 import { ViewType } from "./types";
 
 interface HeaderProps {
@@ -66,13 +66,15 @@ export function Header({ active, query, onNavigate, onSearch }: HeaderProps) {
           type="button"
           onClick={() => nav("home")}
           className="flex shrink-0 items-center gap-2 focus-visible:outline-none"
-          aria-label="Otama home"
+          aria-label="Popcorn Time home"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-red-600 to-red-800 shadow-lg shadow-red-600/30">
-            <Clapperboard className="h-4.5 w-4.5 text-white" />
-          </span>
+          <img
+            src="/icon-192.png"
+            alt=""
+            className="h-8 w-8 rounded-lg shadow-lg shadow-red-600/20"
+          />
           <span className="text-xl font-black tracking-tight text-white">
-            <span className="text-red-500">O</span>tama
+            Popcorn<span className="text-red-500">Time</span>
           </span>
         </button>
 

@@ -1,6 +1,6 @@
-# Otama Desktop (Tauri)
+# Popcorn Time Desktop (Tauri)
 
-Native **macOS / Windows / Linux** app around the hosted Otama web app
+Native **macOS / Windows / Linux** app around the hosted Popcorn Time web app
 (`https://otama.antideploy.app`). The window is a thin system-webview shell, so
 app updates ship automatically with the website — the desktop package only
 needs rebuilding when the shell itself changes.
@@ -40,8 +40,8 @@ Output:
 
 | OS | Artifacts |
 | --- | --- |
-| macOS | `src-tauri/target/release/bundle/dmg/Otama_1.0.0_*.dmg` + `.app` |
-| Windows | `.../bundle/nsis/Otama_1.0.0_*.exe` installer + `.msi` |
+| macOS | `src-tauri/target/release/bundle/dmg/Popcorn Time_1.0.0_*.dmg` + `.app` |
+| Windows | `.../bundle/nsis/Popcorn Time_1.0.0_*.exe` installer + `.msi` |
 | Linux | `.../bundle/appimage/*.AppImage` + `.deb` |
 
 ## Install notes for unsigned binaries
@@ -49,7 +49,7 @@ Output:
 The CI artifacts are not codesigned (no Apple Developer certificate /
 Windows signing key in this repo):
 - **macOS (M-chip):** first launch → right-click the app → Open, or
-  `xattr -cr /Applications/Otama.app` to clear the Gatekeeper warning.
+  `xattr -cr /Applications/Popcorn Time.app` to clear the Gatekeeper warning.
 - **Windows:** SmartScreen → "More info" → "Run anyway".
 
 ## Run in dev

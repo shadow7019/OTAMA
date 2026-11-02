@@ -90,7 +90,7 @@ export function SourcesDialog() {
             <Activity className="h-5 w-5 text-red-500" /> Torrent Source Analysis
           </DialogTitle>
           <DialogDescription className="text-sm text-zinc-400">
-            Live probe of every torrent source Otama searches. Sources marked down
+            Live probe of every torrent source Popcorn Time searches. Sources marked down
             are skipped automatically — the others keep results flowing.
           </DialogDescription>
         </DialogHeader>

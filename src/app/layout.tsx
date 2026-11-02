@@ -15,12 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Otama — Stream Movies & TV Shows",
+  title: "Popcorn Time — Stream Movies & TV Shows",
   description:
     "Browse trending movies and TV shows, watch trailers and stream instantly. Powered by TMDB.",
   keywords: ["movies", "tv shows", "streaming", "watch online", "trailers", "TMDB"],
   manifest: "/manifest.webmanifest",
-  applicationName: "Otama",
+  applicationName: "Popcorn Time",
   icons: {
     icon: [
       { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
@@ -30,11 +30,11 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "Otama",
+    title: "Popcorn Time",
     statusBarStyle: "black-translucent",
   },
   openGraph: {
-    title: "Otama — Stream Movies & TV Shows",
+    title: "Popcorn Time — Stream Movies & TV Shows",
     description: "Browse trending movies and TV shows, watch trailers and stream instantly.",
     type: "website",
   },

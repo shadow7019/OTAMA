@@ -1,6 +1,6 @@
-# Otama Mobile (Capacitor)
+# Popcorn Time Mobile (Capacitor)
 
-Native **Android** and **iOS** app shells around the hosted Otama web app
+Native **Android** and **iOS** app shells around the hosted Popcorn Time web app
 (`https://otama.antideploy.app`). Website updates ship to the installed apps
 automatically; the store binary only changes when the shell config changes.
 

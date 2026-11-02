@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(raw, {
-      headers: { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Otama/1.0" },
+      headers: { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) PopcornTime/1.0" },
       signal: AbortSignal.timeout(12000),
     });
     if (!res.ok) return new NextResponse("Upstream error", { status: 502 });
