@@ -166,10 +166,11 @@ export default function Home() {
                 the built-in player, and <span className="font-semibold text-emerald-400">
                 Otama Direct</span> serves public-domain and freely licensed copies straight from
                 archive.org. The <span className="font-semibold text-amber-400">Ads</span> group
-                lists third-party web servers as an opt-in fallback — those pages carry the
-                providers&apos; own advertising. The player always tries the best ad-free source
-                first; the amber Ads chips sit in the same server row with a live health dot, one
-                click away whenever the ad-free sources come up empty.
+                lists third-party web servers — those pages carry the providers&apos; own
+                advertising. The player always tries the best ad-free source first, and whenever
+                the ad-free sources come up empty or fail, a healthy Ads server opens on its own
+                (marked with an amber badge); the amber chips in the same server row, each with a
+                live health dot, let you pick one yourself at any time.
               </p>
               <p>
                 There is nothing to install and nothing to pay. Pick up where you left off with

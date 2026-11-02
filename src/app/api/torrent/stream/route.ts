@@ -7,7 +7,9 @@ import {
   markStreamDone,
   pickVideoFile,
   prioritizeRange,
+  selectStreamFile,
 } from "@/lib/torrent-engine";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Torrent has no files" }, { status: 504 });
   }
 
-  const { file } = pickVideoFile(
+  const { file, index } = pickVideoFile(
     torrent,
     fileIdx !== null ? Math.floor(fileIdx) : null,
     episodeHint ? { season: episodeHint.season, episode: episodeHint.episode, abs: absHint } : null,
@@ -101,19 +103,17 @@ export async function GET(req: NextRequest) {
 
   // make the swarm fetch the requested range first so playback starts fast
   prioritizeRange(torrent, file, start, Math.max(6 * 1024 * 1024, STREAM_WINDOW));
-  // select the whole file so the stream never runs past the critical window
-  // (pre-warmed torrents arrive with every file deselected; for freshly added
-  // ones this just trims selection down from "all files" to the one we play)
-  try {
-    file.select?.();
-  } catch {
-    /* selection is best-effort */
-  }
+  // stream exactly the picked file: drops webtorrent's default select-all so
+  // a season pack never downloads other episodes in the background (pre-warmed
+  // torrents arrive with every file deselected; fresh ones get trimmed to the
+  // one we play). Re-selecting the same file is a no-op.
+  selectStreamFile(torrent, file, index);
 
   const raw = file.createReadStream({ start, end });
   // while this stream is open the torrent must not be evicted or swept —
-  // a warm-triggered LRU pass would otherwise cut the playing video
-  markStreamActive(id);
+  // a warm-triggered LRU pass would otherwise cut the playing video.
+  // The file index powers /status's file-relative progress (stall watchdog).
+  markStreamActive(id, index);
   const done = () => markStreamDone(id);
   (raw as NodeJS.ReadableStream).once?.("close", done);
   // stop pulling pieces when the browser aborts (pause / close / server switch)

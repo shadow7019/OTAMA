@@ -229,17 +229,18 @@ export function toListEntry(item: MediaItem, s?: number, e?: number): ListEntry 
  *    HTTP Range requests. No third-party iframe is ever embedded, so no
  *    pop-ups, tab redirects or injected ad scripts.
  *  - Otama Direct: public-domain direct streams (archive.org) as fallback.
- *  - Web embed servers (Ads group): opt-in third-party players, ad-supported
- *    by the providers themselves. Never opened automatically — the user picks
- *    them from the amber Ads chips.
+ *  - Web embed servers (Ads group): third-party players, ad-supported
+ *    by the providers themselves. Used by hand from the amber Ads chips,
+ *    and opened automatically when every ad-free server fails.
  */
 
 /**
  * Web embed servers — restored by user request. These third-party players
  * are ad-supported (pop-ups / redirects are THEIR pages, inside their
- * iframe), so they sit AFTER the torrent sources in the server row and are
- * opt-in per click. They cost nothing to run, carry virtually every title,
- * and give the player a working source when torrent swarms are thin.
+ * iframe), so they sit AFTER the torrent sources in the server row. They are
+ * picked per click, and the first healthy one also takes over automatically
+ * when every ad-free server fails. They cost nothing to run, carry virtually
+ * every title, and give the player a working source when torrent swarms die.
  */
 export interface WebSource {
   id: string;

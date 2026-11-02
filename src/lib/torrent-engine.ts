@@ -21,6 +21,10 @@ export interface TorrentFile {
   index: number;
   /** byte offset of this file inside the torrent */
   offset: number;
+  /** webtorrent fills both at runtime; typed optional — the structural type
+   *  above is the minimum the streaming path needs */
+  progress?: number;
+  downloaded?: number;
   createReadStream(opts: { start: number; end: number }): NodeJS.ReadableStream;
   /** start downloading this file (whole range, normal priority) */
   select?(start?: number, end?: number): void;
@@ -37,10 +41,14 @@ export interface Torrent {
   downloadSpeed: number;
   pieceLength: number;
   files: TorrentFile[];
+  /** piece hashes (length = piece count); only needed for deselect ranges */
+  pieces?: unknown[];
   destroy(opts?: { destroyStore?: boolean }, cb?: () => void): void;
   on(ev: string, cb: () => void): void;
   /** mark pieces as critical so they are fetched first (used for instant-start) */
   critical(start: number, end: number): void;
+  /** remove the whole-torrent selection webtorrent adds on metadata */
+  deselect?(start: number, end: number): void;
 }
 
 interface TorrentClient {
@@ -170,9 +178,20 @@ function evictForDisk(): void {
 
 /* ---------- engine state (survives Next.js hot reloads) ---------- */
 
+/** Per-torrent bookkeeping. `streamFileIdx` is the file the stream route is
+ *  currently serving — /api/torrent/status reports progress relative to THAT
+ *  file, because for a 170-episode season pack the whole-torrent number crawls
+ *  forever while the episode being played is still at 0% (the player's stall
+ *  watchdog must look at the file, not the torrent). */
+interface MetaEntry {
+  addedAt: number;
+  lastAccess: number;
+  streamFileIdx?: number;
+}
+
 interface EngineState {
   client: TorrentClient | null;
-  meta: Map<string, { addedAt: number; lastAccess: number }>;
+  meta: Map<string, MetaEntry>;
   sweeper: ReturnType<typeof setInterval> | null;
   /** in-flight kickEngineLoad() — awaited by ensureTorrent before use */
   loading: Promise<void> | null;
@@ -396,7 +415,13 @@ function waitForMetadata(client: TorrentClient, magnet: string): Promise<Torrent
           /* already gone */
         }
         reject(err ?? new Error("failed to add torrent"));
-      } else resolve(torrent);
+      } else {
+        // metadata just resolved: webtorrent has already selected EVERY file
+        // for download — drop that default immediately so a warm or idle
+        // torrent pulls nothing until a stream asks for one file
+        dropDefaultSelection(torrent);
+        resolve(torrent);
+      }
     };
     const timer = setTimeout(
       () => finish(new Error("No peers responded for this torrent — it may have no seeders right now")),
@@ -482,13 +507,74 @@ function evictIfNeeded(client: TorrentClient, keepHash?: string) {
 }
 
 /** The stream route registers every open video stream so eviction and the
- *  idle sweeper spare the torrent that is actually playing. */
-export function markStreamActive(infoHash: string): void {
+ *  idle sweeper spare the torrent that is actually playing. `fileIndex`
+ *  records which file is being served for file-relative progress reporting. */
+export function markStreamActive(infoHash: string, fileIndex?: number): void {
   const st = state();
   const h = infoHash.toLowerCase();
   st.active.add(h);
   st.recentStreams.delete(h); // streaming again — the grace clock resets
   touchMeta(h); // every range request refreshes the sweeper's idle clock
+  if (typeof fileIndex === "number" && Number.isFinite(fileIndex)) {
+    const m = st.meta.get(h);
+    if (m) m.streamFileIdx = Math.floor(fileIndex);
+  }
+}
+
+/** Progress (0..1) of the file being streamed, or null when nothing is being
+ *  served / the file is gone. This is the number the player's stall watchdog
+ *  needs: whole-torrent progress lies on big packs. */
+export function streamFileProgress(infoHash: string): number | null {
+  const st = state();
+  const idx = st.meta.get(infoHash.toLowerCase())?.streamFileIdx;
+  if (typeof idx !== "number") return null;
+  const t = findTorrent(infoHash);
+  const f = t?.files?.[idx];
+  if (!f || !f.length) return null;
+  if (typeof f.progress === "number") return Math.min(1, Math.max(0, f.progress));
+  if (typeof f.downloaded === "number") return Math.min(1, Math.max(0, f.downloaded / f.length));
+  return null;
+}
+
+/** Kill webtorrent's default "download everything" selection (it is added the
+ *  moment metadata resolves) so a torrent only pulls what a stream asks for.
+ *  Without this a warmed 170-episode season pack downloads the whole pack in
+ *  the background — starving the episode the user is actually watching and
+ *  filling the piece cache with episodes nobody opened. */
+function dropDefaultSelection(t: Torrent): void {
+  try {
+    t.deselect?.(0, (t.pieces?.length ?? 1) - 1);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Make the torrent stream exactly one file: drop the default select-all,
+ *  stop any previously streamed file, select the picked one. Re-streaming the
+ *  same file is a no-op, so the browser's next 12 MB range request doesn't
+ *  churn selections. Pair with markStreamActive(id, fileIndex) —
+ *  streamFileProgress() reads the index it stores. */
+export function selectStreamFile(torrent: Torrent, file: TorrentFile, fileIndex: number): void {
+  // every request: webtorrent's default select-all is dead weight if it is
+  // somehow back (torrents added before this fix, race with metadata) — and
+  // removing a selection that is already gone is a no-op
+  dropDefaultSelection(torrent);
+  const m = state().meta.get(torrent.infoHash.toLowerCase());
+  if (m?.streamFileIdx === fileIndex) return; // already streaming this file
+  if (typeof m?.streamFileIdx === "number") {
+    try {
+      torrent.files?.[m.streamFileIdx]?.deselect?.();
+    } catch {
+      /* best-effort */
+    }
+  }
+  dropDefaultSelection(torrent);
+  try {
+    file.select?.();
+  } catch {
+    /* best-effort */
+  }
+  if (m) m.streamFileIdx = fileIndex;
 }
 
 export function markStreamDone(infoHash: string): void {
@@ -548,6 +634,7 @@ export async function ensureTorrent(infoHash: string, displayName: string): Prom
         });
       });
     }
+    dropDefaultSelection(existing);
     return existing;
   }
   // disk pressure: reclaim headroom before taking on another download —
@@ -743,6 +830,11 @@ export function idleTorrent(t: Torrent): void {
   } catch {
     /* best-effort */
   }
+  // forget which file was streaming: the next stream request must re-select
+  // (idling deselected it — the "already streaming this file" shortcut in
+  // selectStreamFile would otherwise skip the select and stall the stream)
+  const m = state().meta.get(t.infoHash.toLowerCase());
+  if (m) m.streamFileIdx = undefined;
 }
 
 /** Idle a torrent by id — same as idleTorrent but callable from the API

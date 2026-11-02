@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { diskHeadroom, engineFailure, findTorrent, peersEverConnected } from "@/lib/torrent-engine";
+import { diskHeadroom, engineFailure, findTorrent, peersEverConnected, streamFileProgress } from "@/lib/torrent-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +35,10 @@ export async function GET(req: NextRequest) {
     ready: torrent.ready,
     name: torrent.name,
     progress: Math.round(torrent.progress * 1000) / 1000,
+    // progress of the file actually being streamed — on a 170-episode season
+    // pack `progress` crawls forever while the played episode is at 0%, which
+    // is what the player's stall watchdog and the buffered % must look at
+    fileProgress: streamFileProgress(id),
     peers: torrent.numPeers,
     speed: torrent.downloadSpeed,
     files: torrent.files?.length ?? 0,

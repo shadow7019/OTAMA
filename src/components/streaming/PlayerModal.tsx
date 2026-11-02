@@ -69,7 +69,10 @@ interface TorrentServer {
 interface TorrentStatus {
   found: boolean;
   ready?: boolean;
+  /** progress of the WHOLE torrent — on season packs this crawls forever */
   progress?: number;
+  /** progress of the file actually being streamed (the stall watchdog's truth) */
+  fileProgress?: number | null;
   peers?: number;
   speed?: number;
 }
@@ -102,6 +105,10 @@ const NO_PEER_SWITCH_MS = 45000;
  * server that is still delivering data is working — torrent sites are slow,
  * and switching away from a buffering server is what breaks playback. */
 const STALL_SWITCH_MS = 60000;
+/** When every ad-free server fails (or none exist), the first healthy Ads web
+ * server opens automatically. Health probes answer asynchronously — wait at
+ * most this long for one before giving up and leaving the panels up. */
+const ADS_TAKEOVER_PROBE_MS = 30000;
 
 const fmtSize = (b: number) =>
   b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.round(b / 1e3)} KB` : "—";
@@ -133,6 +140,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const [banner, setBanner] = useState<string | null>(null);
   /** automatic re-searches done for the CURRENT episode (reset on ep change) */
   const [autoRetries, setAutoRetries] = useState(0);
+  /** re-render ticks while an Ads takeover waits for health probes */
+  const [adsTick, setAdsTick] = useState(0);
 
   /* ---------------- archive.org direct fallback (movies) ---------------- */
   const [archive, setArchive] = useState<ArchiveMatchClient | null>(null);
@@ -170,6 +179,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const lastProgressAtRef = useRef(0);
   const currentIdRef = useRef<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  /** Ads auto-takeover: fires once per episode; deadline clock for probes */
+  const adsTakeoverFiredRef = useRef(false);
+  const adsFailedAtRef = useRef<number | null>(null);
 
   // When the browser blocks autoplay we surface a tap-to-play overlay instead
   // of a stuck black frame (video data is already buffered at that point).
@@ -217,9 +229,13 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     (reason: string) => {
       const cur = activeIdxRef.current;
       const list = serversRef.current;
-      const next = list.findIndex((_, i) => i !== cur && !triedRef.current.includes(i));
+      let next = list.findIndex((_, i) => i !== cur && !triedRef.current.includes(i));
       const triedNext = new Set(triedRef.current);
       if (cur !== null) triedNext.add(cur);
+      // every source came back with 0 seeders — the whole swarm is dead, so
+      // cycling through the rest only delays the automatic Ads fallback
+      const allDead = list.length > 0 && list.every((s) => s.seeders === 0);
+      if (next >= 0 && allDead && triedNext.size >= 2) next = -1;
       triedRef.current = [...triedNext];
       setTried([...triedNext]);
       const failed = cur !== null ? serversRef.current[cur] : null;
@@ -314,6 +330,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   // automatic retries are per-episode: a manual "Search again" must not reset them
   useEffect(() => {
     setAutoRetries(0);
+    adsTakeoverFiredRef.current = false;
+    adsFailedAtRef.current = null;
   }, [target, type, season, episode]);
 
   /* ---------------- ads server health (probe once per open) ----------------
@@ -368,6 +386,71 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setVideoState("loading");
   }, [type, serversState, servers.length, manualIdx, exhausted, archiveState, archive]);
 
+  /* ---------------- auto-takeover: Ads server when ad-free fails ----------------
+   * Torrent swarms die and archive.org has gaps: when every ad-free server is
+   * exhausted (or the scan found nothing at all), open the first HEALTHY Ads
+   * web server automatically instead of dead-ending the player. The banner and
+   * the amber badge make the takeover visible; any ad-free server chip — or
+   * Auto — switches straight back. */
+  useEffect(() => {
+    if (!target || adsTakeoverFiredRef.current) return;
+    // something is already playing or hand-picked — never override the user
+    if (manualIdx !== null) return;
+    // Otama Direct is ad-free: it always wins over an Ads takeover
+    if (archiveState === "found") return;
+    const failed =
+      exhausted ||
+      (serversState === "ready" && servers.length === 0) ||
+      serversState === "error";
+    if (!failed) return;
+    // while the direct-stream lookup is still undecided, let it finish first
+    // (it answers in seconds; exhaustion takes minutes, so this only gates
+    // the quick zero-sources case)
+    if (archiveState === "loading" && !exhausted) return;
+
+    const healthyIdx = WEB_SOURCES.findIndex((w) => {
+      const h = webHealth[w.id];
+      return !!h && h.ok && h.frameable;
+    });
+    if (healthyIdx >= 0) {
+      adsTakeoverFiredRef.current = true;
+      const w = WEB_SOURCES[healthyIdx];
+      setManualIdx(`web-${healthyIdx}`);
+      setActiveIdx(null); // stops the torrent stream, status poll and failover clocks
+      setExhausted(false);
+      setNeedsTap(false);
+      setBanner(
+        `Ad-free servers couldn't play this — switched to ${w.name} (Ads). Pick any server above to go back.`
+      );
+      return;
+    }
+    // all probes answered and none is embeddable, or the wait ran out: leave
+    // the manual panels up (they carry the same Ads chips for a manual pick)
+    const settled = WEB_SOURCES.every((x) => webHealth[x.id]);
+    if (settled) {
+      adsTakeoverFiredRef.current = true;
+      return;
+    }
+    if (adsFailedAtRef.current === null) {
+      adsFailedAtRef.current = Date.now();
+    } else if (Date.now() - adsFailedAtRef.current > ADS_TAKEOVER_PROBE_MS) {
+      adsTakeoverFiredRef.current = true;
+      return;
+    }
+    // probes still outstanding — re-run every 2 s until one lands or we time out
+    const iv = setInterval(() => setAdsTick((t) => t + 1), 2000);
+    return () => clearInterval(iv);
+  }, [
+    target,
+    exhausted,
+    serversState,
+    servers.length,
+    manualIdx,
+    archiveState,
+    webHealth,
+    adsTick,
+  ]);
+
   /* ---------------- stream URL ---------------- */
   const streamUrl = useMemo(() => {
     if (!activeServer || !target) return null;
@@ -417,7 +500,11 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           return;
         }
         if (videoStateRef.current === "playing") return;
-        const progress = j.progress ?? 0;
+        // file-relative progress: on a season pack the whole-torrent number
+        // crawls while the played episode is still at 0 — the stall clock must
+        // only trust the file actually being streamed
+        const progress =
+          typeof j.fileProgress === "number" ? j.fileProgress : (j.progress ?? 0);
         // ANY forward movement proves the server is delivering and resets the
         // stall clock — buffering patiently beats switching into another
         // server that would start its download from zero
@@ -426,7 +513,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           lastProgressAtRef.current = Date.now();
         }
         const elapsed = Date.now() - streamStartRef.current;
-        if (elapsed > NO_PEER_SWITCH_MS && (j.peers ?? 0) === 0 && progress === 0) {
+        // a list where every source reported 0 seeders gets a shorter
+        // no-peer window — there is no swarm that could announce late
+        const allDead =
+          serversRef.current.length > 0 && serversRef.current.every((s) => s.seeders === 0);
+        const noPeerMs = allDead ? 20000 : NO_PEER_SWITCH_MS;
+        if (elapsed > noPeerMs && (j.peers ?? 0) === 0 && progress === 0) {
           failover("No peers on this server");
         } else if (Date.now() - lastProgressAtRef.current > STALL_SWITCH_MS) {
           // not one new piece for the whole window — the swarm is truly dead
@@ -631,6 +723,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setTried([]);
     triedRef.current = [];
     setActiveIdx(null); // auto-pick effect chooses the best server again
+    adsTakeoverFiredRef.current = false; // Auto may end in an Ads takeover again
+    adsFailedAtRef.current = null;
   };
 
   const selectArchive = () => {
@@ -652,7 +746,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setExhausted(false);
   };
 
-  /** opt-in only: an Ads web server is never opened automatically */
+  /** open an Ads web server — picked by hand, or opened by the automatic
+   *  takeover when the ad-free path has nothing left */
   const selectWeb = (i: number) => {
     if (manualIdx === `web-${i}`) return;
     if (activeServer) stopId(activeServer.id);
@@ -671,6 +766,8 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
     setActiveIdx(null);
     setVideoState("loading");
     setBanner(null);
+    adsTakeoverFiredRef.current = false;
+    adsFailedAtRef.current = null;
   };
 
   const retryCurrent = () => {
@@ -726,7 +823,12 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
   const showNoSourcePanel =
     noSources && !isArchive && !showTrailer && !activeWeb && archiveState !== "found";
 
-  const downloading = status && (status.progress ?? 0) < 0.999;
+  // the number the UI shows as "buffered": the streamed file's progress when
+  // the engine knows which file it is serving (season packs), the whole-
+  // torrent one otherwise — "0.1% buffered" on a 200 GB pack is meaningless
+  const fileProg =
+    typeof status?.fileProgress === "number" ? status.fileProgress : (status?.progress ?? 0);
+  const downloading = status && fileProg < 0.999;
   const videoKey = `${streamUrl ?? "none"}-${videoNonce}`;
 
   return (
@@ -883,8 +985,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
           </span>
         )}
 
-        {/* Ads group — opt-in third-party web servers, never opened automatically.
-            The dot is a live /api/embed-check probe (green = reachable + embeddable). */}
+        {/* Ads group — third-party web servers. The dot is a live
+            /api/embed-check probe (green = reachable + embeddable); the first
+            healthy one also opens automatically when the ad-free path fails. */}
         <span className="ml-1 shrink-0 border-l border-white/10 pl-2.5 text-[10px] font-bold uppercase tracking-wider text-amber-500/90">
           Ads
         </span>
@@ -998,7 +1101,7 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                   {videoState === "playing" && downloading && (
                     <div className="absolute bottom-2 left-3 flex items-center gap-2 rounded-full bg-black/70 px-2.5 py-1 text-[10px] font-semibold text-zinc-200 backdrop-blur">
                       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                      P2P ↓ {Math.round((status?.progress ?? 0) * 100)}% · {fmtSpeed(status?.speed ?? 0)} ·{" "}
+                      P2P ↓ {Math.round(fileProg * 100)}% · {fmtSpeed(status?.speed ?? 0)} ·{" "}
                       {status?.peers ?? 0} peers
                     </div>
                   )}
@@ -1038,16 +1141,16 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                       {activeServer.releaseName} · {fmtSize(activeServer.sizeBytes)}
                     </p>
                   )}
-                  {status && (status.progress ?? 0) > 0 && (
+                  {status && fileProg > 0 && (
                     <div className="w-56">
                       <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
                         <div
                           className="h-full rounded-full bg-red-600 transition-all"
-                          style={{ width: `${Math.max(2, (status.progress ?? 0) * 100)}%` }}
+                          style={{ width: `${Math.max(2, fileProg * 100)}%` }}
                         />
                       </div>
                       <p className="mt-1.5 text-[11px] text-zinc-400">
-                        {Math.round((status.progress ?? 0) * 100)}% buffered ·{" "}
+                        {Math.round(fileProg * 100)}% buffered ·{" "}
                         {fmtSpeed(status?.speed ?? 0)} · {status?.peers ?? 0} peers
                       </p>
                     </div>
@@ -1215,9 +1318,9 @@ export function PlayerModal({ target, actions, onClose }: PlayerModalProps) {
                 <span>
                   <span className="font-semibold text-zinc-400">Auto</span> picks the best-seeded
                   source and fails over automatically. P2P playback runs on our own player —{" "}
-                  <span className="text-emerald-400">ad-free</span>. The amber{" "}
-                  <span className="text-amber-400">Ads</span> servers are opt-in third-party pages
-                  that carry the providers&apos; own advertising.
+                  <span className="text-emerald-400">ad-free</span>. If every ad-free server
+                  fails, a healthy amber <span className="text-amber-400">Ads</span> server opens
+                  on its own — third-party pages that carry the providers&apos; own advertising.
                 </span>
               </p>
             )}
